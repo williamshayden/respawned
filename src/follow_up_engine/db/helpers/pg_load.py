@@ -23,6 +23,8 @@ def upsert_records(engine, table_name, records):
     if not records:
         return 0
 
+    # TODO: Fail fast when one input batch reuses a primary key with
+    # conflicting payload fields; exact duplicate records remain idempotent.
     columns = get_table_columns(engine, table_name)
     pk = get_primary_key(engine, table_name)
     cols = [c for c in columns if any(c in r for r in records)]
