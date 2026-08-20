@@ -49,6 +49,22 @@ INSERT_CANDIDATE = text(
         :other_quote_ids
     )
     ON CONFLICT (id) DO NOTHING
+    RETURNING id
+    """
+)
+
+UPDATE_CANDIDATE = text(
+    """
+    UPDATE candidates
+    SET
+        sync_run_id = :sync_run_id,
+        run_at = :run_at,
+        primary_quote_id = :primary_quote_id,
+        customer_phone = :customer_phone,
+        reason = :reason,
+        score = :score,
+        other_quote_ids = :other_quote_ids
+    WHERE id = :id
     """
 )
 
@@ -115,20 +131,22 @@ def sync_candidates(
     )
     inserted_count = 0
     for candidate in candidates:
+        candidate_values = {
+            "id": candidate.id,
+            "sync_run_id": run_id,
+            "run_at": candidate.run_at,
+            "primary_quote_id": candidate.primary_quote_id,
+            "customer_phone": candidate.customer_phone,
+            "reason": candidate.reason,
+            "score": candidate.score,
+            "other_quote_ids": list(candidate.other_quote_ids),
+        }
         result = conn.execute(
             INSERT_CANDIDATE,
-            {
-                "id": candidate.id,
-                "sync_run_id": run_id,
-                "run_at": candidate.run_at,
-                "primary_quote_id": candidate.primary_quote_id,
-                "customer_phone": candidate.customer_phone,
-                "reason": candidate.reason,
-                "score": candidate.score,
-                "other_quote_ids": list(candidate.other_quote_ids),
-            },
+            candidate_values,
         )
-        inserted_count += result.rowcount
+        inserted_count += result.scalar_one_or_none() is not None
+        conn.execute(UPDATE_CANDIDATE, candidate_values)
 
     return SyncResult(
         candidates=candidates,

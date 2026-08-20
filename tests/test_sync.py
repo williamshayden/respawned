@@ -143,6 +143,22 @@ def test_two_unchanged_real_syncs_create_no_duplicate_opportunities(
     assert _table_count(postgres_connection, "candidates") == after_first
 
 
+def test_unchanged_candidate_is_linked_to_latest_sync_run(postgres_connection):
+    _insert_replied_quote(postgres_connection, "SYNC-LATEST-RUN-Q")
+    policy = load_policy(DEFAULT_POLICY_PATH)
+
+    first = sync_candidates(postgres_connection, now=NOW, policy=policy)
+    second = sync_candidates(postgres_connection, now=NOW, policy=policy)
+    candidate_id = first.candidates[0].id
+    linked_run_id = postgres_connection.execute(
+        text("SELECT sync_run_id FROM candidates WHERE id = :candidate_id"),
+        {"candidate_id": candidate_id},
+    ).scalar_one()
+
+    assert second.inserted_count == 0
+    assert linked_run_id == second.run_id
+
+
 def test_dry_run_computes_candidates_without_writing(postgres_connection):
     _insert_replied_quote(postgres_connection, "SYNC-DRY-RUN-Q")
     before_candidates = _table_count(postgres_connection, "candidates")
