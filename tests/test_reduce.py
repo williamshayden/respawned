@@ -119,3 +119,43 @@ def test_view_days_uses_configured_business_timezone(postgres_connection):
     assert explicit_utc.view_days == 2
     assert chicago.view_days == 1
     assert reset_to_utc.view_days == 2
+
+
+def test_last_outbound_falls_back_to_seed_contact(postgres_connection):
+    state = _state_for_quote(postgres_connection, "Q-1003")
+
+    assert state.last_outbound_at == datetime(2026, 8, 1, 19, tzinfo=UTC)
+
+
+def test_last_outbound_uses_later_seed_contact(postgres_connection):
+    state = _state_for_quote(postgres_connection, "Q-1020")
+
+    assert state.last_outbound_at == datetime(2026, 8, 13, 17, tzinfo=UTC)
+
+
+def test_last_outbound_uses_latest_qualifying_stream_event(postgres_connection):
+    postgres_connection.execute(
+        text(
+            """
+            INSERT INTO events
+                (event_id, type, quote_id, "timestamp", channel, direction)
+            VALUES
+                ('00000000-0000-0000-0000-000000000011',
+                 'message_sent', 'Q-1003', '2026-08-17T20:00:00Z',
+                 'sms', 'outbound'),
+                ('00000000-0000-0000-0000-000000000012',
+                 'message_sent', 'Q-1003', '2026-08-18T20:00:00Z',
+                 'sms', 'outbound'),
+                ('00000000-0000-0000-0000-000000000013',
+                 'message_sent', 'Q-1003', '2026-08-19T20:00:00Z',
+                 'sms', 'inbound'),
+                ('00000000-0000-0000-0000-000000000014',
+                 'quote_sent', 'Q-1003', '2026-08-20T20:00:00Z',
+                 'sms', 'outbound')
+            """
+        )
+    )
+
+    state = _state_for_quote(postgres_connection, "Q-1003")
+
+    assert state.last_outbound_at == datetime(2026, 8, 18, 20, tzinfo=UTC)

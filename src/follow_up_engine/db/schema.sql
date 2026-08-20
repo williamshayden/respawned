@@ -64,7 +64,13 @@ SELECT
         FILTER (WHERE deduplicated_events.type = 'quote_viewed') AS view_days,
     MAX(deduplicated_events."timestamp")
         FILTER (WHERE deduplicated_events.type = 'customer_replied') AS last_replied_at,
-    quotes.last_contact_at AS last_outbound_at
+    GREATEST(
+        quotes.last_contact_at,
+        MAX(deduplicated_events."timestamp") FILTER (
+            WHERE deduplicated_events.type = 'message_sent'
+              AND deduplicated_events.direction = 'outbound'
+        )
+    ) AS last_outbound_at
 FROM quotes
 LEFT JOIN deduplicated_events ON deduplicated_events.quote_id = quotes.id
 GROUP BY
