@@ -79,6 +79,7 @@ def _insert_candidate(
     score: str = "90",
     other_quote_ids: tuple[str, ...] = (),
     run_id=None,
+    channel: str = "sms",
 ) -> Candidate:
     candidate = Candidate(
         id=uuid4(),
@@ -88,6 +89,7 @@ def _insert_candidate(
         reason="replied_no_answer",
         score=Decimal(score),
         other_quote_ids=other_quote_ids,
+        channel=channel,
     )
     active_run_id = run_id or uuid4()
     if run_id is None:
@@ -179,6 +181,34 @@ def test_approving_same_draft_twice_enqueues_one_sms(postgres_connection):
     assert rows == [
         (first_id, str(draft.id), draft.body, "sms", phone),
     ]
+
+
+def test_approving_email_candidate_enqueues_one_email(postgres_connection):
+    from follow_up_engine.cli.review import approve_draft
+
+    phone = "+1 (312) 555-0198"
+    quote_id = "REVIEW-EMAIL"
+    _insert_quote(postgres_connection, quote_id=quote_id, phone=phone)
+    candidate = _insert_candidate(
+        postgres_connection,
+        quote_id=quote_id,
+        phone=phone,
+        channel="email",
+    )
+    draft = _draft(postgres_connection, candidate=candidate)
+
+    outbox_id = approve_draft(
+        postgres_connection,
+        draft_id=draft.id,
+        now=NOW,
+        policy=load_policy(DEFAULT_POLICY_PATH),
+    )
+
+    channel = postgres_connection.execute(
+        text("SELECT channel FROM outbox WHERE id = :id"),
+        {"id": outbox_id},
+    ).scalar_one()
+    assert channel == "email"
 
 
 @pytest.mark.parametrize("contact_source", ("quote_state", "outbox"))

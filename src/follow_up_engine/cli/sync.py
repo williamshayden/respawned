@@ -35,6 +35,8 @@ INSERT_CANDIDATE = text(
         run_at,
         primary_quote_id,
         customer_phone,
+        customer_name,
+        channel,
         reason,
         score,
         other_quote_ids
@@ -44,6 +46,8 @@ INSERT_CANDIDATE = text(
         :run_at,
         :primary_quote_id,
         :customer_phone,
+        :customer_name,
+        :channel,
         :reason,
         :score,
         :other_quote_ids
@@ -61,6 +65,8 @@ UPDATE_CANDIDATE = text(
         run_at = :run_at,
         primary_quote_id = :primary_quote_id,
         customer_phone = :customer_phone,
+        customer_name = :customer_name,
+        channel = :channel,
         reason = :reason,
         score = :score,
         other_quote_ids = :other_quote_ids
@@ -148,6 +154,8 @@ def sync_candidates(
             "run_at": candidate.run_at,
             "primary_quote_id": candidate.primary_quote_id,
             "customer_phone": candidate.customer_phone,
+            "customer_name": candidate.customer_name,
+            "channel": candidate.channel,
             "reason": candidate.reason,
             "score": candidate.score,
             "other_quote_ids": list(candidate.other_quote_ids),

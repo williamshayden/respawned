@@ -15,6 +15,7 @@ def _state(
     phone: str = "+13125550100",
     status: str = "open",
     last_outbound_at: datetime | None = None,
+    channel: str | None = None,
 ) -> QuoteState:
     return QuoteState(
         quote_id=quote_id,
@@ -29,6 +30,7 @@ def _state(
         view_days=1,
         last_replied_at=None,
         last_outbound_at=last_outbound_at,
+        channel=channel,
     )
 
 
@@ -87,6 +89,7 @@ def test_same_phone_yields_one_stable_candidate_with_other_open_quote():
     )
 
     assert candidate.primary_quote_id == "Q-high"
+    assert candidate.customer_name == "Customer Q-high"
     assert candidate.customer_phone == "+13125550123"
     assert candidate.other_quote_ids == ("Q-low",)
     assert candidate.id == same_opportunity_later.id
@@ -110,3 +113,36 @@ def test_recent_contact_on_terminal_sibling_suppresses_open_quote():
         NOW,
         Decimal("72"),
     ) == []
+
+
+def test_candidate_defaults_missing_primary_quote_channel_to_sms():
+    [candidate] = select_candidates(
+        [_state("Q-channel")],
+        [_scored("Q-channel", "90")],
+        NOW,
+        Decimal("72"),
+    )
+
+    assert candidate.channel == "sms"
+
+
+def test_candidate_uses_primary_quote_email_channel():
+    [candidate] = select_candidates(
+        [_state("Q-channel", channel="email")],
+        [_scored("Q-channel", "90")],
+        NOW,
+        Decimal("72"),
+    )
+
+    assert candidate.channel == "email"
+
+
+def test_candidate_defaults_invalid_primary_quote_channel_to_sms():
+    [candidate] = select_candidates(
+        [_state("Q-channel", channel="fax")],
+        [_scored("Q-channel", "90")],
+        NOW,
+        Decimal("72"),
+    )
+
+    assert candidate.channel == "sms"

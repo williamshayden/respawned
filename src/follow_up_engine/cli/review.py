@@ -12,12 +12,16 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from rich.console import Console
+from rich.markup import escape
+from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.table import Table
+from rich.text import Text
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
 from follow_up_engine.cli.outbox import enqueue_outbox
-from follow_up_engine.cli.ui import DEFAULT_CONSOLE, print_table, prompt_choice
+from follow_up_engine.cli.ui import DEFAULT_CONSOLE, prompt_choice
 from follow_up_engine.core.candidates import Candidate
 from follow_up_engine.core.draft import draft_follow_up
 from follow_up_engine.core.helpers.payload import DraftPayload
@@ -43,6 +47,8 @@ LATEST_CANDIDATES_QUERY = text(
         candidates.run_at,
         candidates.primary_quote_id,
         candidates.customer_phone,
+        candidates.customer_name,
+        candidates.channel,
         candidates.reason,
         candidates.score,
         candidates.other_quote_ids
@@ -78,6 +84,7 @@ class PersistedDraft:
     created_at: datetime
     updated_at: datetime
     reviewed_at: datetime | None
+    channel: str = "sms"
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,7 +149,8 @@ def _load_candidate_draft(
             """
             SELECT
                 id, candidate_id, customer_phone, primary_quote_id,
-                quote_ids, body, status, created_at, updated_at, reviewed_at
+                quote_ids, body, status, created_at, updated_at, reviewed_at,
+                channel
             FROM drafts
             WHERE candidate_id = :candidate_id
             """
@@ -164,7 +172,8 @@ def _load_draft(
             """
             SELECT
                 id, candidate_id, customer_phone, primary_quote_id,
-                quote_ids, body, status, created_at, updated_at, reviewed_at
+                quote_ids, body, status, created_at, updated_at, reviewed_at,
+                channel
             FROM drafts
             WHERE id = :draft_id
             """
@@ -263,10 +272,10 @@ def draft_candidate(
             """
             INSERT INTO drafts (
                 id, candidate_id, customer_phone, primary_quote_id,
-                quote_ids, body, status, created_at, updated_at
+                quote_ids, body, status, created_at, updated_at, channel
             ) VALUES (
                 :id, :candidate_id, :customer_phone, :primary_quote_id,
-                :quote_ids, :body, 'pending', :now, :now
+                :quote_ids, :body, 'pending', :now, :now, :channel
             )
             ON CONFLICT (candidate_id) DO NOTHING
             """
@@ -279,6 +288,7 @@ def draft_candidate(
             "quote_ids": list(quote_ids),
             "body": body,
             "now": now,
+            "channel": candidate.channel,
         },
     )
     persisted = _load_candidate_draft(connection, candidate.id)
@@ -406,7 +416,7 @@ def approve_draft(
     now: datetime,
     policy: Policy,
 ) -> int:
-    """Recheck live safety constraints and reserve one idempotent SMS send."""
+    """Recheck live safety constraints and reserve one idempotent send."""
     now = _aware_utc(now, "now")
     unlocked_draft = _load_draft(connection, draft_id)
     phone_key = _phone_key(unlocked_draft.customer_phone)
@@ -459,7 +469,7 @@ def approve_draft(
         connection,
         draft_id=str(draft.id),
         body=draft.body,
-        channel="sms",
+        channel=draft.channel,
         customer_phone=draft.customer_phone,
         created_at=now,
     )
@@ -551,12 +561,13 @@ def _default_message_prompt(draft: PersistedDraft, console: Console) -> str:
 
 
 def _show_draft(draft: PersistedDraft, *, console: Console) -> None:
-    print_table(
-        title="Follow-up review",
-        columns=("Quote", "Customer phone", "Message"),
-        rows=((draft.primary_quote_id, draft.customer_phone, draft.body),),
-        console=console,
-    )
+    context = Text()
+    context.append("Quote: ", style="bold")
+    context.append(draft.primary_quote_id)
+    context.append("\nPhone: ", style="bold")
+    context.append(draft.customer_phone)
+    console.print(context)
+    console.print(Panel(Text(draft.body), title="Draft message", expand=True))
 
 
 def _show_candidate_queue(
@@ -564,21 +575,26 @@ def _show_candidate_queue(
     *,
     console: Console,
 ) -> None:
-    print_table(
-        title="Pending follow-ups",
-        columns=("Rank", "Primary quote", "Customer phone", "Reason", "Score"),
-        rows=(
-            (
-                rank,
-                candidate.primary_quote_id,
-                candidate.customer_phone,
-                candidate.reason,
-                candidate.score,
-            )
-            for rank, candidate in enumerate(candidates, start=1)
-        ),
-        console=console,
-    )
+    table = Table(title="Pending follow-ups", box=None, expand=True, padding=(0, 1))
+    table.add_column("#", justify="right", no_wrap=True)
+    table.add_column("Customer", min_width=12, no_wrap=True)
+    table.add_column("Quote", overflow="fold")
+    table.add_column("Reason", overflow="fold")
+    table.add_column("Score", justify="right", no_wrap=True)
+    for rank, candidate in enumerate(candidates, start=1):
+        customer_name = str(getattr(candidate, "customer_name", "") or "").strip()
+        customer = "\n".join(
+            value for value in (customer_name, candidate.customer_phone) if value
+        )
+        reason = candidate.reason.replace("_", " ").strip().capitalize()
+        table.add_row(
+            str(rank),
+            customer,
+            candidate.primary_quote_id,
+            reason,
+            f"{candidate.score:.1f}",
+        )
+    console.print(table)
 
 
 def _utc_now() -> datetime:
@@ -623,10 +639,13 @@ def run_review(
         _show_draft(draft, console=console)
         while True:
             action = action_prompt(
-                "Action: [a]pprove [r]eject [m]essage [s]kip",
-                choices=("a", "r", "m", "s"),
+                escape("Action: [A]pprove, [R]eject, [E]dit, [S]kip"),
+                choices=("a", "r", "e", "s"),
                 default="s",
                 console=console,
+                case_sensitive=False,
+                show_choices=False,
+                show_default=False,
             )
             if action == "s":
                 skipped += 1

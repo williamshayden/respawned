@@ -161,6 +161,39 @@ def test_last_outbound_uses_latest_qualifying_stream_event(postgres_connection):
     assert state.last_outbound_at == datetime(2026, 8, 18, 20, tzinfo=UTC)
 
 
+def test_channel_uses_latest_non_null_event_evidence(postgres_connection):
+    quote_id = "Q-CHANNEL-LATEST"
+    postgres_connection.execute(
+        text(
+            """
+            INSERT INTO quotes (id, customer_name, customer_phone, status)
+            VALUES (:quote_id, 'Channel Customer', '+13125550199', 'open')
+            """
+        ),
+        {"quote_id": quote_id},
+    )
+    postgres_connection.execute(
+        text(
+            """
+            INSERT INTO events (
+                event_id, type, quote_id, "timestamp", channel
+            ) VALUES
+                ('00000000-0000-0000-0000-000000000091',
+                 'quote_sent', :quote_id, '2026-08-18T10:00:00Z', 'sms'),
+                ('00000000-0000-0000-0000-000000000092',
+                 'customer_replied', :quote_id, '2026-08-19T10:00:00Z', 'email'),
+                ('00000000-0000-0000-0000-000000000093',
+                 'quote_viewed', :quote_id, '2026-08-20T10:00:00Z', NULL)
+            """
+        ),
+        {"quote_id": quote_id},
+    )
+
+    state = _state_for_quote(postgres_connection, quote_id)
+
+    assert state.channel == "email"
+
+
 def test_quote_accepted_overrides_open_seed_status(postgres_connection):
     postgres_connection.execute(
         text(
@@ -397,6 +430,7 @@ def test_reversed_event_insertion_order_produces_identical_state(
             datetime(2026, 8, 18, 23, 30, tzinfo=UTC),
             datetime(2026, 8, 19, 0, 30, tzinfo=UTC),
         ),
+        channel="sms",
     )
 
     assert state_forward == expected_state

@@ -25,6 +25,7 @@ class QuoteState:
     last_replied_at: datetime | None
     last_outbound_at: datetime | None
     view_timestamps: tuple[datetime, ...] = ()
+    channel: str | None = None
 
 
 QUOTE_STATES_QUERY = text(
@@ -42,7 +43,8 @@ QUOTE_STATES_QUERY = text(
         view_days,
         last_replied_at,
         last_outbound_at,
-        view_timestamps
+        view_timestamps,
+        channel
     FROM quote_states
     ORDER BY quote_id
     """

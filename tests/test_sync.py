@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from sqlalchemy import text
 
+from follow_up_engine.cli.review import load_latest_candidates
 from follow_up_engine.cli.sync import compute_candidates, sync_candidates
 from follow_up_engine.core.context import BusinessContext
 from follow_up_engine.core.reduce import QuoteState
@@ -60,7 +61,13 @@ def _replied_only_policy() -> Policy:
     )
 
 
-def _insert_replied_quote(connection, quote_id: str) -> None:
+def _insert_replied_quote(
+    connection,
+    quote_id: str,
+    *,
+    channel: str = "sms",
+    customer_name: str = "Sync Customer",
+) -> None:
     connection.execute(
         text(
             """
@@ -68,12 +75,16 @@ def _insert_replied_quote(connection, quote_id: str) -> None:
                 id, customer_name, customer_phone, tech_name,
                 amount, status, created_at, last_contact_at
             ) VALUES (
-                :id, 'Sync Customer', '+13125559999', 'Sam',
+                :id, :customer_name, '+13125559999', 'Sam',
                 99999, 'open', :created_at, NULL
             )
             """
         ),
-        {"id": quote_id, "created_at": NOW - timedelta(days=2)},
+        {
+            "id": quote_id,
+            "customer_name": customer_name,
+            "created_at": NOW - timedelta(days=2),
+        },
     )
     connection.execute(
         text(
@@ -81,9 +92,9 @@ def _insert_replied_quote(connection, quote_id: str) -> None:
             INSERT INTO events (
                 event_id, type, quote_id, "timestamp", channel, direction
             ) VALUES (
-                :sent_id, 'quote_sent', :quote_id, :sent_at, 'sms', 'outbound'
+                :sent_id, 'quote_sent', :quote_id, :sent_at, :channel, 'outbound'
             ), (
-                :reply_id, 'customer_replied', :quote_id, :reply_at, 'sms', 'inbound'
+                :reply_id, 'customer_replied', :quote_id, :reply_at, :channel, 'inbound'
             )
             """
         ),
@@ -91,6 +102,7 @@ def _insert_replied_quote(connection, quote_id: str) -> None:
             "sent_id": uuid4(),
             "reply_id": uuid4(),
             "quote_id": quote_id,
+            "channel": channel,
             "sent_at": NOW - timedelta(days=2),
             "reply_at": NOW - timedelta(hours=1),
         },
@@ -182,3 +194,27 @@ def test_dry_run_computes_candidates_without_writing(postgres_connection):
     assert result.inserted_count == len(result.candidates)
     assert _table_count(postgres_connection, "candidates") == before_candidates
     assert _table_count(postgres_connection, "sync_runs") == before_runs
+
+
+def test_sync_retains_channel_and_customer_name_for_review(postgres_connection):
+    quote_id = "SYNC-EMAIL-CHANNEL-Q"
+    _insert_replied_quote(
+        postgres_connection,
+        quote_id,
+        channel="email",
+        customer_name="Email Customer",
+    )
+
+    sync_candidates(
+        postgres_connection,
+        now=NOW,
+        policy=load_policy(DEFAULT_POLICY_PATH),
+    )
+    loaded = next(
+        candidate
+        for candidate in load_latest_candidates(postgres_connection)
+        if candidate.primary_quote_id == quote_id
+    )
+
+    assert loaded.channel == "email"
+    assert loaded.customer_name == "Email Customer"

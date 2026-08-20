@@ -43,15 +43,26 @@ CREATE TABLE IF NOT EXISTS candidates (
     run_at            TIMESTAMPTZ NOT NULL,
     primary_quote_id  TEXT NOT NULL REFERENCES quotes(id),
     customer_phone    TEXT NOT NULL,
+    customer_name     TEXT NOT NULL DEFAULT '',
+    channel           TEXT NOT NULL DEFAULT 'sms'
+                          CHECK (channel IN ('email', 'sms')),
     reason            TEXT NOT NULL,
     score             NUMERIC NOT NULL,
     other_quote_ids   TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]
 );
 
+ALTER TABLE candidates
+    ADD COLUMN IF NOT EXISTS customer_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE candidates
+    ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'sms'
+        CHECK (channel IN ('email', 'sms'));
+
 CREATE TABLE IF NOT EXISTS drafts (
     id                UUID PRIMARY KEY,
     candidate_id      UUID NOT NULL UNIQUE REFERENCES candidates(id),
     customer_phone    TEXT NOT NULL CHECK (btrim(customer_phone) <> ''),
+    channel           TEXT NOT NULL DEFAULT 'sms'
+                          CHECK (channel IN ('email', 'sms')),
     primary_quote_id  TEXT NOT NULL REFERENCES quotes(id),
     quote_ids         TEXT[] NOT NULL,
     body              TEXT NOT NULL CHECK (btrim(body) <> ''),
@@ -63,6 +74,10 @@ CREATE TABLE IF NOT EXISTS drafts (
     CHECK (cardinality(quote_ids) > 0),
     CHECK (primary_quote_id = ANY(quote_ids))
 );
+
+ALTER TABLE drafts
+    ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'sms'
+        CHECK (channel IN ('email', 'sms'));
 
 CREATE INDEX IF NOT EXISTS idx_events_quote_id ON events(quote_id);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events("timestamp");
@@ -137,7 +152,15 @@ SELECT
             WHERE deduplicated_events.type = 'message_sent'
               AND deduplicated_events.direction = 'outbound'
         )
-    ) AS last_outbound_at
+    ) AS last_outbound_at,
+    (
+        ARRAY_AGG(
+            deduplicated_events.channel
+            ORDER BY
+                deduplicated_events."timestamp" DESC,
+                deduplicated_events.event_id DESC
+        ) FILTER (WHERE deduplicated_events.channel IS NOT NULL)
+    )[1] AS channel
 FROM quotes
 LEFT JOIN deduplicated_events ON deduplicated_events.quote_id = quotes.id
 GROUP BY

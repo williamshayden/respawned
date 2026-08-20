@@ -22,6 +22,8 @@ class Candidate:
     reason: str
     score: Decimal
     other_quote_ids: tuple[str, ...]
+    channel: str = "sms"
+    customer_name: str = ""
 
 
 def _phone_key(phone: str | None) -> str | None:
@@ -128,6 +130,7 @@ def select_candidates(
 
         customer_scores.sort(key=lambda item: (-item.score, item.quote_id))
         primary = customer_scores[0]
+        primary_state = state_by_id[primary.quote_id]
         open_quote_ids = tuple(
             sorted({state.quote_id for state in siblings if _is_open(state)})
         )
@@ -145,9 +148,15 @@ def select_candidates(
                 run_at=run_at,
                 primary_quote_id=primary.quote_id,
                 customer_phone=phone,
+                customer_name=primary_state.customer_name,
                 reason=primary.primary_reason,
                 score=primary.score,
                 other_quote_ids=other_quote_ids,
+                channel=(
+                    primary_state.channel
+                    if primary_state.channel in {"email", "sms"}
+                    else "sms"
+                ),
             )
         )
 
