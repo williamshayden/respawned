@@ -4,7 +4,7 @@ from decimal import Decimal
 from sqlalchemy import text
 
 from follow_up_engine.core.context import BusinessContext
-from follow_up_engine.core.reduce import reduce_quotes
+from follow_up_engine.core.reduce import QuoteState, reduce_quotes
 
 
 NOW = datetime(2026, 8, 20, tzinfo=UTC)
@@ -159,3 +159,242 @@ def test_last_outbound_uses_latest_qualifying_stream_event(postgres_connection):
     state = _state_for_quote(postgres_connection, "Q-1003")
 
     assert state.last_outbound_at == datetime(2026, 8, 18, 20, tzinfo=UTC)
+
+
+def test_quote_accepted_overrides_open_seed_status(postgres_connection):
+    postgres_connection.execute(
+        text(
+            """
+            INSERT INTO quotes (
+                id,
+                customer_name,
+                customer_phone,
+                tech_name,
+                amount,
+                status,
+                created_at
+            )
+            VALUES (
+                'Q-T3-ACCEPT',
+                'Task Three Accept',
+                '+15550000031',
+                'Test Tech',
+                123.00,
+                'open',
+                '2026-08-14T10:00:00Z'
+            )
+            """
+        )
+    )
+    postgres_connection.execute(
+        text(
+            """
+            INSERT INTO events (event_id, type, quote_id, "timestamp")
+            VALUES (
+                '00000000-0000-0000-0000-000000000031',
+                'quote_accepted',
+                'Q-T3-ACCEPT',
+                '2026-08-15T10:00:00Z'
+            )
+            """
+        )
+    )
+
+    state = _state_for_quote(
+        postgres_connection,
+        'Q-T3-ACCEPT',
+        business_context=BusinessContext("UTC"),
+    )
+
+    assert state.status == "accepted"
+
+
+def test_dismissed_seed_status_is_preserved_without_acceptance(postgres_connection):
+    postgres_connection.execute(
+        text(
+            """
+            INSERT INTO quotes (
+                id,
+                customer_name,
+                customer_phone,
+                tech_name,
+                amount,
+                status,
+                created_at
+            )
+            VALUES (
+                'Q-T3-DISMISSED',
+                'Task Three Dismissed',
+                '+15550000032',
+                'Test Tech',
+                234.00,
+                'dismissed',
+                '2026-08-14T10:00:00Z'
+            )
+            """
+        )
+    )
+
+    state = _state_for_quote(
+        postgres_connection,
+        'Q-T3-DISMISSED',
+        business_context=BusinessContext("UTC"),
+    )
+
+    assert state.status == "dismissed"
+
+
+def test_reversed_event_insertion_order_produces_identical_state(
+    postgres_connection,
+):
+    quote_id = "Q-T3-ORDER"
+    postgres_connection.execute(
+        text(
+            """
+            INSERT INTO quotes (
+                id,
+                customer_name,
+                customer_phone,
+                tech_name,
+                amount,
+                status,
+                created_at,
+                last_contact_at
+            )
+            VALUES (
+                :quote_id,
+                'Task Three Order',
+                '+15550000033',
+                'Test Tech',
+                321.00,
+                'open',
+                '2026-08-14T09:00:00Z',
+                '2026-08-18T15:00:00Z'
+            )
+            """
+        ),
+        {"quote_id": quote_id},
+    )
+
+    events = [
+        {
+            "event_id": "00000000-0000-0000-0000-000000000041",
+            "type": "quote_sent",
+            "timestamp": datetime(2026, 8, 16, 12, tzinfo=UTC),
+            "channel": None,
+            "direction": None,
+        },
+        {
+            "event_id": "00000000-0000-0000-0000-000000000042",
+            "type": "quote_sent",
+            "timestamp": datetime(2026, 8, 15, 12, tzinfo=UTC),
+            "channel": None,
+            "direction": None,
+        },
+        {
+            "event_id": "00000000-0000-0000-0000-000000000043",
+            "type": "quote_viewed",
+            "timestamp": datetime(2026, 8, 18, 23, 30, tzinfo=UTC),
+            "channel": None,
+            "direction": None,
+        },
+        {
+            "event_id": "00000000-0000-0000-0000-000000000044",
+            "type": "quote_viewed",
+            "timestamp": datetime(2026, 8, 19, 0, 30, tzinfo=UTC),
+            "channel": None,
+            "direction": None,
+        },
+        {
+            "event_id": "00000000-0000-0000-0000-000000000045",
+            "type": "customer_replied",
+            "timestamp": datetime(2026, 8, 17, 10, tzinfo=UTC),
+            "channel": "sms",
+            "direction": "inbound",
+        },
+        {
+            "event_id": "00000000-0000-0000-0000-000000000046",
+            "type": "customer_replied",
+            "timestamp": datetime(2026, 8, 18, 10, tzinfo=UTC),
+            "channel": "sms",
+            "direction": "inbound",
+        },
+        {
+            "event_id": "00000000-0000-0000-0000-000000000047",
+            "type": "message_sent",
+            "timestamp": datetime(2026, 8, 18, 14, tzinfo=UTC),
+            "channel": "sms",
+            "direction": "outbound",
+        },
+        {
+            "event_id": "00000000-0000-0000-0000-000000000048",
+            "type": "message_sent",
+            "timestamp": datetime(2026, 8, 19, 10, tzinfo=UTC),
+            "channel": "sms",
+            "direction": "outbound",
+        },
+    ]
+    insert_events = text(
+        """
+        INSERT INTO events (
+            event_id,
+            type,
+            quote_id,
+            "timestamp",
+            channel,
+            direction
+        )
+        VALUES (
+            :event_id,
+            :type,
+            :quote_id,
+            :timestamp,
+            :channel,
+            :direction
+        )
+        """
+    )
+
+    def load_events(rows):
+        postgres_connection.execute(
+            insert_events,
+            [{**row, "quote_id": quote_id} for row in rows],
+        )
+
+    context = BusinessContext("America/Chicago")
+    load_events(events)
+    state_forward = _state_for_quote(
+        postgres_connection,
+        quote_id,
+        business_context=context,
+    )
+
+    postgres_connection.execute(
+        text("DELETE FROM events WHERE quote_id = :quote_id"),
+        {"quote_id": quote_id},
+    )
+    load_events(reversed(events))
+    state_reverse = _state_for_quote(
+        postgres_connection,
+        quote_id,
+        business_context=context,
+    )
+
+    expected_state = QuoteState(
+        quote_id=quote_id,
+        status="open",
+        amount=Decimal("321.00"),
+        customer_name="Task Three Order",
+        customer_phone="+15550000033",
+        tech_name="Test Tech",
+        created_at=datetime(2026, 8, 14, 9, tzinfo=UTC),
+        quote_sent_at=datetime(2026, 8, 15, 12, tzinfo=UTC),
+        last_viewed_at=datetime(2026, 8, 19, 0, 30, tzinfo=UTC),
+        view_days=1,
+        last_replied_at=datetime(2026, 8, 18, 10, tzinfo=UTC),
+        last_outbound_at=datetime(2026, 8, 19, 10, tzinfo=UTC),
+    )
+
+    assert state_forward == expected_state
+    assert state_reverse == expected_state
+    assert state_reverse == state_forward

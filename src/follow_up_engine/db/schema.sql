@@ -42,7 +42,14 @@ WITH deduplicated_events AS (
 )
 SELECT
     quotes.id AS quote_id,
-    quotes.status,
+    CASE
+        WHEN quotes.status = 'open'
+         AND COUNT(*) FILTER (
+             WHERE deduplicated_events.type = 'quote_accepted'
+         ) > 0
+        THEN 'accepted'
+        ELSE quotes.status
+    END AS status,
     quotes.amount,
     quotes.customer_name,
     quotes.customer_phone,
