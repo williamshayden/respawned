@@ -1,0 +1,1 @@
+"""Core quote-reduction interfaces."""

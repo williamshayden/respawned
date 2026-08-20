@@ -21,3 +21,50 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_quote_id ON events(quote_id);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events("timestamp");
 CREATE INDEX IF NOT EXISTS idx_quotes_status ON quotes(status);
+
+CREATE OR REPLACE VIEW quote_states AS
+WITH deduplicated_events AS (
+    SELECT DISTINCT ON (event_id)
+        event_id,
+        type,
+        quote_id,
+        "timestamp",
+        channel,
+        direction
+    FROM events
+    ORDER BY
+        event_id,
+        "timestamp" ASC,
+        quote_id ASC,
+        type ASC,
+        channel ASC NULLS FIRST,
+        direction ASC NULLS FIRST
+)
+SELECT
+    quotes.id AS quote_id,
+    quotes.status,
+    quotes.amount,
+    quotes.customer_name,
+    quotes.customer_phone,
+    quotes.tech_name,
+    quotes.created_at,
+    MIN(deduplicated_events."timestamp")
+        FILTER (WHERE deduplicated_events.type = 'quote_sent') AS quote_sent_at,
+    MAX(deduplicated_events."timestamp")
+        FILTER (WHERE deduplicated_events.type = 'quote_viewed') AS last_viewed_at,
+    COUNT(DISTINCT (deduplicated_events."timestamp" AT TIME ZONE 'UTC')::date)
+        FILTER (WHERE deduplicated_events.type = 'quote_viewed') AS view_days,
+    MAX(deduplicated_events."timestamp")
+        FILTER (WHERE deduplicated_events.type = 'customer_replied') AS last_replied_at,
+    quotes.last_contact_at AS last_outbound_at
+FROM quotes
+LEFT JOIN deduplicated_events ON deduplicated_events.quote_id = quotes.id
+GROUP BY
+    quotes.id,
+    quotes.status,
+    quotes.amount,
+    quotes.customer_name,
+    quotes.customer_phone,
+    quotes.tech_name,
+    quotes.created_at,
+    quotes.last_contact_at;
