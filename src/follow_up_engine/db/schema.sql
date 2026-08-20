@@ -30,9 +30,30 @@ CREATE TABLE IF NOT EXISTS outbox (
     customer_phone  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS sync_runs (
+    id               UUID PRIMARY KEY,
+    run_at           TIMESTAMPTZ NOT NULL,
+    candidate_count  INTEGER NOT NULL CHECK (candidate_count >= 0),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS candidates (
+    id                UUID PRIMARY KEY,
+    sync_run_id       UUID NOT NULL REFERENCES sync_runs(id),
+    run_at            TIMESTAMPTZ NOT NULL,
+    primary_quote_id  TEXT NOT NULL REFERENCES quotes(id),
+    customer_phone    TEXT NOT NULL,
+    reason            TEXT NOT NULL,
+    score             NUMERIC NOT NULL,
+    other_quote_ids   TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_quote_id ON events(quote_id);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events("timestamp");
 CREATE INDEX IF NOT EXISTS idx_quotes_status ON quotes(status);
+CREATE INDEX IF NOT EXISTS idx_candidates_run_at ON candidates(run_at DESC);
+CREATE INDEX IF NOT EXISTS idx_candidates_customer_phone
+    ON candidates(customer_phone);
 
 CREATE OR REPLACE VIEW quote_states AS
 WITH deduplicated_events AS (
