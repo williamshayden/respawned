@@ -17,10 +17,20 @@ class LLMAdapterError(RuntimeError):
     """Raised when the proxy response does not contain usable copy."""
 
 
-def _default_completion(**kwargs: Any) -> Any:
-    from litellm import completion
+def _default_completion(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: Sequence[ChatMessage],
+) -> Any:
+    from openai import OpenAI
 
-    return completion(**kwargs)
+    client = OpenAI(base_url=base_url, api_key=api_key)
+    return client.chat.completions.create(
+        model=model,
+        messages=list(messages),
+    )
 
 
 def _response_content(response: Any) -> str:
@@ -79,9 +89,9 @@ class LiteLLMAdapter:
     def complete(self, messages: Sequence[ChatMessage]) -> str:
         """Return the assistant text from one proxy completion."""
         response = self.completion_fn(
-            model=f"openai/{self.model_alias}",
+            model=self.model_alias,
             messages=list(messages),
-            api_base=self.proxy_url,
+            base_url=self.proxy_url,
             api_key=self.master_key,
         )
         return _response_content(response)

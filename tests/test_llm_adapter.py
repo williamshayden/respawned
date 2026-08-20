@@ -1,9 +1,10 @@
+import sys
 from types import SimpleNamespace
 
 from follow_up_engine.llm.adapter import LiteLLMAdapter
 
 
-def test_adapter_addresses_proxy_alias_through_openai_compatible_client():
+def test_adapter_sends_unprefixed_alias_to_proxy_request():
     captured = {}
 
     def fake_completion(**kwargs):
@@ -26,10 +27,61 @@ def test_adapter_addresses_proxy_alias_through_openai_compatible_client():
 
     assert adapter.complete(messages) == "Hi John, just checking in."
     assert captured == {
-        "model": "openai/follow-up-model",
+        "model": "follow-up-model",
         "messages": messages,
-        "api_base": "http://proxy.test:4000",
+        "base_url": "http://proxy.test:4000",
         "api_key": "sk-test",
+    }
+
+
+def test_default_request_uses_openai_client_against_proxy(monkeypatch):
+    captured = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            captured["request"] = kwargs
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="Hi John, just checking in."
+                        )
+                    )
+                ]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured["client"] = kwargs
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=FakeOpenAI))
+    monkeypatch.setitem(
+        sys.modules,
+        "litellm",
+        SimpleNamespace(
+            completion=lambda **_kwargs: (_ for _ in ()).throw(
+                AssertionError("legacy LiteLLM SDK request path was used")
+            )
+        ),
+    )
+    adapter = LiteLLMAdapter(
+        proxy_url="http://proxy.test:4000/",
+        master_key="sk-test",
+        model_alias="follow-up-model",
+    )
+    messages = [{"role": "user", "content": "Draft a follow-up."}]
+
+    assert adapter.complete(messages) == "Hi John, just checking in."
+    assert captured == {
+        "client": {
+            "base_url": "http://proxy.test:4000",
+            "api_key": "sk-test",
+        },
+        "request": {
+            "model": "follow-up-model",
+            "messages": messages,
+        },
     }
 
 
