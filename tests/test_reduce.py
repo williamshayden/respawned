@@ -17,7 +17,7 @@ def _state_for_quote(connection, quote_id: str):
     )
 
 
-def test_duplicate_event_id_does_not_inflate_view_days(postgres_connection):
+def test_loaded_duplicate_event_id_produces_expected_view_state(postgres_connection):
     state = _state_for_quote(postgres_connection, "Q-1015")
 
     assert state.quote_id == "Q-1015"
@@ -32,6 +32,25 @@ def test_duplicate_event_id_does_not_inflate_view_days(postgres_connection):
     assert state.view_days == 1
     assert state.last_replied_at == datetime(2026, 8, 11, 19, tzinfo=UTC)
     assert state.last_outbound_at is None
+
+
+def test_duplicate_event_id_uses_deterministic_view_event(postgres_connection):
+    postgres_connection.execute(text("ALTER TABLE events DROP CONSTRAINT events_pkey"))
+    postgres_connection.execute(
+        text(
+            """
+            INSERT INTO events (event_id, type, quote_id, "timestamp")
+            VALUES
+                ('00000000-0000-0000-0000-000000000004', 'quote_viewed', 'Q-1003', '2026-08-18T23:30:00Z'),
+                ('00000000-0000-0000-0000-000000000004', 'quote_viewed', 'Q-1003', '2026-08-19T00:01:00Z')
+            """
+        )
+    )
+
+    state = _state_for_quote(postgres_connection, "Q-1003")
+
+    assert state.last_viewed_at == datetime(2026, 8, 18, 23, 30, tzinfo=UTC)
+    assert state.view_days == 1
 
 
 def test_view_days_counts_distinct_utc_dates(postgres_connection):

@@ -115,5 +115,9 @@ def postgres_connection(app_stack: ComposeStack):
         )
     )
     with engine.connect() as connection:
-        yield connection
+        transaction = connection.begin()
+        try:
+            yield connection
+        finally:
+            transaction.rollback()
     engine.dispose()
