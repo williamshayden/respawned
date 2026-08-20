@@ -4,8 +4,14 @@ cooldown_hours: 72
 dead_after_days: 45
 high_pct: 0.75
 
+drafting:
+  sign_off: Service Team
+  max_characters: 320
+  require_tech_name: false
+
 reasons:
   replied_no_answer:
+    tone: helpful and responsive
     base: 60
     amount_weight: 15
     recency_weight: 25
@@ -13,6 +19,7 @@ reasons:
     priority: 1
 
   viewed_no_reply:
+    tone: warm and low-pressure
     base: 45
     amount_weight: 20
     recency_weight: 20
@@ -21,6 +28,7 @@ reasons:
     priority: 3
 
   high_value_quiet:
+    tone: professional and attentive
     base: 40
     amount_weight: 30
     recency_weight: 20
@@ -29,6 +37,7 @@ reasons:
     priority: 4
 
   repeat_views:
+    tone: friendly and concise
     base: 55
     amount_weight: 15
     recency_weight: 25
@@ -37,6 +46,7 @@ reasons:
     priority: 2
 
   aging:
+    tone: courteous final check-in
     base: 30
     amount_weight: 15
     recency_weight: 25

@@ -62,13 +62,16 @@ def _reason_names(scored_quote) -> tuple[str, ...]:
     return tuple(item.reason for item in scored_quote.matched_reasons)
 
 
-def test_default_policy_loads_business_timezone_and_five_reasons():
+def test_default_policy_loads_scoring_and_drafting_settings():
     policy = _default_policy()
 
     assert policy.business_context == BusinessContext("UTC")
     assert policy.cooldown_hours == Decimal("72")
     assert policy.dead_after_days == 45
     assert policy.high_pct == Decimal("0.75")
+    assert policy.drafting.sign_off == "Service Team"
+    assert policy.drafting.max_characters == 320
+    assert policy.drafting.require_tech_name is False
     assert set(policy.reasons) == {
         "replied_no_answer",
         "viewed_no_reply",
@@ -76,6 +79,7 @@ def test_default_policy_loads_business_timezone_and_five_reasons():
         "repeat_views",
         "aging",
     }
+    assert all(reason.tone.strip() for reason in policy.reasons.values())
 
 
 def test_terminal_and_non_open_quotes_never_score():

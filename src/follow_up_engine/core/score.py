@@ -37,6 +37,14 @@ class ReasonPolicy:
     quiet_days: int = 0
     min_view_days: int = 0
     aging_days: int = 0
+    tone: str = "professional check-in"
+
+
+@dataclass(frozen=True, slots=True)
+class DraftingPolicy:
+    sign_off: str = "Service Team"
+    max_characters: int = 320
+    require_tech_name: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +54,7 @@ class Policy:
     dead_after_days: int
     high_pct: Decimal
     reasons: Mapping[str, ReasonPolicy]
+    drafting: DraftingPolicy = DraftingPolicy()
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +105,12 @@ def _nonnegative_int(value: object, field: str) -> int:
     return converted
 
 
+def _nonempty_string(value: object, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Invalid text policy field {field!r}")
+    return value.strip()
+
+
 def load_policy(path: str | Path) -> Policy:
     """Load and minimally validate a scoring policy YAML file."""
     policy_path = Path(path)
@@ -114,6 +129,7 @@ def load_policy(path: str | Path) -> Policy:
         )
         high_pct = _decimal(raw["high_pct"], "high_pct")
         raw_reasons = raw["reasons"]
+        raw_drafting = raw.get("drafting", {})
     except KeyError as exc:
         raise ValueError(f"Policy {policy_path} is missing {exc.args[0]!r}") from exc
 
@@ -125,6 +141,27 @@ def load_policy(path: str | Path) -> Policy:
         raise ValueError("high_pct must be greater than zero and at most one")
     if not isinstance(raw_reasons, dict):
         raise ValueError("reasons must be a mapping")
+    if not isinstance(raw_drafting, dict):
+        raise ValueError("drafting must be a mapping")
+
+    require_tech_name = raw_drafting.get("require_tech_name", False)
+    if not isinstance(require_tech_name, bool):
+        raise ValueError(
+            "Invalid boolean policy field 'drafting.require_tech_name'"
+        )
+    drafting = DraftingPolicy(
+        sign_off=_nonempty_string(
+            raw_drafting.get("sign_off", "Service Team"),
+            "drafting.sign_off",
+        ),
+        max_characters=_nonnegative_int(
+            raw_drafting.get("max_characters", 320),
+            "drafting.max_characters",
+        ),
+        require_tech_name=require_tech_name,
+    )
+    if drafting.max_characters <= 0:
+        raise ValueError("drafting.max_characters must be positive")
 
     unknown = set(raw_reasons) - KNOWN_REASONS
     if unknown:
@@ -162,6 +199,10 @@ def load_policy(path: str | Path) -> Policy:
                 aging_days=_nonnegative_int(
                     values.get("aging_days", 0), f"{reason}.aging_days"
                 ),
+                tone=_nonempty_string(
+                    values.get("tone", "professional check-in"),
+                    f"{reason}.tone",
+                ),
             )
         except KeyError as exc:
             raise ValueError(
@@ -183,6 +224,7 @@ def load_policy(path: str | Path) -> Policy:
         dead_after_days=dead_after_days,
         high_pct=high_pct,
         reasons=reasons,
+        drafting=drafting,
     )
 
 

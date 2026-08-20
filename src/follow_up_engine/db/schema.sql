@@ -48,12 +48,30 @@ CREATE TABLE IF NOT EXISTS candidates (
     other_quote_ids   TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]
 );
 
+CREATE TABLE IF NOT EXISTS drafts (
+    id                UUID PRIMARY KEY,
+    candidate_id      UUID NOT NULL UNIQUE REFERENCES candidates(id),
+    customer_phone    TEXT NOT NULL CHECK (btrim(customer_phone) <> ''),
+    primary_quote_id  TEXT NOT NULL REFERENCES quotes(id),
+    quote_ids         TEXT[] NOT NULL,
+    body              TEXT NOT NULL CHECK (btrim(body) <> ''),
+    status            TEXT NOT NULL DEFAULT 'pending'
+                          CHECK (status IN ('pending', 'approved', 'rejected')),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at       TIMESTAMPTZ,
+    CHECK (cardinality(quote_ids) > 0),
+    CHECK (primary_quote_id = ANY(quote_ids))
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_quote_id ON events(quote_id);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events("timestamp");
 CREATE INDEX IF NOT EXISTS idx_quotes_status ON quotes(status);
 CREATE INDEX IF NOT EXISTS idx_candidates_run_at ON candidates(run_at DESC);
 CREATE INDEX IF NOT EXISTS idx_candidates_customer_phone
     ON candidates(customer_phone);
+CREATE INDEX IF NOT EXISTS idx_drafts_status_created_at
+    ON drafts(status, created_at);
 
 CREATE OR REPLACE VIEW quote_states AS
 WITH deduplicated_events AS (
