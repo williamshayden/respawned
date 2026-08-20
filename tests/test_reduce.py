@@ -393,6 +393,10 @@ def test_reversed_event_insertion_order_produces_identical_state(
         view_days=1,
         last_replied_at=datetime(2026, 8, 18, 10, tzinfo=UTC),
         last_outbound_at=datetime(2026, 8, 19, 10, tzinfo=UTC),
+        view_timestamps=(
+            datetime(2026, 8, 18, 23, 30, tzinfo=UTC),
+            datetime(2026, 8, 19, 0, 30, tzinfo=UTC),
+        ),
     )
 
     assert state_forward == expected_state
