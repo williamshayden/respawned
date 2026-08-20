@@ -1,5 +1,7 @@
 import importlib
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -75,6 +77,7 @@ def test_help_lists_available_commands(capsys):
     output = capsys.readouterr().out
     assert "load" in output
     assert "outbox" in output
+    assert "review" in output
     assert "sync" in output
 
 
@@ -140,6 +143,40 @@ def test_sync_command_delegates_arguments(monkeypatch, tmp_path):
             "--dry-run",
             "--limit",
             "4",
+            "--now",
+            "2026-08-20T12:00:00Z",
+            "--policy",
+            str(policy_path),
+        ]
+    ]
+
+
+def test_review_command_delegates_arguments(monkeypatch, tmp_path):
+    entrypoint = importlib.import_module("follow_up_engine.__main__")
+    review_module = ModuleType("follow_up_engine.cli.review")
+    policy_path = tmp_path / "policy.yaml"
+    delegated = []
+
+    def fake_review_main(argv):
+        delegated.append(argv)
+        return 23
+
+    review_module.main = fake_review_main
+    monkeypatch.setitem(sys.modules, "follow_up_engine.cli.review", review_module)
+
+    result = entrypoint.main(
+        [
+            "review",
+            "--now",
+            "2026-08-20T12:00:00Z",
+            "--policy",
+            str(policy_path),
+        ]
+    )
+
+    assert result == 23
+    assert delegated == [
+        [
             "--now",
             "2026-08-20T12:00:00Z",
             "--policy",

@@ -50,9 +50,15 @@ def _configure_sync(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--policy", type=Path)
 
 
+def _configure_review(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--now")
+    parser.add_argument("--policy", type=Path)
+
+
 COMMANDS = (
     CommandSpec("load", "Load configured source data into Postgres", _configure_load),
     CommandSpec("sync", "Refresh the prioritized follow-up candidates", _configure_sync),
+    CommandSpec("review", "Review the prioritized follow-up candidates", _configure_review),
     CommandSpec("outbox", "Export the delivery outbox to CSV", _configure_outbox),
 )
 
@@ -108,9 +114,21 @@ def _sync(args: argparse.Namespace) -> int:
     return sync_main(forwarded)
 
 
+def _review(args: argparse.Namespace) -> int:
+    from follow_up_engine.cli.review import main as review_main
+
+    forwarded: list[str] = []
+    if args.now is not None:
+        forwarded.extend(("--now", args.now))
+    if args.policy is not None:
+        forwarded.extend(("--policy", os.fspath(args.policy)))
+    return review_main(forwarded)
+
+
 DEFAULT_HANDLERS: Mapping[str, CommandHandler] = {
     "load": _load,
     "sync": _sync,
+    "review": _review,
     "outbox": _outbox,
 }
 
