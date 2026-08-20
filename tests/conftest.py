@@ -69,10 +69,15 @@ def _test_environment() -> dict[str, str]:
 
 
 @pytest.fixture(scope="session")
-def app_stack() -> ComposeStack:
+def compose_environment() -> dict[str, str]:
+    return _test_environment()
+
+
+@pytest.fixture(scope="session")
+def app_stack(compose_environment: dict[str, str]) -> ComposeStack:
     stack = ComposeStack(
         project=f"follow-up-engine-test-{os.getpid()}",
-        environment=_test_environment(),
+        environment=compose_environment,
     )
 
     try:

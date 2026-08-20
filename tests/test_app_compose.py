@@ -1,10 +1,39 @@
 import json
+import subprocess
+from pathlib import Path
 
 REQUIRED_SERVICES = {"app", "db", "litellm", "litellm_db"}
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _parse_compose_rows(output: str) -> list[dict]:
     return [json.loads(line) for line in output.splitlines() if line]
+
+
+def test_app_service_receives_litellm_proxy_configuration(compose_environment):
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "--profile",
+            "app",
+            "config",
+            "--format",
+            "json",
+        ],
+        cwd=ROOT,
+        env=compose_environment,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout
+    app_environment = json.loads(result.stdout)["services"]["app"]["environment"]
+    assert app_environment["LITELLM_PROXY_URL"] == "http://litellm:4000"
+    assert app_environment["LITELLM_MASTER_KEY"] == "sk-test-master-key"
+    assert app_environment["LITELLM_MODEL_ALIAS"] == "claude-5-sonnet"
 
 
 def test_app_startup_creates_required_services(app_stack):
