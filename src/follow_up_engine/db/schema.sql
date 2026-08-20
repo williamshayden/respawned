@@ -52,7 +52,15 @@ SELECT
         FILTER (WHERE deduplicated_events.type = 'quote_sent') AS quote_sent_at,
     MAX(deduplicated_events."timestamp")
         FILTER (WHERE deduplicated_events.type = 'quote_viewed') AS last_viewed_at,
-    COUNT(DISTINCT (deduplicated_events."timestamp" AT TIME ZONE 'UTC')::date)
+    COUNT(DISTINCT (
+        deduplicated_events."timestamp" AT TIME ZONE COALESCE(
+            NULLIF(
+                current_setting('follow_up_engine.business_timezone', true),
+                ''
+            ),
+            'UTC'
+        )
+    )::date)
         FILTER (WHERE deduplicated_events.type = 'quote_viewed') AS view_days,
     MAX(deduplicated_events."timestamp")
         FILTER (WHERE deduplicated_events.type = 'customer_replied') AS last_replied_at,

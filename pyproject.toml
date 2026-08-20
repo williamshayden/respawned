@@ -11,6 +11,7 @@ dependencies = [
     "litellm>=1.97.0",
     "psycopg2-binary>=2.9.12",
     "sqlalchemy>=2.0.52",
+    "tzdata>=2026.3",
 ]
 
 [project.scripts]

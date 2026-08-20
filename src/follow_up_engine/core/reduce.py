@@ -7,6 +7,8 @@ from decimal import Decimal
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from follow_up_engine.core.context import BusinessContext
+
 
 @dataclass(frozen=True, slots=True)
 class QuoteState:
@@ -44,9 +46,29 @@ QUOTE_STATES_QUERY = text(
     """
 )
 
+SET_BUSINESS_TIMEZONE_QUERY = text(
+    """
+    SELECT set_config(
+        'follow_up_engine.business_timezone',
+        :timezone_name,
+        true
+    )
+    """
+)
 
-def reduce_quotes(conn: Connection, now: datetime) -> list[QuoteState]:
+
+def reduce_quotes(
+    conn: Connection,
+    now: datetime,
+    *,
+    business_context: BusinessContext | None = None,
+) -> list[QuoteState]:
     """Return the current deterministic state for every quote."""
     _ = now
+    context = business_context or BusinessContext()
+    conn.execute(
+        SET_BUSINESS_TIMEZONE_QUERY,
+        {"timezone_name": context.timezone_name},
+    )
     rows = conn.execute(QUOTE_STATES_QUERY).mappings()
     return [QuoteState(**row) for row in rows]
