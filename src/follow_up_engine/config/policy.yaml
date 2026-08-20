@@ -1,0 +1,45 @@
+version: 1
+business_timezone: UTC
+cooldown_hours: 72
+dead_after_days: 45
+high_pct: 0.75
+
+reasons:
+  replied_no_answer:
+    base: 60
+    amount_weight: 15
+    recency_weight: 25
+    recency_days: 7
+    priority: 1
+
+  viewed_no_reply:
+    base: 45
+    amount_weight: 20
+    recency_weight: 20
+    recency_days: 7
+    min_signal_age_hours: 24
+    priority: 3
+
+  high_value_quiet:
+    base: 40
+    amount_weight: 30
+    recency_weight: 20
+    recency_days: 14
+    quiet_days: 3
+    priority: 4
+
+  repeat_views:
+    base: 55
+    amount_weight: 15
+    recency_weight: 25
+    recency_days: 7
+    min_view_days: 2
+    priority: 2
+
+  aging:
+    base: 30
+    amount_weight: 15
+    recency_weight: 25
+    recency_days: 14
+    aging_days: 14
+    priority: 5

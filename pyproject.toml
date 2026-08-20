@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "litellm>=1.97.0",
     "psycopg2-binary>=2.9.12",
+    "pyyaml>=6.0.2",
     "sqlalchemy>=2.0.52",
     "tzdata>=2026.3",
 ]

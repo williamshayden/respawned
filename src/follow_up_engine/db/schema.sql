@@ -69,6 +69,15 @@ SELECT
         )
     )::date)
         FILTER (WHERE deduplicated_events.type = 'quote_viewed') AS view_days,
+    COALESCE(
+        ARRAY_AGG(
+            deduplicated_events."timestamp"
+            ORDER BY
+                deduplicated_events."timestamp",
+                deduplicated_events.event_id
+        ) FILTER (WHERE deduplicated_events.type = 'quote_viewed'),
+        ARRAY[]::TIMESTAMPTZ[]
+    ) AS view_timestamps,
     MAX(deduplicated_events."timestamp")
         FILTER (WHERE deduplicated_events.type = 'customer_replied') AS last_replied_at,
     GREATEST(

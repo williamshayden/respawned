@@ -382,6 +382,7 @@ source = { editable = "." }
 dependencies = [
     { name = "litellm" },
     { name = "psycopg2-binary" },
+    { name = "pyyaml" },
     { name = "sqlalchemy" },
     { name = "tzdata" },
 ]
@@ -395,6 +396,7 @@ dev = [
 requires-dist = [
     { name = "litellm", specifier = ">=1.97.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.12" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "sqlalchemy", specifier = ">=2.0.52" },
     { name = "tzdata", specifier = ">=2026.3" },
 ]

@@ -24,6 +24,7 @@ class QuoteState:
     view_days: int
     last_replied_at: datetime | None
     last_outbound_at: datetime | None
+    view_timestamps: tuple[datetime, ...] = ()
 
 
 QUOTE_STATES_QUERY = text(
@@ -40,7 +41,8 @@ QUOTE_STATES_QUERY = text(
         last_viewed_at,
         view_days,
         last_replied_at,
-        last_outbound_at
+        last_outbound_at,
+        view_timestamps
     FROM quote_states
     ORDER BY quote_id
     """
@@ -71,4 +73,9 @@ def reduce_quotes(
         {"timezone_name": context.timezone_name},
     )
     rows = conn.execute(QUOTE_STATES_QUERY).mappings()
-    return [QuoteState(**row) for row in rows]
+    states: list[QuoteState] = []
+    for row in rows:
+        values = dict(row)
+        values["view_timestamps"] = tuple(values["view_timestamps"] or ())
+        states.append(QuoteState(**values))
+    return states
