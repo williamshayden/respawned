@@ -12,7 +12,6 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.exc import OperationalError
 
 DEFAULT_SCHEMA_PATH = Path(__file__).parent.parent / "schema.sql"
-SCHEMA_PATH = Path(os.getenv("SCHEMA_PATH", str(DEFAULT_SCHEMA_PATH)))
 
 
 def build_engine_url():
@@ -38,7 +37,7 @@ def get_engine():
 
 def create_tables(engine):
     """Create tables/indexes from schema.sql if they don't already exist."""
-    with open(SCHEMA_PATH) as f:
+    with DEFAULT_SCHEMA_PATH.open() as f:
         schema_sql = f.read()
     with engine.begin() as conn:
         conn.exec_driver_sql(schema_sql)

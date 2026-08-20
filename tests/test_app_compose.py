@@ -58,3 +58,11 @@ def test_app_startup_loads_seed_rows(app_stack):
 
     assert result.returncode == 0, result.stdout
     assert result.stdout.strip() == "30|82"
+
+
+def test_app_loads_from_explicit_container_seed_path(app_stack):
+    result = app_stack.run("logs", "app")
+
+    assert result.returncode == 0, result.stdout
+    assert "'/seed/quotes.json'" in result.stdout
+    assert "'/seed/events.jsonl'" in result.stdout

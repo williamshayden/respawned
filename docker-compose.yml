@@ -66,6 +66,18 @@ services:
 
   app:
     build: .
+    command:
+      [
+        "uv",
+        "run",
+        "--no-sync",
+        "python",
+        "-m",
+        "follow_up_engine",
+        "load",
+        "--seed-dir",
+        "/seed",
+      ]
     depends_on:
       db:
         condition: service_healthy
@@ -81,11 +93,10 @@ services:
       LITELLM_PROXY_URL: http://litellm:4000
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       LITELLM_MODEL_ALIAS: claude-5-sonnet
-      SEED_DIR: ${SEED_DIR}
       EVENTS_FILENAME: ${EVENTS_FILENAME}
       QUOTES_FILENAME: ${QUOTES_FILENAME}
     volumes:
-      - ./${SEED_DIR}:${SEED_DIR}:ro
+      - ./seed:/seed:ro
     profiles: ["app"]
 
 volumes:

@@ -61,7 +61,6 @@ def _test_environment() -> dict[str, str]:
             "LITELLM_PROXY_PORT": _free_port(),
             "LITELLM_SALT_KEY": "sk-test-salt-key-0000000000000000",
             "QUOTES_FILENAME": "quotes.json",
-            "SEED_DIR": "/seed",
             "STORE_MODEL_IN_DB": "True",
         }
     )
