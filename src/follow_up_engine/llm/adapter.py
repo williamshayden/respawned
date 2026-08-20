@@ -79,7 +79,7 @@ class LiteLLMAdapter:
     def complete(self, messages: Sequence[ChatMessage]) -> str:
         """Return the assistant text from one proxy completion."""
         response = self.completion_fn(
-            model=self.model_alias,
+            model=f"openai/{self.model_alias}",
             messages=list(messages),
             api_base=self.proxy_url,
             api_key=self.master_key,

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from follow_up_engine.llm.adapter import LiteLLMAdapter
 
 
-def test_adapter_sends_proxy_request_and_extracts_object_content():
+def test_adapter_addresses_proxy_alias_through_openai_compatible_client():
     captured = {}
 
     def fake_completion(**kwargs):
@@ -26,7 +26,7 @@ def test_adapter_sends_proxy_request_and_extracts_object_content():
 
     assert adapter.complete(messages) == "Hi John, just checking in."
     assert captured == {
-        "model": "follow-up-model",
+        "model": "openai/follow-up-model",
         "messages": messages,
         "api_base": "http://proxy.test:4000",
         "api_key": "sk-test",
