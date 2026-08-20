@@ -68,6 +68,10 @@ UPDATE_CANDIDATE = text(
     """
 )
 
+CANDIDATE_EXISTS = text(
+    "SELECT EXISTS (SELECT 1 FROM candidates WHERE id = :candidate_id)"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SyncResult:
@@ -113,9 +117,16 @@ def sync_candidates(
     )
     candidates = tuple(compute_candidates(states, policy, now, limit=limit))
     if dry_run:
+        new_candidate_count = sum(
+            not conn.execute(
+                CANDIDATE_EXISTS,
+                {"candidate_id": candidate.id},
+            ).scalar_one()
+            for candidate in candidates
+        )
         return SyncResult(
             candidates=candidates,
-            inserted_count=0,
+            inserted_count=new_candidate_count,
             run_id=None,
             dry_run=True,
         )
@@ -190,10 +201,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         engine.dispose()
 
-    action = "would add" if result.dry_run else "added"
+    action = "would persist" if result.dry_run else "persisted"
     print(
         f"Selected {len(result.candidates)} candidates; "
-        f"{action} {result.inserted_count} new opportunities."
+        f"{action} {result.inserted_count} new candidates."
     )
     return 0
 

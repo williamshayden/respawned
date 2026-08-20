@@ -136,10 +136,17 @@ def test_two_unchanged_real_syncs_create_no_duplicate_opportunities(
     first = sync_candidates(postgres_connection, now=NOW, policy=policy)
     after_first = _table_count(postgres_connection, "candidates")
     second = sync_candidates(postgres_connection, now=NOW, policy=policy)
+    dry_run = sync_candidates(
+        postgres_connection,
+        now=NOW,
+        policy=policy,
+        dry_run=True,
+    )
 
     assert first.inserted_count == len(first.candidates)
     assert first.inserted_count > 0
     assert second.inserted_count == 0
+    assert dry_run.inserted_count == 0
     assert _table_count(postgres_connection, "candidates") == after_first
 
 
@@ -172,6 +179,6 @@ def test_dry_run_computes_candidates_without_writing(postgres_connection):
     )
 
     assert result.candidates
-    assert result.inserted_count == 0
+    assert result.inserted_count == len(result.candidates)
     assert _table_count(postgres_connection, "candidates") == before_candidates
     assert _table_count(postgres_connection, "sync_runs") == before_runs
