@@ -1,7 +1,6 @@
 services:
   db:
     image: ${DB_IMAGE}
-    container_name: ${DB_NAME}_${DB_TYPE}
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME}
@@ -16,11 +15,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    profiles: ["postgres"]
+    profiles: ["postgres", "app"]
 
   litellm_db:
     image: postgres:16
-    container_name: litellm_postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${LITELLM_DB_USER}
@@ -33,15 +31,14 @@ services:
       retries: 10
     volumes:
       - litellm_pgdata:/var/lib/postgresql/data
-    profiles: ["litellm"]
+    profiles: ["litellm", "app"]
 
   litellm:
     image: docker.litellm.ai/berriai/litellm-database:latest
-    container_name: litellm_proxy
     restart: unless-stopped
-    command: ["--config", "src/follow_up_engine/llm/litellm_proxy_config.yaml"]
+    command: ["--config", "/llm/litellm_proxy_config.yaml"]
     ports:
-      - "${LITELLM_PROXY_PORT}:${LITELLM_PROXY_PORT}"
+      - "${LITELLM_PROXY_PORT}:4000"
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
@@ -53,12 +50,26 @@ services:
     depends_on:
       litellm_db:
         condition: service_healthy
-    profiles: ["litellm"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    profiles: ["litellm", "app"]
 
-  loader:
+  app:
     build: .
     depends_on:
       db:
+        condition: service_healthy
+      litellm:
         condition: service_healthy
     environment:
       DB_TYPE: ${DB_TYPE}
@@ -71,8 +82,8 @@ services:
       EVENTS_FILENAME: ${EVENTS_FILENAME}
       QUOTES_FILENAME: ${QUOTES_FILENAME}
     volumes:
-      - ./${SEED_DIR}:/app/${SEED_DIR}:ro
-    profiles: ["loader"]
+      - ./${SEED_DIR}:${SEED_DIR}:ro
+    profiles: ["app"]
 
 volumes:
   pgdata:

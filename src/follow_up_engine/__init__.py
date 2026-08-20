@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from follow-up-engine!")
+"""Automated follow-up engine."""

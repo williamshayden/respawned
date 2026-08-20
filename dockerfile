@@ -9,4 +9,4 @@ COPY src/ src/
 
 RUN uv sync --frozen --no-dev
 
-CMD ["uv", "run", "python", "-m", "follow_up_engine.db.load_data"]
+CMD ["uv", "run", "--no-sync", "python", "-m", "follow_up_engine"]

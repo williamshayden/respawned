@@ -1,0 +1,136 @@
+import json
+import os
+import socket
+import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_SERVICES = {"app", "db", "litellm", "litellm_db"}
+
+
+@dataclass(frozen=True)
+class ComposeStack:
+    project: str
+    environment: dict[str, str] = field(repr=False)
+
+    def run(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "docker",
+                "compose",
+                "-p",
+                self.project,
+                "--profile",
+                "app",
+                *args,
+            ],
+            cwd=ROOT,
+            env=self.environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+
+
+def _free_port() -> str:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return str(listener.getsockname()[1])
+
+
+def _test_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "ANTHROPIC_API_KEY": "sk-ant-test",
+            "DB_IMAGE": "postgres:16-alpine",
+            "DB_NAME": "follow_up_test",
+            "DB_PASSWORD": "follow_up_test",
+            "DB_PORT": _free_port(),
+            "DB_TYPE": "postgres",
+            "DB_USER": "follow_up_test",
+            "EVENTS_FILENAME": "events.jsonl",
+            "LITELLM_DB_NAME": "litellm_test",
+            "LITELLM_DB_PASSWORD": "litellm_test",
+            "LITELLM_DB_USER": "litellm_test",
+            "LITELLM_MASTER_KEY": "sk-test-master-key",
+            "LITELLM_PROXY_PORT": _free_port(),
+            "LITELLM_SALT_KEY": "sk-test-salt-key-0000000000000000",
+            "QUOTES_FILENAME": "quotes.json",
+            "SEED_DIR": "/seed",
+            "STORE_MODEL_IN_DB": "True",
+        }
+    )
+    return environment
+
+
+@pytest.fixture(scope="module")
+def app_stack() -> ComposeStack:
+    stack = ComposeStack(
+        project=f"follow-up-engine-test-{os.getpid()}",
+        environment=_test_environment(),
+    )
+
+    try:
+        startup = stack.run("up", "-d", "--build", "app")
+        assert startup.returncode == 0, startup.stdout
+
+        container_id = stack.run("ps", "-a", "-q", "app")
+        assert container_id.returncode == 0, container_id.stdout
+        assert container_id.stdout.strip(), stack.run("ps", "-a").stdout
+        try:
+            wait = subprocess.run(
+                [
+                    "docker",
+                    "wait",
+                    container_id.stdout.strip(),
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.fail(
+                "app did not exit within 120 seconds:\n"
+                + stack.run("logs", "app").stdout
+            )
+        assert wait.returncode == 0, wait.stdout
+        assert wait.stdout.strip() == "0", stack.run("logs", "app").stdout
+        yield stack
+    finally:
+        stack.run("down", "--volumes", "--remove-orphans")
+
+
+def _parse_compose_rows(output: str) -> list[dict]:
+    return [json.loads(line) for line in output.splitlines() if line]
+
+
+def test_app_startup_creates_required_services(app_stack):
+    result = app_stack.run("ps", "-a", "--format", "json")
+
+    assert result.returncode == 0, result.stdout
+    services = {row["Service"] for row in _parse_compose_rows(result.stdout)}
+    assert services == REQUIRED_SERVICES
+
+
+def test_app_startup_loads_seed_rows(app_stack):
+    result = app_stack.run(
+        "exec",
+        "-T",
+        "db",
+        "sh",
+        "-lc",
+        'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At '
+        '-c "SELECT (SELECT count(*) FROM quotes), '
+        '(SELECT count(*) FROM events);"',
+    )
+
+    assert result.returncode == 0, result.stdout
+    assert result.stdout.strip() == "30|82"
