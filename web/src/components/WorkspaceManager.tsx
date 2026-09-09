@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, LoaderCircle, Plus, Save, Trash2 } from 'lucide-react'
+import { LoaderCircle, Plus, Save, Trash2 } from 'lucide-react'
 import { workspaceRequest, type Workspace, type WorkspaceInput } from '../data/workspaces'
 import type { ReviewAccess } from '../data/auth'
 import './workspaces.css'
@@ -44,17 +44,15 @@ export function WorkspaceManager(props: Props) {
     finally { setBusy(false) }
   }
   return <div className="workspace-management">
-    <div className="workspace-intro"><FolderOpen size={28} /><div><h2>Make room for your work</h2>
-      <p>Create a collection for anything you follow up on. Give it a name and choose the record types it includes.</p></div></div>
-    <p className="workspace-boundary">Workspaces share this engine’s records, model connection, and review policy. They organize work; they are not separate accounts.</p>
+    <p className="workspace-intro">Group records into workspaces by type. Workspaces share this engine’s records, model connection, and review policy.</p>
     {!props.token ? <div className="empty-state"><h2>Connect your engine first</h2><p>Workspaces are saved in the database so they are available the next time you connect.</p><button className="button primary" onClick={props.onSetup}>Open setup</button></div> : <>
       {props.error && <p role="alert" className="inline-error">{props.error}</p>}
       <div className="workspace-manager-grid"><div className="workspace-cards">
         <button className="button new-workspace" onClick={() => select()} disabled={busy}><Plus size={18} />New workspace</button>
         {props.loading && <p className="muted" role="status">Loading workspaces…</p>}
-        {!props.loading && !props.workspaces.length && <p className="muted">No workspaces yet. Start with a name that makes sense to you.</p>}
+        {!props.loading && !props.workspaces.length && <p className="muted">No saved workspaces.</p>}
         {props.workspaces.map(workspace => <article key={workspace.id} className={`workspace-card ${editing === workspace.id ? 'is-active' : ''}`}>
-          <button onClick={() => select(workspace)} disabled={busy}><h3>{workspace.name}</h3><p>{workspace.description || 'Your collection of tracked work.'}</p><span>{workspace.kinds.length ? workspace.kinds.join(', ') : 'All record types'}</span></button>
+          <button onClick={() => select(workspace)} disabled={busy}><h3>{workspace.name}</h3>{workspace.description && <p>{workspace.description}</p>}<span>{workspace.kinds.length ? workspace.kinds.join(', ') : 'All record types'}</span></button>
           <button className="text-button" onClick={() => props.onOpen(workspace.id)} disabled={busy}>Open workspace →</button>
         </article>)}
       </div><form className="workspace-form" onSubmit={event => { event.preventDefault(); void save() }}>

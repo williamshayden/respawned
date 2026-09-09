@@ -103,15 +103,15 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
   const databaseReady = status?.database.status === 'ready'
 
   return <div className="setup-view">
-    <div className="setup-intro"><p>Connect this environment, choose a model, and bring in the records you want to follow up.</p>
+    <div className="setup-intro">
       <button className="button small" disabled={loading || savingModel || importing} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={14} className={loading ? 'spin' : ''} />Refresh status</button></div>
     {statusError && <p className="inline-error" role="alert">{statusError}</p>}
 
     <section className="setup-section" aria-labelledby="setup-access-title">
-      <div className="setup-section-heading"><KeyRound size={23} /><div><h2 id="setup-access-title">Review access</h2><p>Your connection to this environment</p></div></div>
+      <div className="setup-section-heading"><KeyRound size={21} /><h2 id="setup-access-title">Review access</h2></div>
       <div className="setup-section-body">
-        <div className="setup-heading-row"><p>{baseUrl ? `Connected engine: ${baseUrl}` : isLocalSession(token) ? 'Connected securely through your local CLI.' : 'Launch with respawned ui to connect automatically, or use a server access token below.'}</p><span className={`setup-state ${connected ? 'is-ready' : ''}`}>{connected ? 'Unlocked' : 'Locked'}</span></div>
-        {connected ? <div className="setup-access-active"><Check size={18} /><p>{isLocalSession(token) ? 'This local connection survives page reloads and expires after 12 hours or when the server stops. Lock access ends it immediately.' : 'Access is active for this browser tab. The manually entered token stays in memory and clears when the page reloads.'}</p><button className="button small" onClick={onDisconnect}>Lock access</button></div> : <>{!baseUrl && <div className="setup-note"><p>On the machine running Respawned, run:</p><pre><code>respawned ui</code></pre><p>It opens this interface with access already connected. In a terminal without a browser, use <code>respawned ui --no-open</code> and open the one-use link it prints on this machine. If port 8000 is occupied, stop the existing server or choose <code>--port 8001</code>.</p></div>}{baseUrl && <p className="setup-note">Enter the review token configured on this remote engine. It is sent directly to that server and stays in this tab’s memory.</p>}<form className="setup-access-form" onSubmit={async event => {
+        <div className="setup-heading-row"><p>{baseUrl ? `Engine: ${baseUrl}` : isLocalSession(token) ? 'Local browser session' : 'Open the link from respawned ui, or enter a server access token.'}</p><span className={`setup-state ${connected ? 'is-ready' : ''}`}>{connected ? 'Unlocked' : 'Locked'}</span></div>
+        {connected ? <div className="setup-access-active"><Check size={18} /><p>{isLocalSession(token) ? 'Your session survives reloads and expires after 12 hours or when the server stops.' : 'Your token stays in this tab’s memory and clears on reload.'}</p><button className="button small" onClick={onDisconnect}>Lock access</button></div> : <>{!baseUrl && <details className="setup-launch-help"><summary>Connect from the CLI</summary><p>Run <code>respawned ui</code> to open an authenticated session. Use <code>respawned ui --no-open</code> to print a one-use link instead. Choose <code>--port 8001</code> if port 8000 is occupied.</p></details>}{baseUrl && <p className="setup-note">Enter the review token configured on this remote engine. It stays in this tab’s memory.</p>}<form className="setup-access-form" onSubmit={async event => {
           event.preventDefault()
           setConnecting(true)
           setAccessError(null)
@@ -135,7 +135,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
     </section>
 
     <section className="setup-section" aria-labelledby="setup-model-title">
-      <div className="setup-section-heading"><Server size={23} /><div><h2 id="setup-model-title">Model backend</h2><p>Generate drafts on demand</p></div></div>
+      <div className="setup-section-heading"><Server size={21} /><h2 id="setup-model-title">Model backend</h2></div>
       <div className="setup-section-body">
         <div className="setup-heading-row"><p>Use your Codex ChatGPT login or connect an OpenAI-compatible API.</p><span className={`setup-state ${status?.model.ready ? 'is-ready' : ''}`}>{!connected ? 'Unlock to configure' : status?.model.ready ? 'Configured' : loading ? 'Checking' : 'Setup needed'}</span></div>
         {!connected && <p className="setup-note">Unlock review access to view and save the server’s model settings.</p>}
@@ -172,9 +172,9 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
     </section>
 
     <section className="setup-section" aria-labelledby="setup-source-title">
-      <div className="setup-section-heading"><Database size={23} /><div><h2 id="setup-source-title">Records & sources</h2><p>Bring your own workflow</p></div></div>
+      <div className="setup-section-heading"><Database size={21} /><h2 id="setup-source-title">Records & sources</h2></div>
       <div className="setup-section-body">
-        <div className="setup-heading-row"><p>Import records and activity from your existing tools. Workspaces organize records by their kind.</p><span className={`setup-state ${databaseReady ? 'is-ready' : ''}`}>{!connected ? 'Unlock to import' : databaseReady ? 'Database ready' : loading ? 'Checking' : 'Database unavailable'}</span></div>
+        <div className="setup-heading-row"><p>Import records and activity from your existing tools.</p><span className={`setup-state ${databaseReady ? 'is-ready' : ''}`}>{!connected ? 'Unlock to import' : databaseReady ? 'Database ready' : loading ? 'Checking' : 'Database unavailable'}</span></div>
         {status && <p className="setup-note">{status.database.message}</p>}
         <form onSubmit={async event => {
           event.preventDefault()
@@ -212,7 +212,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
           {importError && <p className="inline-error" role="alert">{importError}</p>}
           {importNotice && <p className="setup-success" role="status"><Check size={15} />{importNotice}</p>}
           <p className="setup-note">Matching record IDs replace the full saved snapshot, including clearing omitted optional fields. Activity IDs are immutable: resend the same fact, or use a new ID for a new event.</p>
-          <div className="setup-form-actions"><p>Only your submitted data is imported. Importing does not generate drafts or send messages.</p><button className="button primary" type="submit" disabled={!connected || !databaseReady || importing || !preview.payload}>{importing ? <LoaderCircle size={16} className="spin" /> : <Upload size={16} />}Import records</button></div>
+          <div className="setup-form-actions"><p>Importing does not generate drafts or send messages.</p><button className="button primary" type="submit" disabled={!connected || !databaseReady || importing || !preview.payload}>{importing ? <LoaderCircle size={16} className="spin" /> : <Upload size={16} />}Import records</button></div>
         </form>
         <details className="setup-details"><summary>Import format & API integration</summary><p>The API calls tracked records <code>opportunities</code>, regardless of your workflow. Give each record a stable ID and a <code>kind</code> such as <code>generic</code> or your own lowercase identifier. Use real source timestamps. Only add a contact route when you know the recipient.</p>
           <div className="setup-template-actions"><button type="button" className="button small" onClick={downloadTemplate}><Download size={14} />Download template</button><button type="button" className="button small" onClick={async () => {
@@ -227,7 +227,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
     </section>
 
     <section className="setup-section" aria-labelledby="setup-outbox-title">
-      <div className="setup-section-heading"><Mail size={23} /><div><h2 id="setup-outbox-title">Outbox & delivery</h2><p>Review, export, then send</p></div></div>
+      <div className="setup-section-heading"><Mail size={21} /><h2 id="setup-outbox-title">Outbox & delivery</h2></div>
       <div className="setup-section-body"><div className="setup-heading-row"><p>Approving a draft reserves an unsent message in the outbox. Delivery is manual in this version.</p><span className="setup-state">Export only</span></div>
         <ol className="setup-delivery-steps"><li>Review and approve the exact message text.</li><li>Open the outbox and export the approved messages.</li><li>Send through your own mail or messaging tool, then import the actual outbound event.</li></ol>
         <p className="setup-note">No email account, SMS provider, or sending worker is connected. Exporting does not mark a message sent; the UI keeps its recorded outbox status.</p>

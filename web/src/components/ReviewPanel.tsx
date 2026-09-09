@@ -13,7 +13,7 @@ interface Props {
 export function ReviewPanel(props: Props) {
   const { record, busy } = props
   if (!record) return <section className="review-pane empty-detail"><div className="empty-state"><CircleCheck size={36} />
-    <h2>A little room to breathe.</h2><p>Select a record to see its context and next step.</p></div></section>
+    <h2>No record selected</h2><p>Select a record to review its context and next action.</p></div></section>
   const draft = record.draft
   const body = props.edit?.body ?? draft?.body ?? ''
   const dirty = !!props.edit
@@ -60,7 +60,7 @@ export function ReviewPanel(props: Props) {
         </li>)}</ol> : <p className="muted">No source activity available.</p>}
       </section>
       <section className="draft-panel" aria-labelledby="draft-heading">
-        <div className="draft-header"><h3 id="draft-heading">Draft message</h3><span><Sparkles size={20} />{draft ? 'AI draft · Editable' : 'Draft when you’re ready'}</span></div>
+        <div className="draft-header"><h3 id="draft-heading">Draft message</h3></div>
         {draft ? <>
           <textarea aria-label="Draft message" value={body} onChange={event => props.onEdit(event.target.value)}
             readOnly={!canEdit || !!busy} aria-invalid={validationFailed} spellCheck="true" />
@@ -74,8 +74,7 @@ export function ReviewPanel(props: Props) {
             <button className="button small" disabled={invalid || !!busy} onClick={props.onSave}><Save size={16} />Save changes</button></div>}
           {draft.validation_errors.length > 0 && <p className="inline-error" role="alert">{draft.validation_errors.join(' ')}</p>}
         </> : <div className="draft-placeholder">
-          <div className="draft-placeholder-icon"><Sparkles size={26} /></div>
-          <p>{actionable(record) ? 'A thoughtful follow-up starts with the context above.' : !record.contact ? 'Track this record until a human contact is identified.' : 'This record is not ready for outreach.'}</p>
+          <p>{actionable(record) ? 'Generate a draft using this record’s context.' : !record.contact ? 'A human contact is required to generate a draft.' : 'This record is not ready for outreach.'}</p>
           {actionable(record) && <button className="button" onClick={props.onDraft} disabled={!!busy}>{busy === 'Generating draft' ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}Generate draft</button>}
         </div>}
       </section>

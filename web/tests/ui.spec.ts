@@ -112,7 +112,7 @@ test('inbox shows human replies during cooldown and navigation resolves to the r
   await expect(selectedPanel(page).getByRole('heading', { name: 'Devon Reed', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Approve to outbox' })).toBeDisabled()
   await navigate(page, 'Activity')
-  await expect(page.getByRole('heading', { name: 'Activity across your records' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Activity', level: 1, exact: true })).toBeVisible()
   await navigate(page, 'Policy')
   await expect(page.getByRole('heading', { name: 'Effective policy' })).toBeVisible()
   await expect(page.getByText('48 hours', { exact: true })).toBeVisible()

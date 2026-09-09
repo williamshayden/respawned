@@ -1,14 +1,16 @@
-# Proposals: agent-assisted follow-up workflows
+# Historical proposals: agent-assisted follow-up workflows
 
 Status: design discussion, not implemented as a whole. Updated September 5, 2026.
 
-Current implementation note (September 9, 2026): the source checkout now includes
+Implementation note (September 9, 2026): the merged application now includes
 the [shared browser review UI](WEB_UI.md), bounded record context, tracking without
 a known recipient, explicit human/automated activity classification, and
 application/deadline follow-up rules. Local authenticated review writes to the
-existing unsent outbox. Mailbox discovery, source reconciliation, unresolved
-association review, monitoring, and delivery remain proposals. The sections below
+existing unsent outbox. Multiple-engine workspace monitoring is also implemented.
+Mailbox discovery, source reconciliation, unresolved association review,
+scheduled source updates, and delivery remain proposals. The sections below
 preserve the earlier discussion and do not describe a new published release.
+Use the [README](../README.md) and [API guide](API.md) for the current contract.
 
 Subsequent implementation: [review modes and HTTP connector simulation](CONNECTOR_SIMULATION.md) adds operator-selected automatic authorization and workflow reads/processing. Human review remains the default; the human-only wording below records the earlier proposal.
 

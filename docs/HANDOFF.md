@@ -1,11 +1,9 @@
-# Development handoff
+# Historical development handoff — September 5, 2026
 
-Current publication preparation and fresh verification: [V1 release record](V1_RELEASE.md).
-
-For changes and fresh verification after this historical baseline, see the
-[September 7 quality review](QUALITY_REVIEW.md) and the
-[September 8 review toggle and HTTP connector work](CONNECTOR_SIMULATION.md).
-The human-only and ingestion-only descriptions below describe the historical baseline.
+This preserves the `d682d8a` baseline and its verification limits. Its feature
+list, local paths, and next steps are historical. Use the [README](../README.md),
+[API guide](API.md), and [integration review](INTEGRATION_REVIEW.md) for the
+merged Respawned application and current setup.
 
 Updated September 5, 2026. Implementation baseline: `d682d8a` on `main`.
 
@@ -64,7 +62,3 @@ The next product direction is agent-assisted tracking across sources, using job 
 Gmail access, application discovery, source references, contextual email drafts, ongoing monitoring, a web review UI, a delivery worker, and MCP support remain proposals. No mailbox has been connected and no monitoring job has been scheduled. The latest direction was to preserve the core and HTTP API, with MCP available later as an optional interface.
 
 See [PROPOSALS.md](PROPOSALS.md) for the workflow, unresolved choices, and suggested implementation slices. Start with an evidence-backed application tracker that can hold a record without a known human recipient. Resolve naming and identity semantics before changing the public schema.
-
-## Collaboration preferences
-
-Keep changes compact and deduplicate shared behavior. Use parallel implementation where work is independent, then integrate and test serially. Prioritize the explicit guardrails and useful regression tests over exhaustive review loops. Present material product decisions clearly. Local commits are authorized for completed work; publication and pushing have not been requested.

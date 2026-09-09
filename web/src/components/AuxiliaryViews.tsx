@@ -19,13 +19,13 @@ export function AuxiliaryViews({ page, records, outbox, inbox, inboxHasMore, con
     catch (error) { setExportError(error instanceof Error ? error.message : 'Could not export the outbox. Please try again.') }
     finally { setExporting(false) }
   }
-  if (page === 'Policy') return <div className="auxiliary-view policy-view"><div className="aux-heading"><ShieldCheck size={25} /><div><h2>Effective policy</h2><p>These rules apply across your workspace.</p></div></div>
+  if (page === 'Policy') return <div className="auxiliary-view policy-view"><div className="aux-heading"><ShieldCheck size={21} /><div><h2>Effective policy</h2><p>Applies to every workspace in this engine.</p></div></div>
     <dl className="policy-list"><div><dt>Review mode</dt><dd>{!config ? 'Unavailable' : config.policy_mode === 'human' ? 'Human review' : 'Automatic authorization'}</dd></div>
       <div><dt>Contact cooldown</dt><dd>{config?.cooldown_hours ?? '—'} hours</dd></div><div><dt>Draft length</dt><dd>{config?.max_draft_characters ?? '—'} characters maximum</dd></div>
       <div><dt>Source freshness</dt><dd>{config?.source_freshness === 'unknown' ? 'Unknown' : config?.source_freshness}</dd></div></dl>
     <p className="subtle-note">Eligibility and ranking follow the engine policy. Changing context does not change approval authority.</p>
   </div>
-  if (page === 'Outbox') return <div className="auxiliary-view"><div className="aux-heading"><div><h2>Your outbox</h2><p>Approved messages and their recorded status.</p></div>
+  if (page === 'Outbox') return <div className="auxiliary-view"><div className="aux-heading"><p>Approved messages and their recorded status. Export to send through your own tools.</p>
     <button className="button" onClick={() => void exportOutbox()} disabled={!outbox.length || exporting}><Download size={17} />{exporting ? 'Exporting…' : 'Export CSV'}</button></div>
     {exportError && <p className="feedback is-error" role="alert">{exportError}</p>}
     {!outbox.length ? <div className="empty-state"><Mail size={30} /><h2>Nothing in the outbox yet</h2><p>Approved drafts will appear here. Approval does not send a message.</p></div> :
@@ -35,7 +35,7 @@ export function AuxiliaryViews({ page, records, outbox, inbox, inboxHasMore, con
       </article>)}</div>}
   </div>
   if (page === 'Reply inbox') {
-    return <div className="auxiliary-view"><div className="aux-heading"><div><h2>Replies that need you</h2><p>Human correspondence awaiting a response. Source freshness unknown.</p></div></div>
+    return <div className="auxiliary-view"><div className="aux-heading"><p>Human replies awaiting a response. Source freshness is unknown.</p></div>
       {inbox.length ? inbox.map(item => {
         const targetId = item.review_record_id ?? item.opportunity_ids[0]
         const record = records.find(record => record.id === targetId)
@@ -49,7 +49,7 @@ export function AuxiliaryViews({ page, records, outbox, inbox, inboxHasMore, con
   }
   const activities = records.flatMap(record => record.activities.map(activity => ({ record, activity })))
     .sort((a, b) => b.activity.occurred_at.localeCompare(a.activity.occurred_at))
-  return <div className="auxiliary-view"><div className="aux-heading"><div><h2>Activity across your records</h2><p>Source events retain their record and classification.</p></div></div>
+  return <div className="auxiliary-view"><div className="aux-heading"><p>Imported events, ordered by date.</p></div>
     <div className="activity-feed">{activities.map(({ record, activity }) => <article key={`${record.id}:${activity.id}`}>
       <time dateTime={activity.occurred_at}>{shortDate(activity.occurred_at)}</time><div><h3>{activity.label}</h3>
         <button className="text-button" onClick={() => onSelect(record.id)}>{record.title}</button>{activity.summary && <p>{activity.summary}</p>}

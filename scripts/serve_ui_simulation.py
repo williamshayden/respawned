@@ -11,7 +11,9 @@ import argparse
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
+import json
 import os
+from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import create_engine
@@ -22,10 +24,12 @@ from respawned.api.app import (
     app, get_api_engine, get_workflow_adapter, get_workflow_clock, get_workflow_policy,
 )
 from respawned.api.ui import get_draft_adapter_factory
+from respawned.api import setup as setup_api
 from respawned.cli.common import DEFAULT_POLICY_PATH
 from respawned.core.ingest import ingest_records
 from respawned.core.policy import ReviewPolicy, load_policy
 from respawned.core.sync import sync_candidates
+from respawned.core.settings import load_model_settings
 from respawned.db.helpers.pg_connect import create_tables
 from respawned.llm.adapter import LiteLLMAdapter
 
@@ -35,70 +39,8 @@ REVIEW_TOKEN = "ui-simulation-review-token"
 
 
 def seed_records():
-    """Two named contacts plus a same-company application without any contact."""
-    return {
-        "opportunities": [
-            {
-                "id": "northstar-backend", "kind": "job_application",
-                "title": "Backend Engineer at Northstar", "status": "open",
-                "created_at": "2026-08-25T14:00:00Z",
-                "contact_key": "simulation:maya", "contact_name": "Maya Chen",
-                "contact_email": "maya@northstar.example", "preferred_channel": "email",
-                "context": {
-                    "company": "Northstar", "role": "Backend Engineer", "stage": "Interviewing",
-                    "expected_reply_at": "2026-09-05T17:00:00Z",
-                    "summary": "Completed the team interview; Maya expected to share next steps on September 5.",
-                    "source_url": "https://example.com/simulation/northstar-backend",
-                },
-            },
-            {
-                "id": "evergreen-proposal", "kind": "sales", "title": "Website project for Evergreen",
-                "status": "open", "created_at": "2026-08-28T15:00:00Z",
-                "contact_key": "simulation:alex", "contact_name": "Alex Rivera",
-                "contact_email": "alex@evergreen.example", "preferred_channel": "email",
-                "owner_name": "Jordan", "value": 8400,
-                "context": {"company": "Evergreen", "stage": "Proposal sent",
-                            "source_url": "https://example.com/simulation/evergreen-proposal"},
-            },
-            {
-                "id": "northstar-platform", "kind": "job_application",
-                "title": "Platform Engineer at Northstar", "status": "open",
-                "created_at": "2026-09-01T15:00:00Z",
-                "context": {"company": "Northstar", "role": "Platform Engineer",
-                            "stage": "Applied", "source_url": "https://example.com/simulation/northstar-platform"},
-            },
-        ],
-        "activities": [
-            {
-                "id": "maya:interview-update", "opportunity_id": "northstar-backend",
-                "type": "contact_replied", "direction": "inbound", "channel": "email",
-                "occurred_at": "2026-09-02T15:30:00Z", "classification": "human",
-                "summary": "Thanks for meeting the team. I expect to share next steps by September 5.",
-                "source_url": "https://example.com/simulation/mail/maya-update",
-            },
-            {
-                "id": "maya:acknowledged", "opportunity_id": "northstar-backend",
-                "type": "message_sent", "direction": "outbound", "channel": "email",
-                "occurred_at": "2026-09-03T14:00:00Z", "classification": "human",
-                "summary": "Thank you, Maya. I enjoyed the discussion and look forward to hearing about next steps.",
-                "source_url": "https://example.com/simulation/mail/maya-thanks",
-            },
-            {
-                "id": "alex:question", "opportunity_id": "evergreen-proposal",
-                "type": "email_received", "direction": "inbound", "channel": "email",
-                "occurred_at": "2026-09-08T16:00:00Z", "classification": "human",
-                "summary": "The proposal looks good. Could we discuss the timeline this week?",
-                "source_url": "https://example.com/simulation/mail/alex-question",
-            },
-            {
-                "id": "platform:receipt", "opportunity_id": "northstar-platform",
-                "type": "application_received", "direction": "inbound", "channel": "email",
-                "occurred_at": "2026-09-01T15:01:00Z", "classification": "automated",
-                "summary": "We received your application. This automated mailbox does not accept replies.",
-                "source_url": "https://example.com/simulation/mail/platform-receipt",
-            },
-        ],
-    }
+    fixture = Path(__file__).resolve().parents[1] / "web/tests/fixtures/ui-import.json"
+    return json.loads(fixture.read_text())
 
 
 def _completion(**kwargs):
@@ -111,7 +53,7 @@ def _completion(**kwargs):
 
 
 @contextmanager
-def simulation_api(postgres_url):
+def simulation_api(postgres_url, *, empty=False):
     """Own the complete temporary schema and restore process settings on exit."""
     url = make_url(postgres_url)
     if url.get_backend_name() != "postgresql" or url.host not in {"localhost", "127.0.0.1", "::1"}:
@@ -120,6 +62,7 @@ def simulation_api(postgres_url):
     engine = create_engine(url, connect_args={"options": f"-csearch_path={schema}"},
                            pool_size=3, max_overflow=0)
     previous = app.dependency_overrides.copy()
+    previous_probe = setup_api.probe_setup_database
     previous_tokens = {key: os.environ.get(key) for key in ("RESPAWNED_REVIEW_TOKEN", "RESPAWNED_PROCESS_TOKEN")}
     created = False
     try:
@@ -132,9 +75,10 @@ def simulation_api(postgres_url):
                          drafting=replace(policy.drafting, sign_off="Jordan"))
         adapter = LiteLLMAdapter("http://simulation.invalid", "unused", "deterministic-ui-stub",
                                 completion_fn=_completion)
-        with engine.begin() as connection:
-            ingest_records(connection, **seed_records())
-            sync_candidates(connection, now=NOW, policy=policy, limit=200)
+        if not empty:
+            with engine.begin() as connection:
+                ingest_records(connection, **seed_records())
+                sync_candidates(connection, now=NOW, policy=policy, limit=200)
         app.dependency_overrides.update({
             get_api_engine: lambda: engine,
             get_workflow_policy: lambda: policy,
@@ -142,12 +86,20 @@ def simulation_api(postgres_url):
             get_workflow_adapter: lambda: adapter,
             get_draft_adapter_factory: lambda: lambda: adapter,
         })
+        # Setup uses an independent bounded connection in normal operation. Keep
+        # this harness's status/settings reads inside its owned schema as well.
+        def probe_owned_database():
+            with engine.connect() as connection:
+                return load_model_settings(connection)
+
+        setup_api.probe_setup_database = probe_owned_database
         os.environ["RESPAWNED_REVIEW_TOKEN"] = REVIEW_TOKEN
         os.environ["RESPAWNED_PROCESS_TOKEN"] = ""
         yield app, engine, schema
     finally:
         app.dependency_overrides.clear()
         app.dependency_overrides.update(previous)
+        setup_api.probe_setup_database = previous_probe
         for key, value in previous_tokens.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -165,10 +117,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--postgres-url", required=True, help="Owned loopback PostgreSQL test database")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--empty", action="store_true", help="Start without records so the browser can exercise import")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
-    with simulation_api(args.postgres_url) as (application, _engine, schema):
+    with simulation_api(args.postgres_url, empty=args.empty) as (application, _engine, schema):
         print(f"Synthetic UI API: http://127.0.0.1:{args.port}", flush=True)
         print(f"Simulation-only review token: {REVIEW_TOKEN}", flush=True)
         print(f"Owned temporary schema: {schema}; removed on normal shutdown", flush=True)

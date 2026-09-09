@@ -96,9 +96,16 @@ async function request<T>(path: string, token: ReviewAccess, method = 'GET', bod
   const headers: Record<string, string> = { Accept: 'application/json', ...accessHeaders(token) }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   let response: Response
+  // Setup may run bounded Codex login/version checks as well as a database read.
+  const deadline = AbortSignal.timeout(60_000)
+  const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline
   try {
-    response = await fetch(`${baseUrl}${path}`, { ...engineRequestOptions(token, baseUrl), method, headers, signal, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+    response = await fetch(`${baseUrl}${path}`, { ...engineRequestOptions(token, baseUrl), method, headers, signal: requestSignal, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
   } catch (error) {
+    if (signal?.aborted) throw error
+    if (deadline.aborted) throw new Error(method === 'GET'
+      ? 'The engine took too long to respond. Check its connection and refresh.'
+      : 'The request timed out. Reload to check whether it completed before retrying.')
     if (error instanceof Error && error.name === 'AbortError') throw error
     throw new Error(engineNetworkError(baseUrl))
   }

@@ -32,7 +32,7 @@ from respawned.core.review import (
 from respawned.core.time import aware_utc
 from respawned.core.settings import configured_adapter
 from respawned.db.helpers.pg_connect import create_tables, get_engine
-from respawned.llm.adapter import DraftingAdapter
+from respawned.llm.adapter import ChatMessage, DraftingAdapter, LLMAdapterError
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +43,21 @@ class ReviewSummary:
     skipped: int = 0
     blocked: int = 0
     automatically_authorized: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _ConfiguredAdapter:
+    """Resolve optional model configuration only when the core needs new copy."""
+
+    engine: Engine
+
+    def complete(self, messages: Sequence[ChatMessage]) -> str:
+        try:
+            with self.engine.connect() as connection:
+                adapter = configured_adapter(connection)
+        except ValueError as exc:
+            raise LLMAdapterError("Drafting model is not configured") from exc
+        return adapter.complete(messages)
 
 
 ActionPrompt = Callable[..., str]
@@ -231,8 +246,7 @@ def main(
     try:
         create_tables(engine)
         if adapter is None:
-            with engine.connect() as connection:
-                adapter = configured_adapter(connection)
+            adapter = _ConfiguredAdapter(engine)
         summary = run_review(
             engine,
             now=args.now,

@@ -37,15 +37,13 @@ export function OverviewView({ connections, accessById, onOpen, onConnections }:
   const loading = connections.some(connection => states[connection.id]?.loading)
 
   return <div className="overview-view">
-    <div className="overview-toolbar"><div className="overview-intro"><h2>Keep an eye on your work</h2><p>Watch workspaces across your connected engines, then open one to take action.</p></div>
-      <div className="overview-controls"><button className="button" onClick={() => setChoosing(value => !value)} aria-expanded={choosing}><Eye size={16} />Choose workspaces</button>
+    <div className="overview-toolbar"><div className="overview-controls"><button className="button" onClick={() => setChoosing(value => !value)} aria-expanded={choosing}><Eye size={16} />Choose workspaces</button>
         <button className="button" onClick={refresh} disabled={loading || !connections.some(connection => accessById[connection.id])}><RefreshCw size={16} className={loading ? 'spin' : ''} />Refresh overview</button></div>
     </div>
     <div className="overview-monitoring"><label><input type="checkbox" checked={automatic} onChange={event => setAutomatic(event.target.checked)} />Refresh every 30 seconds</label>
       <span>{automatic ? 'While this overview is visible' : 'Paused · refresh manually for current counts'}</span>
       <button className="text-button" onClick={onConnections}><Settings2 size={15} />Manage connections</button></div>
     {storageUnavailable && <p className="overview-note" role="status">This browser cannot save your workspace choices. They will last until this page reloads.</p>}
-    <p className="overview-note">Counts come from each engine. Workspaces can overlap, so their counts are not added together. A successful check confirms engine access; source freshness is unknown.</p>
     {!connections.length && <div className="empty-state"><Server size={30} /><h2>Connect an engine to start monitoring</h2><p>Add your local or remote Respawned engine, then choose the workspaces you want to watch.</p><button className="button primary" onClick={onConnections}>Manage connections</button></div>}
     <div className="overview-engines">{connections.map(connection => {
       const state = states[connection.id]
@@ -54,7 +52,7 @@ export function OverviewView({ connections, accessById, onOpen, onConnections }:
       const watched = workspaces.filter(workspace => isWatched(preferences, connection.id, workspace.id))
       const status = state?.loading ? 'Checking…' : state?.failure === 'access' ? 'Access required' : state?.failure === 'unsupported' ? 'Update needed' : state?.error ? 'Unavailable' : state?.data ? 'Connected' : 'Checking…'
       return <section className="overview-engine" key={connection.id} aria-label={connection.name} data-engine-id={connection.id}>
-        <div className="overview-engine-heading"><div className="overview-engine-identity"><span className="overview-engine-icon"><Server size={20} /></span><div><h3>{connection.name}</h3><p>{connection.baseUrl || 'This engine · same origin'}</p></div></div>
+        <div className="overview-engine-heading"><div className="overview-engine-identity"><span className="overview-engine-icon"><Server size={20} /></span><div><h3>{connection.name}</h3><p>{connection.baseUrl || window.location.origin}</p></div></div>
           <span className={`overview-status ${state?.error ? 'has-error' : ''}`}>{state?.error ? <TriangleAlert size={14} /> : state?.loading ? <RefreshCw size={14} className="spin" /> : <CircleCheck size={14} />}{status}</span></div>
         <div className="overview-engine-check"><Clock3 size={13} />{state?.checkedAt ? <span>{stale ? 'Last successful check' : 'Checked'} <time dateTime={state.checkedAt}>{checkedTime(state.checkedAt)}</time>{!automatic && !stale ? ' · snapshot' : ''}</span> : <span>No successful check yet</span>}</div>
         {state?.error && <div className="overview-engine-error" role="status"><p>{state.error}{stale ? ' Showing the last successful snapshot; these counts may be out of date.' : ''}</p>{state.failure === 'access' && <button className="text-button" onClick={onConnections}>Unlock engine →</button>}</div>}
@@ -69,6 +67,6 @@ export function OverviewView({ connections, accessById, onOpen, onConnections }:
         {state?.data && !watched.length && <div className="overview-none-watched"><FolderOpen size={22} /><p>{workspaces.length ? 'No workspaces watched in this engine.' : 'No workspaces available from this engine.'}</p>{!!workspaces.length && <button className="text-button" onClick={() => setChoosing(true)}>Choose workspaces</button>}</div>}
       </section>
     })}</div>
-    <details className="overview-count-help"><summary>What do these counts mean?</summary><dl>{metrics.map(metric => <div key={metric.key}><dt>{metric.label}</dt><dd>{metric.detail}</dd></div>)}</dl><p>Tracked records includes every record matching the workspace. Counts reflect the engine’s saved data at its last successful check. Monitoring does not import source changes, synchronize candidates, generate drafts, or send messages.</p></details>
+    <details className="overview-count-help"><summary>About these counts</summary><p>Workspaces can overlap; their counts are not added together. Each count reflects the engine’s saved data at its last successful check. Source freshness is unknown.</p><dl>{metrics.map(metric => <div key={metric.key}><dt>{metric.label}</dt><dd>{metric.detail}</dd></div>)}</dl><p>Tracked records includes every record matching the workspace. Monitoring reads saved data; it does not import source changes, generate drafts, or send messages.</p></details>
   </div>
 }

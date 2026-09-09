@@ -165,15 +165,30 @@ def test_api_and_cli_use_shared_saved_settings(setup_api, monkeypatch):
         assert api_module.get_workflow_adapter().model_alias == MODEL["model_alias"]
     monkeypatch.setattr(review, "get_engine", lambda: engine)
     monkeypatch.setattr(review, "create_tables", lambda _engine: None)
-    captured = []
+    resolutions, completions = [], []
+    messages = [{"role": "user", "content": "Draft from the saved backend"}]
+    updated_model = {**MODEL, "model_alias": "generation-time-model"}
+
+    def resolve_at_generation(current_connection):
+        resolutions.append(current_connection)
+        adapter = configured_adapter(current_connection)
+        return replace(adapter, completion_fn=lambda **kwargs: (
+            completions.append(kwargs) or {"choices": [{"message": {"content": "Configured copy"}}]}
+        ))
+
+    monkeypatch.setattr(review, "configured_adapter", resolve_at_generation)
 
     def run(_engine, **kwargs):
-        captured.append(kwargs["adapter"])
+        assert resolutions == completions == []  # Opening review needs no model configuration.
+        assert client.put("/v1/ui/setup/model", headers=HEADERS, json=updated_model).status_code == 200
+        assert kwargs["adapter"].complete(messages) == "Configured copy"
         return review.ReviewSummary()
 
     monkeypatch.setattr(review, "run_review", run)
     assert review.main([]) == 0
-    assert captured[0].model_alias == MODEL["model_alias"]
+    assert resolutions == [connection]
+    assert completions == [{"model": updated_model["model_alias"], "messages": messages,
+                            "base_url": MODEL["base_url"], "api_key": "local-placeholder"}]
 
 
 def test_environment_fallback_preserves_existing_cli_configuration(setup_api, monkeypatch):

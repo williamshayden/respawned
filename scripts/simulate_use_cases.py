@@ -277,29 +277,39 @@ def cooldown_boundary(j):
 
 
 def tracking_boundary(j):
-    receipt_only = {"id": "acme-backend", "contact_key": "simulation:known-recruiter",
-                    "status": "open", "created_at": NOW.isoformat()}
-    response = j.ingest([receipt_only], status=422)
-    j.check("Contactless application tracking is currently unsupported; nothing is fabricated",
-            not j.rows("opportunities") and any(
-                "contact_phone or contact_email is required" in error["msg"]
-                for error in response["detail"]))
+    receipt_only = {"id": "acme-backend", "kind": "job_application",
+                    "title": "Backend engineer at Acme", "status": "open",
+                    "created_at": NOW.isoformat(),
+                    "context": {"company": "Acme", "role": "Backend engineer", "stage": "Applied"}}
+    j.ingest([receipt_only])
+    with j.engine.begin() as connection:
+        contactless = sync_candidates(connection, now=NOW + timedelta(days=8),
+                                      policy=POLICY, dry_run=True)
+    j.check("Contactless applications remain tracked without inventing a delivery route",
+            len(j.rows("opportunities")) == 1 and not contactless.candidates)
+    j.ingest([receipt_only | {"contact_key": "simulation:known-recruiter"}], status=422)
+    j.check("A partial contact identity does not overwrite the valid tracked application",
+            j.rows("opportunities")[0]["contact_key"] is None)
     # A known recruiter is supplied here; a no-reply receipt is never used as a route.
-    records = [opportunity("acme-backend", contact="jules"), opportunity("acme-platform", contact="jules")]
-    events = [activity(record["id"], "automated_receipt") for record in records]
+    records = [opportunity(identity, contact="jules", kind="job_application", created_at=NOW.isoformat(),
+                           title=f"{role} at Acme", context={"company": "Acme", "role": role, "stage": "Applied"})
+               for identity, role in (("acme-backend", "Backend engineer"), ("acme-platform", "Platform engineer"))]
+    events = [activity(record["id"], "automated_receipt") | {"classification": "automated"}
+              for record in records]
     j.ingest(records, events)
     j.check("Automated receipt activities are retained without becoming human replies",
             len(j.rows("activities")) == 2 and not j.sync())
-    queue = j.sync(now=NOW + timedelta(days=10))
-    j.check("After 15 days generic aging groups both roles into one recruiter suggestion",
-            len(queue) == 1 and queue[0].reason == "aging" and
+    queue = j.sync(now=NOW + timedelta(days=7))
+    j.check("After seven days application-specific waiting groups both roles into one recruiter suggestion",
+            len(queue) == 1 and queue[0].reason == "application_no_update" and
             len(j.rows("opportunities")) == 2 and len(queue[0].other_opportunity_ids) == 1)
-    j.review(["s"], now=NOW + timedelta(days=10),
+    j.review(["s"], now=NOW + timedelta(days=7),
              body="Hi Jules, I wanted to check whether there are any updates. Thanks for your time.")
     prompt = json.dumps(j.prompts)
-    j.check("The current drafting prompt has no role details or correspondence text",
-            "acme-backend" not in prompt and "acme-platform" not in prompt and
-            "automated_receipt" not in prompt)
+    primary_role = next(record["context"]["role"] for record in records
+                        if record["id"] == queue[0].primary_opportunity_id)
+    j.check("Drafting receives the actual application context and leaves the copy unsent",
+            "Acme" in prompt and primary_role in prompt and "Applied" in prompt and not j.rows("outbox"))
 
 
 SCENARIOS = (
@@ -318,7 +328,7 @@ SCENARIOS = (
     ("cooldown", "A customer replies immediately after outreach", cooldown_boundary,
      "Reply visibility improved", "The inbox shows the fresh reply immediately; the outbound follow-up queue retains its 72-hour cooldown."),
     ("application-tracking", "Two job applications produce automated receipts", tracking_boundary,
-     "Proposed product gap demonstrated", "No contactless import or application-specific waiting signal; generic aging groups by recruiter and copy lacks role context."),
+     "Simulated workflow passed", "Contactless applications are tracked; a known recruiter enables grouped application waiting and contextual drafting without sending."),
 )
 
 
@@ -383,7 +393,7 @@ def main():
               "scenarios": results}
     (args.output / "results.json").write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
     lines = ["# Respawned scenario simulation", "", report["execution"] + ".", "",
-             "Passing a boundary probe confirms a limitation, not readiness for that use case.", "",
+             "These scripted journeys test the stated behavior; their verification limits are listed below.", "",
              "| Scenario | Execution | Assessment |", "| --- | --- | --- |"]
     for item in results:
         lines.append(f"| [{item['scenario']}]({item['slug']}/evidence.json) | {'PASS' if item['passed'] else 'FAIL'} | {item['classification'] if item['passed'] else 'Investigation required'} |")
@@ -392,7 +402,7 @@ def main():
                       f"[Review transcript]({item['slug']}/review.txt) · [Source requests and stored state]({item['slug']}/evidence.json)", ""])
         lines.extend(f"- {'PASS' if step['passed'] else 'FAIL'}: {step['description']}" for step in item.get("steps", []))
     lines.extend(["", "## Verification limits", "",
-                  "Synthetic classifications and reviewer actions are supplied by this harness. This does not test source discovery, semantic matching, actual human authorization, model quality, live HTTP transport, concurrent reviewers, delivery, Docker installation/persistence, or transaction-commit failure responses. Separate focused tests cover the commit response fix; Docker lifecycle and restore verification remain outstanding. See docs/RELEASE_CHECKS.md.", ""])
+                  "Synthetic classifications and reviewer actions are supplied by this harness. Source discovery, semantic matching, actual human authorization, model quality, live HTTP transport, concurrent reviewers, delivery, Docker installation/persistence, restore, and transaction-commit failure responses are not exercised by this simulation. See docs/RELEASE_CHECKS.md for the separate release verification procedure and docs/V1_RELEASE.md for recorded qualification results.", ""])
     (args.output / "REPORT.md").write_text("\n".join(lines), encoding="utf-8")
     print(f"Evidence: {args.output / 'REPORT.md'}")
     return 0 if all(item["passed"] for item in results) else 1

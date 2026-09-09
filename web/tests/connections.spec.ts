@@ -114,3 +114,17 @@ test('holds the active engine while a workspace write is pending', async ({ page
   await expect(page.locator('.record-row').filter({ hasText: 'Remote Workspace renewal' })).toBeVisible()
   await expect(page.getByLabel('Workspace', { exact: true })).toHaveValue('all')
 })
+
+test('mobile connection setup can scroll to the form and remote server instructions', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await engines(page)
+  const connectButton = page.getByRole('button', { name: 'Connect engine', exact: true })
+  await connectButton.scrollIntoViewIfNeeded()
+  await expect(connectButton).toBeInViewport({ ratio: 1 })
+  await page.getByText('Prepare a remote engine', { exact: true }).click()
+  const originSetting = page.locator('.connection-server-help pre')
+  await originSetting.scrollIntoViewIfNeeded()
+  await expect(originSetting).toBeInViewport({ ratio: 1 })
+  await expect(originSetting).toContainText('RESPAWNED_UI_ORIGINS=http://127.0.0.1:5173')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+})
