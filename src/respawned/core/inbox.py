@@ -1,7 +1,7 @@
 """Read-only visibility of unanswered replies, independent of outreach eligibility."""
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
@@ -73,8 +73,35 @@ def list_reply_inbox(
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
         raise ValueError("limit must be an integer between 1 and 200")
     now = aware_utc(now, "list_reply_inbox.now")
-    timezone = ZoneInfo(policy.business_context.timezone_name)
     states = reduce_opportunities(connection, now)
+    items = reply_inbox_items(states, now=now, policy=policy, kinds=kinds)
+    selected = items[:limit]
+    if selected:
+        counts = dict(connection.execute(text("""
+            SELECT contact_key, count(*)
+            FROM outbox
+            WHERE contact_key = ANY(:contact_keys)
+              AND status = 'pending' AND created_at <= :now
+            GROUP BY contact_key
+        """), {
+            "contact_keys": sorted({item.contact_key for item in selected}), "now": now,
+        }).tuples().all())
+        selected = [replace(item, pending_outbox_count=counts.get(item.contact_key, 0))
+                    for item in selected]
+    return ReplyInboxResult(now, tuple(selected), len(items), len(items) > limit)
+
+
+def reply_inbox_items(
+    states: Sequence[OpportunityState], *, now: datetime, policy: Policy,
+    kinds: Iterable[str] | None = None,
+) -> list[ReplyInboxItem]:
+    """Compute complete reply groups before pagination or reservation enrichment.
+
+    The inbox and monitoring overview share this projection, so monitoring cannot
+    lose replies past the first page or ignore outbound evidence in another view.
+    """
+    now = aware_utc(now, "reply_inbox_items.now")
+    timezone = ZoneInfo(policy.business_context.timezone_name)
 
     latest_outbounds: dict[str, datetime] = {}
     for state in states:
@@ -140,17 +167,4 @@ def list_reply_inbox(
         -item.latest_reply_at.timestamp(), item.contact_key, item.channel,
         item.contact_address,
     ))
-    selected = items[:limit]
-    if selected:
-        counts = dict(connection.execute(text("""
-            SELECT contact_key, count(*)
-            FROM outbox
-            WHERE contact_key = ANY(:contact_keys)
-              AND status = 'pending' AND created_at <= :now
-            GROUP BY contact_key
-        """), {
-            "contact_keys": sorted({item.contact_key for item in selected}), "now": now,
-        }).tuples().all())
-        selected = [replace(item, pending_outbox_count=counts.get(item.contact_key, 0))
-                    for item in selected]
-    return ReplyInboxResult(now, tuple(selected), len(items), len(items) > limit)
+    return items

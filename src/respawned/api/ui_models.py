@@ -55,6 +55,28 @@ class UIConfig(BaseModel):
     source_freshness: Literal["unknown"] = "unknown"
 
 
+class UIOverviewCounts(BaseModel):
+    records: int = Field(ge=0)
+    ready: int = Field(ge=0)
+    pending_drafts: int = Field(ge=0)
+    reply_contacts: int = Field(ge=0)
+    pending_outbox: int = Field(ge=0)
+
+
+class UIWorkspaceOverview(BaseModel):
+    id: str
+    name: str
+    description: str
+    kinds: list[str]
+    counts: UIOverviewCounts
+
+
+class UIOverview(BaseModel):
+    generated_at: datetime
+    source_freshness: Literal["unknown"] = "unknown"
+    workspaces: list[UIWorkspaceOverview]
+
+
 class UIContact(BaseModel):
     key: str
     name: str | None

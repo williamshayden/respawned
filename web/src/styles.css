@@ -28,11 +28,12 @@ svg { flex-shrink: 0; }
 h1, h2, h3, p { margin: 0; }
 h1, h2, h3 { font-weight: 600; }
 .app { display: grid; grid-template-columns: clamp(214px, 16.5vw, 264px) minmax(0, 1fr); height: 100dvh; min-height: 480px; overflow: hidden; }
-.sidebar { position: relative; display: flex; flex-direction: column; background: #f9faf9; border-right: 1px solid var(--border); padding: 28px 13px 20px; }
+.sidebar { position: relative; display: flex; flex-direction: column; background: #f9faf9; border-right: 1px solid var(--border); padding: 28px 13px 20px; overflow-y: auto; }
 .brand { display: flex; align-items: center; gap: 17px; color: var(--ink); padding: 0 14px; line-height: 1.03; font-size: 25px; font-weight: 680; letter-spacing: -.7px; }
 .brand:hover { text-decoration: none; }
 .brand-mark { width: 45px; height: 49px; stroke-width: 1.45; color: var(--accent-dark); }
-.workspace-selector { margin: 48px 2px 17px; }
+.workspace-selector { margin: 28px 2px 17px; }
+.workspace-selector .select-wrap + label { margin-top: 16px; }
 .workspace-selector label { display: block; font-size: 12px; text-transform: uppercase; font-weight: 550; color: var(--muted); margin: 0 14px 12px; }
 .select-wrap { display: flex; position: relative; align-items: center; }
 .select-wrap > svg { pointer-events: none; position: absolute; right: 13px; }

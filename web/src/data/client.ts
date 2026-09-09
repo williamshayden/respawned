@@ -1,5 +1,6 @@
 import type { InboxResult, OutboxItem, RecordPage, ReviewClient, SyncResult, UIConfig, UIDraft, UIRecord } from './types'
 import { accessHeaders, type ReviewAccess } from './auth'
+import { engineNetworkError, engineRequestOptions } from './connections'
 
 export class ClientError extends Error {
   constructor(
@@ -37,14 +38,17 @@ function errorMessage(payload: unknown, fallback: string): string {
 /** Credentials live only in this closure; they are never written to storage or URLs. */
 export function createHttpClient(baseUrl = '', operatorToken: ReviewAccess = '', workspaceId = ''): ReviewClient {
   const root = `${baseUrl.replace(/\/+$/, '')}/v1/ui`
+  const transport = engineRequestOptions(operatorToken, baseUrl)
   async function request<T>(path: string, method = 'GET', body?: unknown, csv = false): Promise<T> {
     const headers: Record<string, string> = { Accept: csv ? 'text/csv' : 'application/json', ...accessHeaders(operatorToken) }
     if (body !== undefined) headers['Content-Type'] = 'application/json'
     let response: Response
     try {
-      response = await fetch(`${root}${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+      response = await fetch(`${root}${path}`, { ...transport, method, headers,
+        signal: AbortSignal.timeout(method === 'GET' ? 20_000 : 330_000),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     } catch {
-      throw new ClientError('Could not reach the review API. Check the connection and try again.', 0, 'network_error')
+      throw new ClientError(engineNetworkError(baseUrl), 0, 'network_error')
     }
     if (response.ok && csv) {
       if (!response.headers.get('Content-Type')?.toLowerCase().startsWith('text/csv')) {

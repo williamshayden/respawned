@@ -1,6 +1,7 @@
 # Respawned UI and integration review — September 9, 2026
 
-This review covers the UI branch after the configurable-workspace implementation.
+This review covers the UI branch after configurable workspaces and connections
+to multiple engines were implemented.
 It supplements the historical V1 and simulation reports; it is not evidence of
 publication, deployment to a public host, or delivery through a real mailbox.
 
@@ -40,6 +41,34 @@ logout. No JavaScript runtime errors were reported. Automated tests cover expiry
 one-use exchange, cross-origin access, revoked cookies, multiple ports, and the
 ordinary server's independent Bearer path. Legacy read/ingest routes still assume
 a trusted local deployment; this is not an account or tenant system.
+
+## Multiple engines and workspace monitoring
+
+Connections retain only names, API root URLs, and identifiers in browser storage.
+Review credentials remain in tab memory and each request targets its owning
+engine. Local sessions cannot be used remotely; remote requests omit cookies and
+reject redirects. Servers explicitly opt into allowed browser origins through
+`RESPAWNED_UI_ORIGINS`; ordinary Bearer authentication remains required.
+
+The overview reads uncapped counts from canonical engine services without
+materializing candidates. Watch preferences distinguish both engine and workspace
+identity. Per-engine failures preserve clearly stale snapshots; locking, removal,
+or credential changes conceal the previous connection's data. Engine switching
+is held during pending writes or unsaved draft edits.
+
+A real Chromium walkthrough used two running servers on different loopback
+origins and separate PostgreSQL schemas. It connected both engines, displayed
+their distinct record counts (2 and 3), selected saved workspaces in each, then
+generated and approved a stub-backed draft only on the second engine. The browser
+made exactly those two writes to that engine; its outbox held one pending human
+reservation and the first engine's outbox stayed empty. Reload retained connection
+and watch metadata, cleared manual credentials, and concealed protected data.
+A disallowed browser origin failed CORS even with a valid Bearer token. Desktop
+and mobile checks found no runtime errors or horizontal overflow.
+
+These were isolated local servers, not a deployed remote host, and no real model
+or delivery provider was called. Evidence lives in
+`/tmp/respawned-two-engine-smoke-20260909/`; it is not packaged as application data.
 
 ## Headless Codex
 
@@ -94,15 +123,17 @@ Current workspaces are organizational views over the same engine and cooldowns.
 
 ## Combined validation
 
-The final local check passed 550 Python tests, including Docker startup,
-persistence, and backup/restore. The only warning is the existing Starlette/httpx
-deprecation. Frontend validation passed 27 data tests and 21 Chromium browser
-tests; the separate opt-in connected approval test was skipped. Actual local
-session and Codex/API walkthroughs above supply additional integration evidence.
+The full local suite passed 578 Python tests, including Docker startup,
+persistence, and backup/restore. After the final CORS startup fix, 44 focused
+checks passed, including two additional CLI startup regressions. The only warning
+is the existing Starlette/httpx deprecation. Frontend validation passed 52 data
+tests and 27 Chromium browser tests; the separate opt-in connected approval test
+was skipped. Actual local session, two-engine, and Codex/API walkthroughs above
+supply additional integration evidence.
 
 Typechecking, the locked frontend build, bundled-asset reproducibility, and
 `uv lock --check` passed. Both the wheel and the wheel rebuilt from the source
 distribution installed outside the checkout and passed HTTP asset/CLI/PostgreSQL
 checks without Node.js. The package probe also imports the Codex backend and
 checks `respawned ui --help`. Evidence is recorded locally in
-`/tmp/respawned-integrations-final-package-v2/report.json`.
+`/tmp/respawned-multi-engine-package-20260909/report.json`.

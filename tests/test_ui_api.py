@@ -43,7 +43,7 @@ def dependencies(monkeypatch):
 
 @pytest.mark.parametrize("method,path", [
     ("get", "/config"), ("get", "/records"), ("get", "/records/one"),
-    ("get", "/outbox"), ("get", "/inbox"),
+    ("get", "/outbox"), ("get", "/inbox"), ("get", "/overview"),
     ("post", "/sync"), ("post", "/records/one/draft"),
     ("post", f"/drafts/{DRAFT_ID}/edit"),
     ("post", f"/drafts/{DRAFT_ID}/approve"),
@@ -128,6 +128,83 @@ def _draft(state, key="one"):
     ingest_records(state.connection, opportunities=[_record(key)], activities=[_reply(key)])
     _post(state, "/sync")
     return _post(state, f"/records/{key}/draft")
+
+
+def test_overview_counts_every_record_and_reply_beyond_queue_limits_without_writes(review_api):
+    state = review_api
+    keys = [f"monitor-{index:03}" for index in range(205)]
+    ingest_records(state.connection, opportunities=[
+        *[_record(key, kind="tail" if index >= 200 else "research") for index, key in enumerate(keys)],
+        _record("closed-monitor", status="lost", kind="tail"),
+        _record("contactless-monitor", contact_key=None, contact_email=None, kind="tail"),
+    ], activities=[_reply(key) for key in keys])
+    tail = _post(state, "/workspaces", {"name": "Tail view", "kinds": ["tail"]}, status=201)
+    everything = _post(state, "/workspaces", {"name": "Everything again", "kinds": []}, status=201)
+    missing = _post(state, "/workspaces", {"name": "Future", "kinds": ["future"]}, status=201)
+
+    def persisted_counts():
+        return {table: state.connection.execute(text(f"SELECT count(*) FROM {table}")).scalar_one()
+                for table in ("sync_runs", "candidates", "drafts", "outbox", "opportunity_states")}
+
+    before = persisted_counts()
+    result = _get(state, "/overview")
+    assert result["generated_at"] == NOW.isoformat().replace("+00:00", "Z")
+    assert result["source_freshness"] == "unknown"
+    views = {row["id"]: row for row in result["workspaces"]}
+    assert next(iter(views)) == "all"
+    assert set(views) == {"all", tail["id"], everything["id"], missing["id"]}
+    assert views["all"]["counts"] == {"records": 207, "ready": 205, "pending_drafts": 0,
+                                       "reply_contacts": 205, "pending_outbox": 0}
+    assert views[tail["id"]]["counts"] == {"records": 7, "ready": 5, "pending_drafts": 0,
+                                           "reply_contacts": 5, "pending_outbox": 0}
+    assert views[everything["id"]]["counts"] == views["all"]["counts"]
+    assert set(views[missing["id"]]["counts"].values()) == {0}
+    assert persisted_counts() == before
+    assert _get(state, "/overview") == result
+    assert state.calls == []
+
+
+def test_overview_preserves_global_groups_cooldowns_and_pending_reservations(review_api):
+    state = review_api
+    ingest_records(state.connection, opportunities=[
+        _record("group-primary", contact_key="same-person", contact_email="same@example.com", kind="research", value=1000),
+        _record("group-sibling", contact_key="same-person", contact_email="same@example.com", kind="jobs", value=0),
+    ], activities=[_reply("group-primary"), _reply("group-sibling")])
+    research = _post(state, "/workspaces", {"name": "Research", "kinds": ["research"]}, status=201)["id"]
+    jobs = _post(state, "/workspaces", {"name": "Jobs", "kinds": ["jobs"]}, status=201)["id"]
+
+    def counts():
+        return {item["id"]: item["counts"] for item in _get(state, "/overview")["workspaces"]}
+
+    initial = counts()
+    assert initial["all"]["ready"] == initial[research]["ready"] == 1
+    assert initial[jobs]["ready"] == 0  # A view never promotes the contact sibling.
+    assert all(item["reply_contacts"] == 1 for item in initial.values())
+    draft = _post(state, "/records/group-primary/draft")
+    pending = counts()
+    assert all(item["pending_drafts"] == 1 for item in pending.values())
+    assert pending[research]["ready"] == 1 and pending[jobs]["ready"] == 0
+    _post(state, f"/drafts/{draft['id']}/approve", {"review_token": draft["review_token"]})
+    reserved = counts()
+    assert all(item["pending_drafts"] == item["ready"] == 0 for item in reserved.values())
+    assert all(item["pending_outbox"] == item["reply_contacts"] == 1 for item in reserved.values())
+    ingest_records(state.connection, activities=[_reply(
+        "group-sibling", id="sibling:sent", type="message_sent", direction="outbound",
+        occurred_at=NOW - timedelta(minutes=1),
+    )])
+    answered = counts()
+    assert all(item["reply_contacts"] == item["ready"] == 0 for item in answered.values())
+    assert all(item["pending_outbox"] == 1 for item in answered.values())
+    assert len(state.calls) == 1  # Only the explicit draft request called a model.
+
+
+def test_overview_retains_pending_draft_count_when_current_state_blocks_approval(review_api):
+    state = review_api
+    _draft(state)
+    ingest_records(state.connection, opportunities=[_record(status="lost")])
+    assert _get(state, "/overview")["workspaces"][0]["counts"] == {
+        "records": 1, "ready": 0, "pending_drafts": 1, "reply_contacts": 0, "pending_outbox": 0,
+    }
 
 
 def test_reads_and_sync_preserve_context_and_contactless_tracking_without_model_calls(review_api):

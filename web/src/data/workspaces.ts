@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { accessHeaders, type ReviewAccess } from './auth'
+import { engineNetworkError, engineRequestOptions } from './connections'
 
 export interface Workspace {
   id: string
@@ -12,41 +13,46 @@ export interface Workspace {
 export type WorkspaceInput = Pick<Workspace, 'name' | 'description' | 'kinds'>
 export interface WorkspaceList { items: Workspace[]; available_kinds: string[]; scope: 'shared_engine' }
 
-export async function workspaceRequest<T>(token: ReviewAccess, path = '', method = 'GET', body?: WorkspaceInput): Promise<T> {
-  const response = await fetch(`/v1/ui/workspaces${path}`, {
+export async function workspaceRequest<T>(token: ReviewAccess, path = '', method = 'GET', body?: WorkspaceInput, baseUrl = ''): Promise<T> {
+  let response: Response
+  try { response = await fetch(`${baseUrl}/v1/ui/workspaces${path}`, {
+    ...engineRequestOptions(token, baseUrl),
     method, headers: { ...accessHeaders(token), ...(body ? { 'Content-Type': 'application/json' } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
-  })
+  }) } catch { throw new Error(engineNetworkError(baseUrl)) }
   if (response.status === 204) return undefined as T
   const payload = await response.json()
   if (!response.ok) throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Could not save workspace. Check the fields and your connection.')
   return payload as T
 }
 
-export function useWorkspaces(token: ReviewAccess) {
+export function useWorkspaces(token: ReviewAccess, baseUrl = '') {
   const [data, setData] = useState<WorkspaceList>({ items: [], available_kinds: [], scope: 'shared_engine' })
+  const [dataOwner, setDataOwner] = useState<{ token: ReviewAccess; baseUrl: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const activeToken = useRef(token)
+  const activeToken = useRef({ token, baseUrl })
   const generation = useRef(0)
-  activeToken.current = token
+  activeToken.current = { token, baseUrl }
   const reload = useCallback(async () => {
-    if (!token || activeToken.current !== token) return
+    const isCurrent = () => activeToken.current.token === token && activeToken.current.baseUrl === baseUrl
+    if (!token || !isCurrent()) return
     const request = ++generation.current
     setLoading(true); setError(null)
     try {
-      const next = await workspaceRequest<WorkspaceList>(token)
-      if (activeToken.current === token && request === generation.current) setData(next)
+      const next = await workspaceRequest<WorkspaceList>(token, '', 'GET', undefined, baseUrl)
+      if (isCurrent() && request === generation.current) { setData(next); setDataOwner({ token, baseUrl }) }
     } catch (reason) {
-      if (activeToken.current === token && request === generation.current) setError(reason instanceof Error ? reason.message : 'Could not load workspaces.')
+      if (isCurrent() && request === generation.current) setError(reason instanceof Error ? reason.message : 'Could not load workspaces.')
     } finally {
-      if (activeToken.current === token && request === generation.current) setLoading(false)
+      if (isCurrent() && request === generation.current) setLoading(false)
     }
-  }, [token])
+  }, [token, baseUrl])
   useEffect(() => {
     setData({ items: [], available_kinds: [], scope: 'shared_engine' }); setError(null); setLoading(false)
     void reload()
     return () => { generation.current++ }
   }, [reload])
-  return { ...data, error, loading, reload }
+  const ownsData = dataOwner?.token === token && dataOwner?.baseUrl === baseUrl
+  return { ...data, items: ownsData ? data.items : [], available_kinds: ownsData ? data.available_kinds : [], error, loading, reload }
 }

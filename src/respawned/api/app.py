@@ -16,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
 
+from respawned.api.cors import RemoteUIMiddleware, parse_ui_origins
 from respawned.api.models import (
     DraftListResponse,
     HealthResponse,
@@ -135,6 +136,12 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Respawned", version="1.0.0", lifespan=lifespan)
+
+# Validate before Uvicorn starts. A middleware-construction exception is otherwise
+# mistaken for unsupported ASGI lifespan under Uvicorn's default auto detection,
+# leaving an apparently started server whose requests all return 500.
+app.add_middleware(RemoteUIMiddleware,
+                   origins=parse_ui_origins(os.environ.get("RESPAWNED_UI_ORIGINS", "")))
 
 
 @app.middleware("http")

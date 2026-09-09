@@ -1,4 +1,5 @@
 import { accessHeaders, type ReviewAccess } from './auth'
+import { engineNetworkError, engineRequestOptions } from './connections'
 
 export interface ModelSettings {
   backend?: 'openai_compatible' | 'codex_cli'
@@ -91,15 +92,15 @@ function responseError(payload: unknown, fallback: string): string {
   return messages.length ? messages.join(' ') : fallback
 }
 
-async function request<T>(path: string, token: ReviewAccess, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
+async function request<T>(path: string, token: ReviewAccess, method = 'GET', body?: unknown, signal?: AbortSignal, baseUrl = ''): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json', ...accessHeaders(token) }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   let response: Response
   try {
-    response = await fetch(path, { method, headers, signal, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+    response = await fetch(`${baseUrl}${path}`, { ...engineRequestOptions(token, baseUrl), method, headers, signal, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error
-    throw new Error('Could not reach Respawned. Check that the server is running and try again.')
+    throw new Error(engineNetworkError(baseUrl))
   }
   let payload: unknown
   try { payload = await response.json() }
@@ -110,7 +111,7 @@ async function request<T>(path: string, token: ReviewAccess, method = 'GET', bod
   return payload as T
 }
 
-export const readBootstrap = (signal?: AbortSignal) => request<{ review_enabled: boolean }>('/v1/setup/bootstrap', '', 'GET', undefined, signal)
-export const readSetup = (token: ReviewAccess, signal?: AbortSignal) => request<SetupStatus>('/v1/ui/setup', token, 'GET', undefined, signal)
-export const saveModel = (token: ReviewAccess, settings: ModelSettings) => request<ModelStatus>('/v1/ui/setup/model', token, 'PUT', settings)
-export const importRecords = (token: ReviewAccess, payload: ImportPayload) => request<ImportResult>('/v1/ui/import', token, 'POST', payload)
+export const readBootstrap = (signal?: AbortSignal, baseUrl = '') => request<{ review_enabled: boolean }>('/v1/setup/bootstrap', '', 'GET', undefined, signal, baseUrl)
+export const readSetup = (token: ReviewAccess, signal?: AbortSignal, baseUrl = '') => request<SetupStatus>('/v1/ui/setup', token, 'GET', undefined, signal, baseUrl)
+export const saveModel = (token: ReviewAccess, settings: ModelSettings, baseUrl = '') => request<ModelStatus>('/v1/ui/setup/model', token, 'PUT', settings, undefined, baseUrl)
+export const importRecords = (token: ReviewAccess, payload: ImportPayload, baseUrl = '') => request<ImportResult>('/v1/ui/import', token, 'POST', payload, undefined, baseUrl)

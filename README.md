@@ -63,6 +63,13 @@ Use **Workspaces** to create named views for any record kinds, or include all
 types. Workspaces persist in the engine and share its records, model, and policy.
 The shared queue, context panel, activity history, editable drafts, and unsent
 outbox work across these views; contactless records remain visible in All tracked.
+Open **Overview → Choose workspaces** to monitor several views at once. Use
+**Connections** to add another Respawned engine by URL and review credential;
+its workspaces appear alongside this engine's views. Each engine keeps its own
+data and configuration. Monitoring refreshes every 30 seconds while the overview
+is visible, with explicit status when a server cannot be reached. See
+[remote engine setup](docs/WEB_UI.md#monitor-local-and-remote-workspaces) for the
+required origin configuration and connection workflow.
 See the [UI setup guide](docs/WEB_UI.md) for the complete setup flow, explicit
 test simulation, frontend development, and browser checks. Source freshness
 remains unknown; approval reserves an unsent outbox item.

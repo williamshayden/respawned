@@ -1,8 +1,10 @@
-import { BarChart3, ChevronDown, FolderCog, NotebookText, Mail, RefreshCw, Send, Settings2, ShieldCheck, X } from 'lucide-react'
+import { BarChart3, ChevronDown, FolderCog, LayoutDashboard, Network, NotebookText, Mail, RefreshCw, Send, Settings2, ShieldCheck, X } from 'lucide-react'
 import { type Page } from '../presentation'
 import type { Workspace } from '../data/workspaces'
+import type { EngineConnection } from '../data/connections'
 
 const destinations = [
+  { name: 'Overview', icon: LayoutDashboard }, { name: 'Connections', icon: Network },
   { name: 'Review queue', icon: NotebookText }, { name: 'Reply inbox', icon: Mail },
   { name: 'Outbox', icon: Send }, { name: 'Activity', icon: BarChart3 }, { name: 'Policy', icon: ShieldCheck },
   { name: 'Setup', icon: Settings2 },
@@ -11,6 +13,7 @@ const destinations = [
 interface Props {
   page: Page; onNavigate: (page: Page) => void
   scope: string; workspaces: Workspace[]; onScope: (scope: string) => void
+  connections: EngineConnection[]; activeConnectionId: string; onConnection: (id: string) => void
   counts: Partial<Record<Page, number>>; connected: boolean
   onConnect: () => void; open: boolean; onClose: () => void
 }
@@ -25,6 +28,12 @@ export function Sidebar(props: Props) {
       </a>
       <button className="icon-button mobile-close" aria-label="Close navigation" onClick={props.onClose}><X /></button>
       <div className="workspace-selector">
+        <label htmlFor="engine-connection">Engine</label>
+        <div className="select-wrap">
+          <select id="engine-connection" value={props.activeConnectionId} onChange={event => props.onConnection(event.target.value)}>
+            {props.connections.map(connection => <option key={connection.id} value={connection.id}>{connection.name}</option>)}
+          </select><ChevronDown size={16} aria-hidden="true" />
+        </div>
         <label htmlFor="context-scope">Workspace</label>
         <div className="select-wrap">
           <select id="context-scope" value={props.scope} onChange={event => props.onScope(event.target.value)}>

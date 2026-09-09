@@ -6,12 +6,14 @@ import { isLocalSession, type ReviewAccess } from '../data/auth'
 import './setup.css'
 
 interface Props {
+  baseUrl?: string
   connected: boolean
   token: ReviewAccess
   onConnect: (token: string) => Promise<void> | void
   onDisconnect: () => Promise<void> | void
   onImported?: () => void
   onOpenOutbox: () => void
+  onBusyChange?: (busy: boolean) => void
 }
 
 const TOKEN_COMMAND = `export RESPAWNED_REVIEW_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -29,7 +31,7 @@ function downloadTemplate() {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-export function SetupView({ connected, token, onConnect, onDisconnect, onImported, onOpenOutbox }: Props) {
+export function SetupView({ connected, token, onConnect, onDisconnect, onImported, onOpenOutbox, baseUrl = '', onBusyChange }: Props) {
   const [accessToken, setAccessToken] = useState('')
   const [connecting, setConnecting] = useState(false)
   const [accessError, setAccessError] = useState<string | null>(null)
@@ -51,10 +53,15 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
   currentAccess.current = token
 
   useEffect(() => {
+    onBusyChange?.(connecting || savingModel || importing)
+    return () => onBusyChange?.(false)
+  }, [connecting, savingModel, importing, onBusyChange])
+
+  useEffect(() => {
     setAccessToken('')
     setAccessError(null)
     setImportText('')
-  }, [token])
+  }, [token, baseUrl])
 
   useEffect(() => {
     const abort = new AbortController()
@@ -70,7 +77,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
     setImporting(false)
     setReviewEnabled(null)
     if (connected) {
-      void readSetup(token, abort.signal).then(result => {
+      void readSetup(token, abort.signal, baseUrl).then(result => {
         if (abort.signal.aborted) return
         setStatus(result)
         setModel(result.model)
@@ -79,14 +86,14 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
         if (!abort.signal.aborted) setStatusError(message(error, 'Could not load the environment.'))
       }).finally(() => { if (!abort.signal.aborted) setLoading(false) })
     } else {
-      void readBootstrap(abort.signal).then(result => {
+      void readBootstrap(abort.signal, baseUrl).then(result => {
         if (!abort.signal.aborted) setReviewEnabled(result.review_enabled)
       }).catch(error => {
         if (!abort.signal.aborted) setStatusError(message(error, 'Could not reach the server.'))
       }).finally(() => { if (!abort.signal.aborted) setLoading(false) })
     }
     return () => abort.abort()
-  }, [connected, token, refresh])
+  }, [connected, token, refresh, baseUrl])
 
   const preview = useMemo(() => {
     if (!importText.trim()) return { payload: null, error: null }
@@ -103,8 +110,8 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
     <section className="setup-section" aria-labelledby="setup-access-title">
       <div className="setup-section-heading"><KeyRound size={23} /><div><h2 id="setup-access-title">Review access</h2><p>Your connection to this environment</p></div></div>
       <div className="setup-section-body">
-        <div className="setup-heading-row"><p>{isLocalSession(token) ? 'Connected securely through your local CLI.' : 'Launch with respawned ui to connect automatically, or use a server access token below.'}</p><span className={`setup-state ${connected ? 'is-ready' : ''}`}>{connected ? 'Unlocked' : 'Locked'}</span></div>
-        {connected ? <div className="setup-access-active"><Check size={18} /><p>{isLocalSession(token) ? 'This local connection survives page reloads and expires after 12 hours or when the server stops. Lock access ends it immediately.' : 'Access is active for this browser tab. The manually entered token stays in memory and clears when the page reloads.'}</p><button className="button small" onClick={onDisconnect}>Lock access</button></div> : <><div className="setup-note"><p>On the machine running Respawned, run:</p><pre><code>respawned ui</code></pre><p>It opens this interface with access already connected. In a terminal without a browser, use <code>respawned ui --no-open</code> and open the one-use link it prints on this machine. If port 8000 is occupied, stop the existing server or choose <code>--port 8001</code>.</p></div><form className="setup-access-form" onSubmit={async event => {
+        <div className="setup-heading-row"><p>{baseUrl ? `Connected engine: ${baseUrl}` : isLocalSession(token) ? 'Connected securely through your local CLI.' : 'Launch with respawned ui to connect automatically, or use a server access token below.'}</p><span className={`setup-state ${connected ? 'is-ready' : ''}`}>{connected ? 'Unlocked' : 'Locked'}</span></div>
+        {connected ? <div className="setup-access-active"><Check size={18} /><p>{isLocalSession(token) ? 'This local connection survives page reloads and expires after 12 hours or when the server stops. Lock access ends it immediately.' : 'Access is active for this browser tab. The manually entered token stays in memory and clears when the page reloads.'}</p><button className="button small" onClick={onDisconnect}>Lock access</button></div> : <>{!baseUrl && <div className="setup-note"><p>On the machine running Respawned, run:</p><pre><code>respawned ui</code></pre><p>It opens this interface with access already connected. In a terminal without a browser, use <code>respawned ui --no-open</code> and open the one-use link it prints on this machine. If port 8000 is occupied, stop the existing server or choose <code>--port 8001</code>.</p></div>}{baseUrl && <p className="setup-note">Enter the review token configured on this remote engine. It is sent directly to that server and stays in this tab’s memory.</p>}<form className="setup-access-form" onSubmit={async event => {
           event.preventDefault()
           setConnecting(true)
           setAccessError(null)
@@ -114,7 +121,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
         }}>
           <label htmlFor="setup-review-token">Review access token</label>
           <div className="setup-input-action"><input id="setup-review-token" type="password" autoComplete="off" spellCheck={false} value={accessToken} onChange={event => setAccessToken(event.target.value)} placeholder="Enter the token from your server" required disabled={connecting} />
-            <button type="submit" className="button primary" disabled={connecting || !accessToken.trim()}>{connecting && <LoaderCircle size={16} className="spin" />}Connect local engine</button></div>
+            <button type="submit" className="button primary" disabled={connecting || !accessToken.trim()}>{connecting && <LoaderCircle size={16} className="spin" />}{baseUrl ? 'Connect engine' : 'Connect local engine'}</button></div>
           {accessError && <p className="inline-error" role="alert">{accessError}</p>}
         </form></>}
         {!isLocalSession(token) && <details className="setup-details">
@@ -140,7 +147,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
           setModelError(null)
           setModelNotice(null)
           try {
-            const saved = await saveModel(token, { backend: model.backend ?? 'openai_compatible', base_url: model.backend === 'codex_cli' ? '' : model.base_url.trim(), model_alias: model.model_alias.trim(), api_key_env: model.api_key_env, timeout_seconds: model.timeout_seconds })
+            const saved = await saveModel(token, { backend: model.backend ?? 'openai_compatible', base_url: model.backend === 'codex_cli' ? '' : model.base_url.trim(), model_alias: model.model_alias.trim(), api_key_env: model.api_key_env, timeout_seconds: model.timeout_seconds }, baseUrl)
             if (currentAccess.current !== startedWith) return
             setModel(saved)
             setStatus(previous => previous ? { ...previous, model: saved } : previous)
@@ -177,7 +184,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
           setImportError(null)
           setImportNotice(null)
           try {
-            const result = await importRecords(token, preview.payload)
+            const result = await importRecords(token, preview.payload, baseUrl)
             if (currentAccess.current !== startedWith) return
             setImportText('')
             setImportNotice(`Imported ${result.opportunities_upserted} record${result.opportunities_upserted === 1 ? '' : 's'} and ${result.activities_inserted} new activit${result.activities_inserted === 1 ? 'y' : 'ies'}. Refresh the review queue to evaluate next actions.`)

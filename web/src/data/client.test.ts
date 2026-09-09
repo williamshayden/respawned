@@ -214,6 +214,7 @@ describe('HTTP review client', () => {
     vi.stubGlobal('fetch', fetch)
     expect(await (await createHttpClient('', 'operator-secret', 'scope/one').exportOutbox()).text()).toBe(csv)
     expect(fetch).toHaveBeenCalledWith('/v1/ui/outbox/export?format=csv&workspace_id=scope%2Fone', {
+      credentials: 'same-origin', redirect: 'error', signal: expect.any(AbortSignal),
       method: 'GET', headers: { Accept: 'text/csv', Authorization: 'Bearer operator-secret' },
     })
   })
@@ -231,6 +232,7 @@ describe('HTTP review client', () => {
     const client = createHttpClient('http://localhost:8000/', 'operator-secret')
     await client.edit('draft/1', 'Reviewed copy', 'displayed-version')
     expect(fetch).toHaveBeenCalledWith('http://localhost:8000/v1/ui/drafts/draft%2F1/edit', {
+      credentials: 'omit', redirect: 'error', signal: expect.any(AbortSignal),
       method: 'POST', headers: { Accept: 'application/json', Authorization: 'Bearer operator-secret', 'Content-Type': 'application/json' },
       body: JSON.stringify({ body: 'Reviewed copy', review_token: 'displayed-version' }),
     })
@@ -258,6 +260,7 @@ describe('HTTP review client', () => {
     const client = createHttpClient('', 'operator-secret')
     expect(await client.getRecord('outside/page')).toEqual(record)
     expect(fetch).toHaveBeenCalledWith('/v1/ui/records/outside%2Fpage', {
+      credentials: 'same-origin', redirect: 'error', signal: expect.any(AbortSignal),
       method: 'GET', headers: { Accept: 'application/json', Authorization: 'Bearer operator-secret' },
     })
   })
@@ -271,5 +274,17 @@ describe('HTTP review client', () => {
     expect(fetch.mock.calls[0][0]).toBe('/v1/ui/sync')
     expect(fetch.mock.calls[0][1].body).toBe('{}')
     expect(fetch.mock.calls[1][0]).toBe('/v1/ui/records?limit=50&offset=50')
+  })
+
+  it('binds identical draft IDs and credentials to their selected engine', async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response('{}')))
+    vi.stubGlobal('fetch', fetch)
+    await createHttpClient('https://one.example/api', 'one-secret').approve('same-draft', 'version-one')
+    await createHttpClient('https://two.example', 'two-secret').approve('same-draft', 'version-two')
+    expect(fetch.mock.calls[0][0]).toBe('https://one.example/api/v1/ui/drafts/same-draft/approve')
+    expect(fetch.mock.calls[0][1]).toMatchObject({ credentials: 'omit', redirect: 'error', headers: { Authorization: 'Bearer one-secret' }, body: JSON.stringify({ review_token: 'version-one' }) })
+    expect(fetch.mock.calls[1][0]).toBe('https://two.example/v1/ui/drafts/same-draft/approve')
+    expect(fetch.mock.calls[1][1]).toMatchObject({ credentials: 'omit', redirect: 'error', headers: { Authorization: 'Bearer two-secret' }, body: JSON.stringify({ review_token: 'version-two' }) })
+    expect(() => createHttpClient('https://one.example', { mode: 'session' })).toThrow('cannot be forwarded')
   })
 })

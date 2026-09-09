@@ -28,6 +28,7 @@ the persisted message and current record again before accepting edits or review.
 | Read queue and evidence | `GET /v1/ui/records`, `GET /v1/ui/inbox` | `core.ui_queries` projects canonical reduction and candidate results; `core.inbox` also powers `respawned inbox` |
 | Generate, edit, approve, reject | `/v1/ui/records/{id}/draft`, `/v1/ui/drafts/{id}/…` | `core.review`; `respawned review` |
 | Configure model and workspaces | `/v1/ui/setup/model`, `/v1/ui/workspaces` | `core.settings` and `core.workspaces`; saved settings also resolve for CLI and API processing |
+| Monitor workspaces | `GET /v1/ui/overview` on each engine | `core.overview` reads canonical reduction, dry-run eligibility, reply groups, drafts, and outbox without writes |
 | Read and export reservations | `/v1/ui/outbox`, `/v1/ui/outbox/export`, `/v1/outbox/export` | `core.outbox`; `respawned outbox` |
 
 The API owns eligibility, contact grouping, cooldowns, default queue priority,
@@ -137,11 +138,79 @@ remain stored. The authenticated `/v1/ui/workspaces` API supports listing,
 creation, updates, and deletion. `/v1/ui/records?workspace_id=<id>` applies a
 saved view before pagination; direct record links can still open related records.
 
+## Monitor local and remote workspaces
+
+**Overview** displays watched workspaces across named engine connections. Open
+**Choose workspaces** to select several saved views from any unlocked engine.
+Each connection initially watches **All work**. Watch choices and connection
+names/URLs persist in this browser when storage is available. Workspace definitions
+remain in their owning engine's PostgreSQL database.
+
+The overview refreshes every 30 seconds while it is visible. Turn off that option
+to pause, or use **Refresh overview**. Each engine is checked independently with a
+20-second timeout. A failed check retains its last successful counts with a clear
+stale label; an engine with no successful check has no counts. Locking or removing
+a connection clears its displayed data. Checks only read saved engine state:
+they do not import source updates, publish a candidate sync, draft, or send.
+Source freshness remains unknown even when the engine is connected.
+
+| Count | Meaning |
+| --- | --- |
+| Tracked records | All records matching the view, including closed and contactless records |
+| Ready for review | Globally eligible contact-group candidates whose primary record matches the view, including candidates with a pending draft |
+| Pending drafts | All pending drafts referencing the view, including drafts needing a fresh eligibility check |
+| Replies waiting | Canonical contact/channel groups with unanswered human reply evidence in the view, independent of outreach cooldowns |
+| Unsent in outbox | Pending approved reservations referencing any record in the view |
+
+Counts cover the full engine, beyond queue pagination. Workspaces may overlap,
+and the metrics describe different stages, so their counts are not summed.
+**Open workspace** selects its engine and opens the existing review interface.
+The sidebar's **Engine** selector switches the same queue, setup, workspaces,
+model settings, imports, and outbox to that server. Unsaved draft edits and pending
+writes hold the active engine until they are resolved.
+
+### Add an engine connection
+
+1. On the other server, run `respawned serve` or the application Docker image with
+   its own `RESPAWNED_REVIEW_TOKEN`. Expose it through your trusted HTTPS endpoint,
+   or a loopback tunnel on this computer. `respawned ui` local cookie sessions
+   are restricted to their own origin; use ordinary server mode for this connection.
+2. Set `RESPAWNED_UI_ORIGINS` on that server to the origin hosting this browser UI
+   and restart it. For the default local UI, that is:
+
+   ```dotenv
+   RESPAWNED_UI_ORIGINS=http://127.0.0.1:8000
+   ```
+
+   **Connections → Prepare a remote engine** shows the actual browser origin.
+   Comma-separate multiple exact origins; omit paths, trailing slashes, and
+   wildcards. `localhost` and `127.0.0.1` are different origins. Compose passes
+   this environment setting into the application container.
+3. In **Connections**, enter an engine name, the API root URL, and that server's
+   review token, then choose **Connect engine**. Include a reverse-proxy base path
+   if applicable. The connection is saved after the server accepts the credential.
+4. Open **Overview → Choose workspaces**, or use **Open engine** to configure and
+   review that engine directly.
+
+Remote URLs require HTTPS; HTTP is accepted for loopback addresses only. URLs
+cannot contain embedded credentials, query strings, or fragments. The browser
+calls the selected API directly, sends only that engine's Bearer credential,
+omits remote cookies, and rejects redirects. Local session credentials are never
+forwarded. Manual tokens stay in tab memory and clear on reload; use **Unlock**
+to reconnect. **Remove** forgets the browser connection without deleting server
+workspaces or records. An older engine without the overview API shows **Update
+needed** until its Respawned installation is updated.
+
+The origin allowlist enables the browser connection; it does not authenticate
+callers or add account isolation. The existing unauthenticated legacy APIs still
+require a trusted network or authenticated reverse proxy. Separate engines own
+separate data and settings, while workspaces within an engine remain shared views.
+
 ## Connect a model backend
 
 Choose a backend under **Setup → Model backend**. Non-secret settings persist in
 PostgreSQL and override environment defaults for browser drafting, API processing,
-and CLI review. Saving makes no model request. Existing drafts remain available
+and CLI review on the selected engine. Saving makes no model request. Existing drafts remain available
 when a provider is offline. Set your policy's sender/sign-off before real drafting.
 
 ### Codex CLI with ChatGPT

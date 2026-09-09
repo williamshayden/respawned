@@ -1,6 +1,6 @@
 import type { UIRecord } from './data/types'
 
-export type Page = 'Review queue' | 'Reply inbox' | 'Outbox' | 'Activity' | 'Policy' | 'Workspaces' | 'Setup'
+export type Page = 'Overview' | 'Connections' | 'Review queue' | 'Reply inbox' | 'Outbox' | 'Activity' | 'Policy' | 'Workspaces' | 'Setup'
 export const contextNames: Record<string, string> = {
   job_application: 'Job applications', sales: 'Sales', generic: 'Other work',
   music_submission: 'Music submissions', music: 'Music submissions',

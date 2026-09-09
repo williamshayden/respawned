@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FolderOpen, LoaderCircle, Plus, Save, Trash2 } from 'lucide-react'
 import { workspaceRequest, type Workspace, type WorkspaceInput } from '../data/workspaces'
 import type { ReviewAccess } from '../data/auth'
 import './workspaces.css'
 
 interface Props {
+  baseUrl?: string
   token: ReviewAccess
   workspaces: Workspace[]
   kinds: string[]
@@ -13,6 +14,7 @@ interface Props {
   onSaved(id?: string): Promise<void>
   onOpen(id: string): void
   onSetup(): void
+  onBusyChange?(busy: boolean): void
 }
 const blank: WorkspaceInput = { name: '', description: '', kinds: [] }
 
@@ -24,6 +26,8 @@ export function WorkspaceManager(props: Props) {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const onBusyChange = props.onBusyChange
+  useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false) }, [busy, onBusyChange])
   const allKinds = [...new Set([...props.kinds, ...form.kinds])].sort()
   const select = (workspace?: Workspace) => {
     setEditing(workspace?.id ?? null)
@@ -33,7 +37,7 @@ export function WorkspaceManager(props: Props) {
   const save = async () => {
     setBusy(true); setError(null); setMessage(null)
     try {
-      const result = await workspaceRequest<Workspace>(props.token, editing ? `/${editing}` : '', editing ? 'PUT' : 'POST', form)
+      const result = await workspaceRequest<Workspace>(props.token, editing ? `/${editing}` : '', editing ? 'PUT' : 'POST', form, props.baseUrl)
       setEditing(result.id); setForm({ name: result.name, description: result.description, kinds: result.kinds })
       await props.onSaved(result.id); setMessage('Workspace saved to your engine.')
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save workspace.') }
@@ -72,7 +76,7 @@ export function WorkspaceManager(props: Props) {
           <button className="button primary" type="submit" disabled={busy || !form.name.trim()}>{busy ? <LoaderCircle size={17} className="spin" /> : <Save size={17} />}Save workspace</button></div>
         {deleting && <div className="remove-workspace"><p>Remove this saved collection? Its records, drafts, and outbox stay in the engine.</p><button className="button" type="button" disabled={busy} onClick={async () => {
           setBusy(true); setError(null)
-          try { await workspaceRequest<void>(props.token, `/${editing}`, 'DELETE'); select(); await props.onSaved(); setMessage('Workspace removed. Your records are unchanged.') }
+          try { await workspaceRequest<void>(props.token, `/${editing}`, 'DELETE', undefined, props.baseUrl); select(); await props.onSaved(); setMessage('Workspace removed. Your records are unchanged.') }
           catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not remove workspace.') }
           finally { setBusy(false) }
         }}>Confirm removal</button><button className="text-button" type="button" onClick={() => setDeleting(false)} disabled={busy}>Keep workspace</button></div>}

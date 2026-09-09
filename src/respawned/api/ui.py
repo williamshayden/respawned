@@ -13,11 +13,12 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from respawned.api.ui_models import (
-    UIConfig, UIDraft, UIEditRequest, UIInboxResult, UIOutboxList,
+    UIConfig, UIDraft, UIEditRequest, UIInboxResult, UIOutboxList, UIOverview,
     UIRecord, UIRecordList, UIReviewRequest,
     UISyncRequest, UISyncResult,
 )
 from respawned.core.inbox import list_reply_inbox
+from respawned.core.overview import workspace_overview
 from respawned.core.policy import Policy
 from respawned.core.outbox import list_outbox_rows
 from respawned.core.review import (
@@ -93,6 +94,15 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency)
     def config(policy: PolicyDep) -> UIConfig:
         return UIConfig(policy_mode=policy.review.mode, cooldown_hours=float(policy.cooldown_hours),
                         max_draft_characters=policy.drafting.max_characters)
+
+
+    @router.get("/overview", response_model=UIOverview)
+    def overview(connection: ConnectionDep, policy: PolicyDep, clock: ClockDep) -> UIOverview:
+        """Monitor all saved views with authoritative, unpaginated read-only counts."""
+        try:
+            return UIOverview(**workspace_overview(connection, now=clock(), policy=policy))
+        except ValueError as exc:
+            raise HTTPException(503, "Workflow policy or tracked state is invalid") from exc
 
 
     @router.get("/records", response_model=UIRecordList)

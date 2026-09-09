@@ -12,6 +12,7 @@ export function useReview(client: ReviewClient | null, selectedRecordId: string 
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [snapshotClient, setSnapshotClient] = useState<ReviewClient | null>(null)
   const generation = useRef(0)
   const currentClient = useRef(client)
   const inFlight = useRef<object | null>(null)
@@ -37,6 +38,7 @@ export function useReview(client: ReviewClient | null, selectedRecordId: string 
     // A directly opened detail is not part of the page cursor.
     nextOffset.current = offset + page.items.length
     setConfig(nextConfig); setOutbox(nextOutbox); setInbox(nextInbox); setTotal(page.total); setHasMore(page.has_more)
+    setSnapshotClient(client)
   }, [client])
 
   useEffect(() => {
@@ -71,7 +73,13 @@ export function useReview(client: ReviewClient | null, selectedRecordId: string 
     }
   }, [client, load])
 
-  return { records, outbox, inbox, config, total, hasMore, loading, busy, error, message, setMessage, setError,
+  // React effects reset state after rendering. Never expose the previous engine's
+  // records beside a new engine's mutation client during that intervening render.
+  const ownsSnapshot = snapshotClient === client
+  return { records: ownsSnapshot ? records : [], outbox: ownsSnapshot ? outbox : [],
+    inbox: ownsSnapshot ? inbox : null, config: ownsSnapshot ? config : null,
+    total: ownsSnapshot ? total : 0, hasMore: ownsSnapshot && hasMore,
+    loading, busy, error, message, setMessage, setError,
     rememberSelection: (id: string | null) => { detailId.current = id },
     openRecord: (id: string) => operate('Opening record', async () => {
       if (!client) return
