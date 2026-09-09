@@ -1,8 +1,10 @@
 """Source-neutral domain types used by ingestion and follow-up workflows."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
+
+from respawned.core.contracts import OpportunityContextIn
 
 
 SUPPORTED_CHANNELS = frozenset({"email", "sms"})
@@ -39,6 +41,25 @@ class ContactPoint:
 
 
 @dataclass(frozen=True, slots=True)
+class OpportunityContext:
+    """Validated record facts shared by projection, display, and draft selection."""
+
+    company: str | None = None
+    role: str | None = None
+    stage: str | None = None
+    summary: str | None = None
+    expected_reply_at: datetime | None = None
+    source_url: str | None = None
+
+    def __post_init__(self) -> None:
+        validated = OpportunityContextIn.model_validate(
+            {name: getattr(self, name) for name in self.__dataclass_fields__}
+        )
+        for name, value in validated.model_dump().items():
+            object.__setattr__(self, name, value)
+
+
+@dataclass(frozen=True, slots=True)
 class Activity:
     """One source activity associated with an opportunity."""
 
@@ -47,6 +68,9 @@ class Activity:
     occurred_at: datetime
     channel: str | None = None
     direction: str | None = None
+    summary: str | None = None
+    source_url: str | None = None
+    classification: str = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,10 +92,15 @@ class OpportunityState:
     view_timestamps: tuple[datetime, ...] = ()
     preferred_channel: str | None = None
     activities: tuple[Activity, ...] = ()
+    kind: str = "generic"
+    title: str | None = None
+    context: OpportunityContext = field(default_factory=OpportunityContext)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "view_timestamps", tuple(self.view_timestamps))
         object.__setattr__(self, "activities", tuple(self.activities))
+        if isinstance(self.context, dict):
+            object.__setattr__(self, "context", OpportunityContext(**self.context))
         if self.preferred_channel is not None:
             object.__setattr__(
                 self,

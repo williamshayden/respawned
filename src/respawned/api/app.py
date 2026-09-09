@@ -24,6 +24,7 @@ from respawned.api.models import (
     ProcessRequest,
     ReadinessResponse,
 )
+from respawned.api.static import mount_review_assets
 from respawned.cli.common import DEFAULT_POLICY_PATH
 from respawned.core.inbox import ReplyInboxResult, list_reply_inbox
 from respawned.core.ingest import (
@@ -249,3 +250,18 @@ def outbox(
         FROM outbox ORDER BY id LIMIT :limit OFFSET :offset
     """), {"limit": limit + 1, "offset": offset}).mappings().all()
     return OutboxListResponse(items=rows[:limit], has_more=len(rows) > limit)
+
+
+def _register_review_interface() -> None:
+    # Delay importing the router until its shared dependencies are defined.
+    from respawned.api.ui import create_ui_router
+
+    app.include_router(create_ui_router(
+        get_connection, get_workflow_policy, get_workflow_clock,
+    ))
+
+
+_register_review_interface()
+
+# Registered last so API authorization and error responses retain their routes.
+mount_review_assets(app, os.environ.get("RESPAWNED_UI_DIST"))

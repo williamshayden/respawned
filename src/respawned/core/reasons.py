@@ -206,6 +206,93 @@ def opportunity_age(params: Mapping[str, object]) -> ReasonEvaluator:
     return evaluate
 
 
+def awaiting_reply(params: Mapping[str, object]) -> ReasonEvaluator:
+    """A sent message has waited long enough without a subsequent human reply."""
+    name = "awaiting_reply"
+    values = strict_mapping(params, name, {"minimum_days", "horizon_days"})
+    minimum = integer(values["minimum_days"], f"{name}.minimum_days")
+    horizon = number(values["horizon_days"], f"{name}.horizon_days", positive=True)
+
+    def evaluate(context: ReasonContext) -> ReasonMatch | None:
+        outbound = context.effective_last_outbound_at
+        if outbound is None or outbound > context.now:
+            return None
+        replied = context.state.last_replied_at
+        if replied is not None:
+            replied = aware_utc(
+                replied, f"{context.state.opportunity_id}.last_replied_at"
+            )
+            if outbound <= replied <= context.now:
+                return None
+        age = local_calendar_days_since(outbound, context.now, context.timezone)
+        if age < minimum:
+            return None
+        return ReasonMatch(_maturity(age, minimum, horizon), outbound)
+
+    return evaluate
+
+
+def application_no_update(params: Mapping[str, object]) -> ReasonEvaluator:
+    """Applications mature from the last human exchange, not an auto receipt."""
+    name = "application_no_update"
+    values = strict_mapping(params, name, {"minimum_days", "horizon_days"})
+    minimum = integer(values["minimum_days"], f"{name}.minimum_days")
+    horizon = number(values["horizon_days"], f"{name}.horizon_days", positive=True)
+
+    def evaluate(context: ReasonContext) -> ReasonMatch | None:
+        if context.state.kind != "job_application":
+            return None
+        timestamps = (
+            context.state.created_at,
+            context.state.last_replied_at,
+            context.effective_last_outbound_at,
+        )
+        visible = []
+        for value in timestamps:
+            if value is not None:
+                timestamp = aware_utc(value, "application_no_update.timestamp")
+                if timestamp <= context.now:
+                    visible.append(timestamp)
+        if not visible:
+            return None
+        latest = max(visible)
+        age = local_calendar_days_since(latest, context.now, context.timezone)
+        if age < minimum:
+            return None
+        return ReasonMatch(_maturity(age, minimum, horizon), latest)
+
+    return evaluate
+
+
+def promised_update_overdue(params: Mapping[str, object]) -> ReasonEvaluator:
+    """A recorded reply deadline has passed without a newer human update."""
+    name = "promised_update_overdue"
+    values = strict_mapping(params, name, {"grace_days", "horizon_days"})
+    grace = integer(values["grace_days"], f"{name}.grace_days")
+    horizon = number(values["horizon_days"], f"{name}.horizon_days", positive=True)
+
+    def evaluate(context: ReasonContext) -> ReasonMatch | None:
+        expected = context.state.context.expected_reply_at
+        if expected is None:
+            return None
+        expected = aware_utc(expected, "context.expected_reply_at")
+        if expected >= context.now:
+            return None
+        # Once somebody responds or we have followed up on this promise, a new
+        # expected date must be recorded before the same promise triggers again.
+        for value in (context.state.last_replied_at, context.effective_last_outbound_at):
+            if value is not None:
+                timestamp = aware_utc(value, "promised_update.timestamp")
+                if expected <= timestamp <= context.now:
+                    return None
+        age = local_calendar_days_since(expected, context.now, context.timezone)
+        if age < grace:
+            return None
+        return ReasonMatch(_maturity(age, grace, horizon), expected)
+
+    return evaluate
+
+
 EVALUATORS: Mapping[str, ReasonFactory] = MappingProxyType(
     {
         "reply_after_outbound": reply_after_outbound,
@@ -213,5 +300,8 @@ EVALUATORS: Mapping[str, ReasonFactory] = MappingProxyType(
         "distinct_view_days": distinct_view_days,
         "high_value_quiet": high_value_quiet,
         "opportunity_age": opportunity_age,
+        "awaiting_reply": awaiting_reply,
+        "application_no_update": application_no_update,
+        "promised_update_overdue": promised_update_overdue,
     }
 )

@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS opportunities (
     id                 TEXT PRIMARY KEY,
-    contact_key        TEXT NOT NULL CHECK (btrim(contact_key) <> ''),
+    contact_key        TEXT CHECK (btrim(contact_key) <> ''),
     contact_name       TEXT,
     contact_phone      TEXT,
     contact_email      TEXT,
@@ -11,11 +11,43 @@ CREATE TABLE IF NOT EXISTS opportunities (
     created_at         TIMESTAMPTZ NOT NULL,
     last_contact_at    TIMESTAMPTZ,
     preferred_channel  TEXT CHECK (preferred_channel IN ('email', 'sms')),
-    CHECK (
-        NULLIF(btrim(contact_phone), '') IS NOT NULL
-        OR NULLIF(btrim(contact_email), '') IS NOT NULL
+    CONSTRAINT opportunities_contact_identity CHECK (
+        (contact_key IS NULL AND contact_phone IS NULL AND contact_email IS NULL
+            AND preferred_channel IS NULL)
+        OR (contact_key IS NOT NULL AND (
+            NULLIF(btrim(contact_phone), '') IS NOT NULL
+            OR NULLIF(btrim(contact_email), '') IS NOT NULL
+        ))
     )
 );
+
+-- Additive, repeatable migration for databases created before contextual records.
+-- The old unnamed route check prevents tracking records with no known recipient.
+ALTER TABLE opportunities ALTER COLUMN contact_key DROP NOT NULL;
+ALTER TABLE opportunities DROP CONSTRAINT IF EXISTS opportunities_check;
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'opportunities'::regclass
+            AND conname = 'opportunities_contact_identity'
+    ) THEN
+        ALTER TABLE opportunities ADD CONSTRAINT opportunities_contact_identity CHECK (
+            (contact_key IS NULL AND contact_phone IS NULL AND contact_email IS NULL
+                AND preferred_channel IS NULL)
+            OR (contact_key IS NOT NULL AND (
+                NULLIF(btrim(contact_phone), '') IS NOT NULL
+                OR NULLIF(btrim(contact_email), '') IS NOT NULL
+            ))
+        );
+    END IF;
+END $$;
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS kind
+    TEXT NOT NULL DEFAULT 'generic' CHECK (kind ~ '^[a-z][a-z0-9_]{0,63}$');
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS title
+    TEXT CHECK (char_length(title) BETWEEN 1 AND 300);
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS context
+    JSONB NOT NULL DEFAULT '{}'::JSONB
+    CHECK (jsonb_typeof(context) = 'object' AND octet_length(context::TEXT) <= 16384);
 
 CREATE TABLE IF NOT EXISTS activities (
     id              TEXT PRIMARY KEY,
@@ -25,6 +57,13 @@ CREATE TABLE IF NOT EXISTS activities (
     channel         TEXT CHECK (channel IN ('email', 'sms')),
     direction       TEXT CHECK (direction IN ('inbound', 'outbound'))
 );
+
+ALTER TABLE activities ADD COLUMN IF NOT EXISTS summary
+    TEXT CHECK (char_length(summary) BETWEEN 1 AND 2000);
+ALTER TABLE activities ADD COLUMN IF NOT EXISTS source_url
+    TEXT CHECK (char_length(source_url) <= 2048 AND source_url ~ '^https?://');
+ALTER TABLE activities ADD COLUMN IF NOT EXISTS classification
+    TEXT NOT NULL DEFAULT 'unknown' CHECK (classification IN ('human', 'automated', 'unknown'));
 
 CREATE TABLE IF NOT EXISTS sync_runs (
     id               UUID PRIMARY KEY,
@@ -127,7 +166,10 @@ deduplicated AS (
         opportunity_id,
         occurred_at,
         channel,
-        direction
+        direction,
+        summary,
+        source_url,
+        classification
     FROM activities
     ORDER BY
         id,
@@ -135,7 +177,10 @@ deduplicated AS (
         opportunity_id ASC,
         type ASC,
         channel ASC NULLS FIRST,
-        direction ASC NULLS FIRST
+        direction ASC NULLS FIRST,
+        classification ASC,
+        summary ASC NULLS FIRST,
+        source_url ASC NULLS FIRST
 ),
 projected AS (
     SELECT *
@@ -160,7 +205,11 @@ aggregated AS (
             ARRAY[]::TIMESTAMPTZ[]
         ) AS view_timestamps,
         MAX(occurred_at)
-            FILTER (WHERE type = 'contact_replied') AS last_replied_at,
+            FILTER (
+                WHERE classification <> 'automated'
+                    AND (type = 'contact_replied'
+                        OR (classification = 'human' AND direction = 'inbound'))
+            ) AS last_replied_at,
         MAX(occurred_at) FILTER (
             WHERE type = 'message_sent' AND direction = 'outbound'
         ) AS last_message_sent_at,
@@ -176,7 +225,10 @@ aggregated AS (
                     'activity_type', type,
                     'occurred_at', occurred_at,
                     'channel', channel,
-                    'direction', direction
+                    'direction', direction,
+                    'summary', summary,
+                    'source_url', source_url,
+                    'classification', classification
                 ) ORDER BY occurred_at, id
             ),
             '[]'::JSONB
@@ -214,6 +266,9 @@ SELECT
         aggregated.last_activity_channel
     ) AS preferred_channel,
     COALESCE(aggregated.activities, '[]'::JSONB) AS activities,
-    aggregated.last_activity_channel
+    aggregated.last_activity_channel,
+    opportunities.kind,
+    opportunities.title,
+    opportunities.context
 FROM opportunities
 LEFT JOIN aggregated ON aggregated.opportunity_id = opportunities.id;

@@ -16,6 +16,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import tomllib
 import zipfile
@@ -28,13 +29,26 @@ ROOT = Path(__file__).resolve().parents[1]
 # contains no package sources. Its imports therefore verify the distribution.
 INSTALLED_PROBE = r'''
 import csv
+from html.parser import HTMLParser
 from importlib.metadata import version
 import json
 import os
 from pathlib import Path
+import re
+import shutil
+import socket
 import subprocess
 import sys
+import time
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 from uuid import uuid4
+
+# No Node executable, frontend checkout, or UI override is available at runtime.
+os.environ["PATH"] = str(Path(sys.executable).parent)
+os.environ.pop("RESPAWNED_UI_DIST", None)
+os.environ["RESPAWNED_REVIEW_TOKEN"] = "distribution-review-test-token"
+assert shutil.which("node") is None
 
 import respawned
 from respawned.__main__ import DEFAULT_SEED_DIR
@@ -59,6 +73,89 @@ bin_dir = Path(sys.executable).parent
 console = bin_dir / ("respawned.exe" if os.name == "nt" else "respawned")
 module = [sys.executable, "-m", "respawned"]
 commands = []
+
+
+class AssetLinks(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.paths = []
+
+    def handle_starttag(self, tag, attributes):
+        values = dict(attributes)
+        key = "src" if tag == "script" else "href" if tag == "link" else None
+        if key and values.get(key):
+            self.paths.append(values[key])
+
+
+def verify_http(prefix, *, environment=None, api_only=False):
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    command = [*map(str, prefix), "--host", "127.0.0.1", "--port", str(port)]
+    if api_only:
+        command.append("--api-only")
+    with open(Path.cwd() / "http-server.log", "wb") as log:
+        process = subprocess.Popen(command, env=environment, stdout=log, stderr=log)
+        try:
+            base = f"http://127.0.0.1:{port}"
+            deadline = time.monotonic() + 30
+            while True:
+                try:
+                    with urlopen(base + "/healthz", timeout=1) as response:
+                        assert response.status == 200
+                    break
+                except (URLError, TimeoutError):
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise AssertionError("Installed server did not become ready; see http-server.log")
+                    time.sleep(0.1)
+            if api_only:
+                try:
+                    urlopen(base + "/", timeout=5)
+                    raise AssertionError("API-only server unexpectedly served the UI")
+                except HTTPError as error:
+                    assert error.code == 404
+                return []
+
+            with urlopen(base + "/", timeout=5) as response:
+                assert response.headers.get_content_type() == "text/html"
+                index = response.read().decode("utf-8")
+            assert "<title>Respawned</title>" in index
+            links = AssetLinks()
+            links.feed(index)
+            assert any(value.endswith(".js") for value in links.paths)
+            assert any(value.endswith(".css") for value in links.paths)
+            pending = [*links.paths, "/THIRD_PARTY_NOTICES.txt", "/bundle-manifest.json"]
+            verified = []
+            while pending:
+                path = pending.pop()
+                assert path.startswith("/"), path
+                if path in verified:
+                    continue
+                with urlopen(base + path, timeout=5) as response:
+                    assert response.status == 200
+                    body = response.read()
+                    assert body
+                    if path.endswith(".js"):
+                        assert "javascript" in response.headers.get_content_type()
+                    if path.endswith(".css"):
+                        assert response.headers.get_content_type() == "text/css"
+                        pending.extend(re.findall(r'url\([\"\x27]?(/[^)\"\x27]+)', body.decode("utf-8")))
+                verified.append(path)
+            assert any(path.endswith(".woff2") for path in verified), verified
+            try:
+                urlopen(base + "/v1/ui/config", timeout=5)
+                raise AssertionError("Bundled UI shadowed a protected API route")
+            except HTTPError as error:
+                assert error.code == 401
+            return sorted(verified)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
 
 
 def invoke(prefix, *args, environment=None, expected=0):
@@ -89,7 +186,10 @@ for prefix in ([console], module):
                        PGCONNECT_TIMEOUT="2")
     invoke(prefix, "init", environment=unavailable, expected=1)
 
+# The installed app must serve its browser demo even when PostgreSQL is unavailable.
+bundled_http_assets = verify_http([console, "serve"], environment=unavailable)
 database_verified = False
+cli_http_verified = False
 url = os.environ.get("RESPAWNED_DISTRIBUTION_POSTGRES_URL")
 if url:
     from sqlalchemy import create_engine, text
@@ -133,6 +233,9 @@ if url:
             rows = csv.DictReader(source)
             assert "authorization_mode" in rows.fieldnames
             assert list(rows) == []
+        assert verify_http([console, "serve"], environment=environment) == bundled_http_assets
+        verify_http([console, "serve"], environment=environment, api_only=True)
+        cli_http_verified = True
         database_verified = True
     finally:
         try:
@@ -148,6 +251,9 @@ print(json.dumps({
     "bundled_opportunities": len(batch.opportunities),
     "bundled_unique_activities": len({row["id"] for row in batch.activities}),
     "database_verified": database_verified,
+    "bundled_http_assets": bundled_http_assets,
+    "node_available_at_runtime": shutil.which("node") is not None,
+    "cli_http_verified": cli_http_verified,
     "commands": commands,
 }, indent=2))
 '''
@@ -186,6 +292,13 @@ def main() -> int:
     run("build", [uv, "build", "--force-pep517", "--out-dir", artifact_dir])
     wheel, = artifact_dir.glob("*.whl")
     sdist, = artifact_dir.glob("*.tar.gz")
+    with tarfile.open(sdist) as archive:
+        source_files = {name.partition("/")[2] for name in archive.getnames()}
+    assert {
+        "web/src/App.tsx", "web/package-lock.json", "web/scripts/bundle-ui.mjs",
+        "src/respawned/web_assets/index.html", "src/respawned/web_assets/THIRD_PARTY_NOTICES.txt",
+    } <= source_files, "Source distribution omitted frontend sources or bundled assets"
+    assert not any("node_modules/" in name or name.startswith("web/dist/") for name in source_files)
     rebuilt_dir = output / "from-sdist"
     run("build-sdist", [uv, "build", sdist, "--wheel", "--force-pep517", "--out-dir", rebuilt_dir])
     rebuilt, = rebuilt_dir.glob("*.whl")
@@ -228,6 +341,7 @@ def main() -> int:
             for path in (wheel, sdist, rebuilt)
         },
         "wheel_contents_match_sdist_build": True,
+        "sdist_includes_frontend_source_and_bundle": True,
         "installed_checks": verified,
     }
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

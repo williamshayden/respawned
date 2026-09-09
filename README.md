@@ -2,7 +2,9 @@
 
 Respawned turns opportunity and activity data into ranked follow-ups and an unsent outbox. Integrations submit a small canonical contract over HTTP; deterministic policy handles eligibility, cooldowns, ranking, and validation. An LLM writes copy after candidate selection. Human review is the default, with an explicit operator policy for automatic authorization.
 
-This repository ships a local PostgreSQL stack, ingestion, reply-inbox, processing, and outbox APIs, a CLI review workflow, a configurable policy, a provider-neutral LiteLLM adapter, and a legacy demo adapter for the included quote fixtures. It does not ship a message delivery worker or claim to be a CRM.
+Respawned is the product, Python package, and CLI name. The GitHub repository URL remains unchanged until a separate repository rename.
+
+This repository ships a shared browser review UI, a local PostgreSQL stack, ingestion, reply-inbox, processing, and outbox APIs, a CLI review workflow, a configurable policy, a provider-neutral LiteLLM adapter, and a legacy demo adapter for the included quote fixtures. The same UI adapts to job applications, sales, and other record kinds. It does not ship a source connector or a message delivery worker.
 
 ```mermaid
 flowchart LR
@@ -19,9 +21,45 @@ flowchart LR
     Outbox -. future delivery worker .-> Channels[Email / SMS provider]
 ```
 
-V1 is scoped to one trusted local operator. It can be installed from the source
-checkout or the prepared Python wheel; it is not a hosted service. See the
-[release record](docs/V1_RELEASE.md) for artifacts, supported scope, and checks.
+V1 is scoped to one trusted local operator. The source checkout, Python wheel,
+source distribution, and application Docker image include the built browser UI.
+Running or installing Respawned requires no Node.js runtime or frontend build.
+The [release record](docs/V1_RELEASE.md) describes earlier Python V1 artifacts and
+checks; it is historical evidence, not evidence that the current Respawned
+artifacts have been published or deployed.
+
+## Renaming an existing installation
+
+The Python package and CLI are now `respawned`. Reinstall the project with
+`uv sync --frozen`, update scripts and imports to `respawned`, and update any
+project-specific `FUE_` environment variables to the `RESPAWNED_` prefix.
+Existing database names, users, credentials, and Compose volumes remain valid;
+keep their configured values. The new database names in `.env.example` apply
+only to fresh installations. Candidate identities and stored records are preserved.
+If you rename the checkout directory, keep its existing Compose project name
+with `docker compose -p <existing-project>` to continue using the same volumes.
+The historical agent transcript and release artifact names retain their original spelling.
+
+## Open Respawned
+
+From the source checkout, install and start the bundled application:
+
+```bash
+uv sync --frozen
+uv run respawned serve --host 127.0.0.1 --port 8000
+```
+
+Open [Respawned](http://127.0.0.1:8000). An installed package uses the same command
+without `uv run`. No database or model is needed for the default fictional-data
+demo. The shared queue, context panel, activity history, editable drafts, and
+unsent outbox work across record kinds; records without a confirmed recipient
+remain visible in All tracked.
+
+For real local records, configure a separate `RESPAWNED_REVIEW_TOKEN` on the engine,
+then enter it under **Workspace connection settings**. See the
+[UI setup guide](docs/WEB_UI.md) for API connection, the isolated PostgreSQL
+simulation, optional frontend development, and browser checks. Source freshness
+remains unknown; approval reserves an unsent outbox item.
 
 ## Quickstart
 
@@ -61,7 +99,10 @@ docker compose --profile app up -d --build --wait
 curl --fail http://localhost:8000/readyz
 ```
 
-A ready service returns `{"status":"ready"}`. Readiness checks the database, schema, and policy; `/healthz` separately reports process liveness. Startup creates an empty canonical schema without loading fixture data or requiring a model connection.
+A ready service returns `{"status":"ready"}`. Readiness checks the database, schema, and policy; `/healthz` separately reports process liveness. The first database-backed request initializes the canonical schema without loading fixture data or requiring a model connection. Serving the bundled demo alone does not open a database connection.
+Open [Respawned](http://127.0.0.1:8000) and use **Workspace connection settings**
+to connect with the configured `RESPAWNED_REVIEW_TOKEN`. The Docker image includes
+the same bundled UI; no separate frontend server or asset mount is needed.
 Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
 
 ### 3. Add data
@@ -102,7 +143,26 @@ curl -X POST http://localhost:8000/v1/ingest \
   }'
 ```
 
-`contact_key` must be a stable, source-provided identity. It is intentionally separate from an email address or phone number: destinations can change, and two people can share one destination. At least one of `contact_email` or `contact_phone` is required. Supported opportunity statuses are `open`, `won`, and `lost`; supported delivery channels are `email` and `sms`. Optional `value` must be nonnegative, with at most ten integer digits and two fractional digits; values that require rounding are rejected. HTTP and in-process adapters use the same validated record contract in `core/contracts.py`.
+For a contactable record, `contact_key` must be a stable, source-provided identity
+and at least one of `contact_email` or `contact_phone` must be present. Identity is
+separate from a destination: destinations can change, and people may share one.
+For a tracking-only record, omit both the key and routes, plus
+`preferred_channel`. Partial key/route combinations are rejected. Never use a
+no-reply receipt address as an invented recipient.
+
+`kind` defaults to `generic`; `job_application`, `sales`, and other lowercase
+identifiers (up to 64 characters, with digits and underscores) use the same UI.
+Optional `title` is limited to
+300 characters. Optional `context` accepts only `company` (200 characters), `role`
+(200), `stage` (100), `summary` (2,000), an aware `expected_reply_at` timestamp, and
+an HTTP(S) `source_url` (2,048 characters, no embedded credentials). These are
+record facts, not source-controlled policy or executable UI.
+
+Supported opportunity statuses are `open`, `won`, and `lost`; supported delivery
+channels are `email` and `sms`. Optional `value` must be nonnegative, with at most
+ten integer digits and two fractional digits; values that require rounding are
+rejected. Job applications do not use value-based ranking. HTTP and in-process
+adapters share the validated contract in `src/respawned/core/contracts.py`.
 
 The built-in policy understands these activity types:
 
@@ -115,7 +175,13 @@ The built-in policy understands these activity types:
 | `opportunity_won` | The opportunity reached a won terminal state |
 | `opportunity_lost` | The opportunity reached a lost terminal state |
 
-Other activity types are retained but ignored by the built-in evaluators, which allows integrations to add custom policy evaluators without changing ingestion.
+Activities also accept an optional `summary` (2,000 characters), an HTTP(S)
+`source_url` (2,048 characters), and `classification`: `human`, `automated`, or
+`unknown` (the default). Explicitly human inbound events can use a source-specific
+type. Legacy unclassified `contact_replied` events retain their reply semantics;
+an explicitly automated event never counts as a human response. The reply inbox
+also requires `direction: inbound`. Other event types remain in history without
+creating a human reply signal unless explicitly classified as human inbound.
 
 ### 4. Preview and persist candidates
 
@@ -153,7 +219,7 @@ Candidates appear in score order. Drafts are generated lazily, so opening the qu
 
 Approval is idempotent. A database lock serializes approval for one `contact_key`, and a recent source contact or outbox reservation consumes the cooldown. The chosen channel follows `preferred_channel` when that destination exists, falls back to the other available destination, and defaults to SMS when both are present but no preference was supplied.
 
-Approve, reject, and edit actions are bound to the copy and recipient shown to the reviewer. If another reviewer changes the draft, the stale action is blocked; reopen review to inspect the current version. In-process callers must pass `expected_review_token=draft.review_token` to these services. This fingerprint detects changed content; a future remote approval interface still needs an explicit human authorization mechanism.
+Approve, reject, and edit actions are bound to the copy and recipient shown to the reviewer. If another reviewer changes the draft, the stale action is blocked; reopen review to inspect the current version. In-process callers must pass `expected_review_token=draft.review_token` to these services. This fingerprint detects changed content. Browser review additionally requires the separate `RESPAWNED_REVIEW_TOKEN` bearer credential; it does not use the processing token as human approval authority.
 
 Human review can be toggled in a selected policy:
 
@@ -206,8 +272,10 @@ outreach eligibility. `--now` (or the API `now` query) needs a UTC offset and on
 limits activity visibility; it cannot reconstruct old mutable snapshots.
 The inbox is read-only and applies the configured closed/expired exclusions.
 Both interfaces return at most 200 contact routes, with `total` and `has_more`;
-pagination is not implemented. Source connectors must classify human replies as
-`contact_replied` with `direction: inbound` and keep automated replies separate.
+pagination is not implemented. Source connectors should set `classification:
+human` and `direction: inbound` for human replies. Legacy `contact_replied`
+events remain supported; explicit `automated` classification always excludes
+the event from the human inbox.
 
 A connector should do three things: read from the source using its supported API or webhook, map records to canonical opportunities and activities, and POST batches to `/v1/ingest`. Source-specific pagination, credentials, cursors, rate limits, and field names remain in that thin adapter. The engine never reaches into a customer's CRM database and does not require JSON files.
 
@@ -221,12 +289,11 @@ HTTP success is emitted after the ingestion transaction commits. If a transport
 failure still leaves the outcome unknown, replay the same source identities and
 payloads; do not invent new activity IDs to retry.
 
-The current HTTP service is intended for loopback development or a trusted private network. Ingestion and reads are unauthenticated; processing is disabled until an operator configures `RESPAWNED_PROCESS_TOKEN`, then requires that bearer token. That token grants policy-controlled processing, not human approval authority. A public deployment should add authentication, tenant scoping, request limits, audit logging, and connector-specific secret management. If you deliberately change `BIND_HOST`, replace every example credential first.
+The current HTTP service is intended for loopback development or a trusted private network. Legacy ingestion and read APIs remain unauthenticated. Browser endpoints under `/v1/ui` are disabled until `RESPAWNED_REVIEW_TOKEN` is configured and require that reviewer bearer token. Processing is independently disabled until `RESPAWNED_PROCESS_TOKEN` is configured; that credential grants policy-controlled processing, not human approval authority. A public deployment still needs authentication for all routes, tenant scoping, request limits, audit logging, and connector-specific secret management. If you deliberately change `BIND_HOST`, replace every example credential first.
 
 ## Install a release artifact
 
-With Python 3.12 or later and a PostgreSQL 16 database, the wheel is usable outside
-a Git checkout:
+With Python 3.12 or later, the wheel is usable outside a Git checkout:
 
 ```bash
 python -m venv .venv
@@ -234,15 +301,23 @@ python -m venv .venv
 python -m pip install /path/to/respawned-1.0.0-py3-none-any.whl
 respawned --version
 respawned --help
+respawned serve --host 127.0.0.1 --port 8000
 ```
+
+Open [Respawned](http://127.0.0.1:8000) for the fictional-data demo. Both wheel and
+source distribution contain prebuilt assets in `respawned/web_assets`; installing
+either artifact does not invoke npm or require Node.js. PostgreSQL is needed
+when connecting to engine records.
 
 Set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` in the process
 environment before `respawned init`. The CLI does not automatically load
 `.env`; `uv run --env-file` in the checkout example does that explicitly. The
 installed `demo` includes its fixtures, and `sync`, `inbox`, `review`, and `outbox`
 use the packaged policy and schema. A custom policy can be selected with `--policy`;
-HTTP uses `RESPAWNED_POLICY_PATH`. Docker Compose configuration, development tests, and
-simulation scripts belong to the source checkout, not the wheel.
+HTTP uses `RESPAWNED_POLICY_PATH`. Docker Compose configuration, development tests,
+and simulation scripts belong to the source checkout, not the wheel. The server
+serves the bundled UI by default. Set `RESPAWNED_UI_DIST` to an absolute directory
+containing a built `index.html` to override it, or to `off` for an API-only server.
 
 ## Configure models and providers
 
@@ -277,7 +352,7 @@ candidate score = primary reason score + global value weight × value percentile
 
 These defaults are transparent placeholders, not fitted coefficients. `base_score` is the one reason-priority mechanism. Signal and value weights are global, avoiding a matrix of reason-specific amount and recency knobs that would be difficult to explain or train consistently. A reason evaluator maps behavior to a zero-to-one signal strength; the highest reason score supplies both the explanation and the drafting tone. Value affects final ordering but cannot change that explanation.
 
-The bundled reasons cover unanswered replies, repeated view days, a viewed-without-reply delay, relatively high-value quiet opportunities, and aging opportunities. A new reason using an existing evaluator is only a YAML entry containing an evaluator name, base score, tone, and evaluator parameters. A new kind of signal is one evaluator factory plus a registry entry; the scoring, candidate, drafting, review, and outbox layers remain unchanged. Embedding applications may also inject evaluator factories directly.
+The bundled reasons cover unanswered replies, repeated view days, a viewed-without-reply delay, relatively high-value quiet opportunities, aging opportunities, applications without a human update, and missed expected replies. Job applications are excluded from monetary ranking and the high-value reason. The generic `awaiting_reply` evaluator is available as an opt-in policy entry; see [UI policy examples](docs/WEB_UI.md#follow-up-rules). A new reason using an existing evaluator is only a YAML entry containing an evaluator name, base score, tone, and evaluator parameters. A new kind of signal is one evaluator factory plus a registry entry; the scoring, candidate, drafting, review, and outbox layers remain unchanged. Embedding applications may also inject evaluator factories directly.
 
 The policy uses configurable business-calendar dates through an IANA timezone, a contact-wide cooldown, and a hard dead-after window. It takes the newest outbound time across every opportunity sharing a `contact_key`, including both pre-stream `last_contact_at` and outbound `message_sent` activities. Repeat views count business-calendar dates since the latest outbound contact, not since an inbound reply.
 
@@ -303,13 +378,16 @@ The review surface would also need tenant-aware RBAC, queues, audit history, and
 
 ## What to build next
 
-See the [quality review](docs/QUALITY_REVIEW.md) for the latest assessment and verification, the [development handoff](docs/HANDOFF.md) for project history, and [proposals](docs/PROPOSALS.md) for the agent-assisted job-application workflow and open decisions. Those proposals are not implemented features or release commitments.
+The [UI guide](docs/WEB_UI.md) describes the current browser implementation.
+The [quality review](docs/QUALITY_REVIEW.md), [development handoff](docs/HANDOFF.md),
+and [proposals](docs/PROPOSALS.md) preserve earlier assessments and product
+discussion; they do not establish the current release or deployment state.
 
-1. Supply bounded source context so drafts address the actual request, and show that context during review.
-2. Persist unresolved associations and permit tracking records before a human recipient is known.
+1. Persist unresolved source associations and add a correction workflow.
+2. Improve evidence coverage using real connector results; tracking without a known recipient and bounded review context are already available.
 3. Prove one provider adapter with source freshness, snapshot ordering, native drafts, and reconciliation after uncertain outcomes.
 4. Add outbox claims, cancellation, and delivery-result recording when implementing a delivery worker.
-5. Add authentication, tenant scoping, and a focused review interface before shared or public use.
+5. Extend authentication and tenant scoping before shared or public use.
 
 Broader connector frameworks, incremental projections, and learned ranking should follow demonstrated need and measurements.
 
@@ -339,6 +417,11 @@ uv run pytest -q --capture=no --ignore=tests/test_app_compose.py \
 This creates and removes a unique test schema; the role needs permission to create schemas. Existing schemas and data are preserved. Compose lifecycle tests still require Docker and remain part of the default full suite.
 
 The suite covers policy and evaluator behavior, generic reduction, API validation and replay semantics, contact-level grouping, sync idempotency, drafting validation, review-time race guards, outbox export, and isolated PostgreSQL/Compose startup. Model calls are stubbed unless you deliberately run the live review flow.
+
+Frontend checks run separately with `npm run bundle:check`, `npm test`, and
+`npm run test:e2e` inside `web`; see [browser checks](docs/WEB_UI.md#checks).
+CI pins Node.js 22.20.0 and installs from `web/package-lock.json`. The optional
+connected PostgreSQL browser test requires the explicitly started simulation.
 
 ## License
 

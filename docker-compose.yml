@@ -84,6 +84,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       # Processing stays disabled until an operator sets this separate credential.
       RESPAWNED_PROCESS_TOKEN: ${RESPAWNED_PROCESS_TOKEN:-}
+      # Review uses its own credential; setting this does not enable processing.
+      RESPAWNED_REVIEW_TOKEN: ${RESPAWNED_REVIEW_TOKEN:-}
       # A container cannot use the host-facing localhost proxy URL.
       LITELLM_PROXY_URL: ${APP_LITELLM_PROXY_URL:-http://litellm:4000}
       LITELLM_MODEL_ALIAS: ${LITELLM_MODEL_ALIAS:-respawned-default}

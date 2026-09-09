@@ -57,8 +57,9 @@ def list_reply_inbox(
 ) -> ReplyInboxResult:
     """List ingested human replies that have no later contact-wide outbound.
 
-    Connectors must classify human replies as ``contact_replied`` with explicit
-    ``inbound`` direction; automated receipts/replies are separate activity types.
+    Connectors classify human replies explicitly with ``human`` classification
+    and ``inbound`` direction. Legacy ``contact_replied`` events remain supported
+    unless explicitly marked ``automated``; automated receipts never enter inbox.
     This is a current-state view with an activity cutoff, not historical snapshot
     reconstruction or proof that the source is up to date. Current contact routes
     are displayed, never inferred from reply evidence. An outbox reservation is
@@ -94,8 +95,10 @@ def list_reply_inbox(
         group_key = (state.contact_key, route.channel, normalize_contact_address(route))
         for activity in state.activities:
             if (
-                activity.activity_type == "contact_replied"
+                (activity.activity_type == "contact_replied"
+                 or activity.classification == "human")
                 and activity.direction == "inbound"
+                and activity.classification != "automated"
                 # Equal source timestamps do not establish which came later.
                 and (outbound is None or activity.occurred_at >= outbound)
             ):

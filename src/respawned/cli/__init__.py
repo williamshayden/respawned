@@ -1,1 +1,1 @@
-"""Command-line entrypoints for the Respawned."""
+"""Command-line entrypoints for Respawned."""

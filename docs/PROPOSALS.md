@@ -2,6 +2,14 @@
 
 Status: design discussion, not implemented as a whole. Updated September 5, 2026.
 
+Current implementation note (September 9, 2026): the source checkout now includes
+the [shared browser review UI](WEB_UI.md), bounded record context, tracking without
+a known recipient, explicit human/automated activity classification, and
+application/deadline follow-up rules. Local authenticated review writes to the
+existing unsent outbox. Mailbox discovery, source reconciliation, unresolved
+association review, monitoring, and delivery remain proposals. The sections below
+preserve the earlier discussion and do not describe a new published release.
+
 Subsequent implementation: [review modes and HTTP connector simulation](CONNECTOR_SIMULATION.md) adds operator-selected automatic authorization and workflow reads/processing. Human review remains the default; the human-only wording below records the earlier proposal.
 
 This document preserves the direction discussed after the canonical API refactor. It is not a promise that every feature will ship. [HANDOFF.md](HANDOFF.md) describes what actually exists at `d682d8a`.

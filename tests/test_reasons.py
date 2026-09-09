@@ -27,6 +27,9 @@ VALID_PARAMS = {
         "horizon_days": 14,
     },
     "opportunity_age": {"minimum_days": 14, "horizon_days": 14},
+    "awaiting_reply": {"minimum_days": 7, "horizon_days": 14},
+    "application_no_update": {"minimum_days": 7, "horizon_days": 14},
+    "promised_update_overdue": {"grace_days": 1, "horizon_days": 7},
 }
 
 

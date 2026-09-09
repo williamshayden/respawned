@@ -14,6 +14,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: "22.20.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Typecheck and build frontend
+        run: npm run build
+      - name: Verify the bundled UI matches its sources
+        run: npm run bundle:check
+      - name: Test frontend behavior
+        run: npm test
+      - name: Install Chromium for browser checks
+        run: npx playwright install --with-deps chromium
+      - name: Test demo and mocked HTTP browser workflows
+        run: npm run test:e2e
+
   qualify:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

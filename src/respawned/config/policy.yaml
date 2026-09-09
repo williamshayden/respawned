@@ -17,6 +17,22 @@ drafting:
   require_owner_name: false
 
 reasons:
+  application_no_update:
+    evaluator: application_no_update
+    base_score: 42
+    tone: professional and interested in the application status
+    params:
+      minimum_days: 7
+      horizon_days: 14
+
+  promised_update_overdue:
+    evaluator: promised_update_overdue
+    base_score: 58
+    tone: courteous and attentive to the agreed next step
+    params:
+      grace_days: 1
+      horizon_days: 7
+
   replied_no_answer:
     evaluator: reply_after_outbound
     base_score: 60

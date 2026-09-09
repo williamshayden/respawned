@@ -42,7 +42,12 @@ def _rows(
 ) -> list[dict[str, Any]]:
     unique: dict[str, dict[str, Any]] = {}
     for record in records:
-        row = model.model_validate(record).model_dump()
+        validated = model.model_validate(record)
+        row = validated.model_dump()
+        if isinstance(validated, OpportunityIn):
+            # Keep database timestamp/decimal columns native, and JSON context
+            # serializable on both PostgreSQL and SQLite.
+            row["context"] = validated.context.model_dump(mode="json", exclude_none=True)
         record_id = row["id"]
         previous = unique.get(record_id)
         if previous is not None and previous != row:

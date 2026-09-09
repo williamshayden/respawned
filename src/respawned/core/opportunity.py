@@ -32,5 +32,7 @@ def is_contactable_opportunity(
 
 
 def positive_value(state: OpportunityState) -> Decimal | None:
+    if state.kind == "job_application":
+        return None
     value = state.value
     return value if value is not None and value.is_finite() and value > 0 else None

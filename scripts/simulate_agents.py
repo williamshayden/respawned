@@ -311,7 +311,8 @@ def run_case(case, codex, url, directory, max_turns):
                 row["occurred_at"] == datetime.fromisoformat(by_id[row["id"].split(":", 1)[1]]["occurred_at"])
                 and row["direction"] == by_id[row["id"].split(":", 1)[1]]["direction"] for row in rows))
             journey.check("No fabricated applications, routes, or contacts are imported",
-                          {row["id"]: row for row in journey.rows("opportunities")} ==
+                          {row["id"]: OpportunityIn.model_validate(row).model_dump()
+                           for row in journey.rows("opportunities")} ==
                           {row["id"]: OpportunityIn.model_validate(row).model_dump() for row in case["seed"]})
             journey.check("Final import claims match confirmed stored source IDs",
                           sorted(final.imported_source_ids) == sorted(case["expected"]))

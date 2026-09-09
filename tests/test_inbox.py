@@ -85,6 +85,7 @@ def test_equal_timestamps_do_not_prove_a_reply_was_answered(postgres_connection)
     ({"created_at": NOW - timedelta(days=POLICY.dead_after_days)}, {}),
     ({}, {"type": "automated_reply"}),
     ({}, {"type": "application_confirmation"}),
+    ({}, {"classification": "automated"}),
     ({}, {"direction": "outbound"}),
     ({}, {"direction": None}),
     ({}, {"occurred_at": NOW + timedelta(seconds=1)}),
@@ -94,6 +95,24 @@ def test_nonactionable_or_unconfirmed_human_replies_excluded(
 ):
     ingest_records(postgres_connection, opportunities=[_opportunity(**overrides)],
                    activities=[_activity(**activity_values)])
+    assert _inbox(postgres_connection).items == ()
+
+
+def test_explicit_human_inbound_with_source_type_is_visible(postgres_connection):
+    ingest_records(postgres_connection, opportunities=[_opportunity()], activities=[
+        _activity(type="email_received", classification="human"),
+        _activity(id="newer-receipt", classification="automated", occurred_at=NOW),
+    ])
+    result = _inbox(postgres_connection)
+    assert result.total == 1
+    assert result.items[0].reply_evidence[0].activity_id == "reply"
+    assert result.items[0].latest_reply_at == NOW - timedelta(hours=1)
+
+
+def test_contactless_human_response_stays_out_of_route_based_inbox(postgres_connection):
+    ingest_records(postgres_connection, opportunities=[_opportunity(
+        contact_key=None, contact_email=None, preferred_channel=None,
+    )], activities=[_activity(classification="human")])
     assert _inbox(postgres_connection).items == ()
 
 

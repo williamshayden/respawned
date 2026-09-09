@@ -9,6 +9,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    JSON,
     MetaData,
     Numeric,
     String,
@@ -36,7 +37,7 @@ opportunities_table = Table(
     "opportunities",
     metadata,
     Column("id", String, primary_key=True),
-    Column("contact_key", String, nullable=False),
+    Column("contact_key", String),
     Column("contact_name", String),
     Column("contact_phone", String),
     Column("contact_email", String),
@@ -46,6 +47,9 @@ opportunities_table = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("last_contact_at", DateTime(timezone=True)),
     Column("preferred_channel", String),
+    Column("kind", String, nullable=False, server_default="generic"),
+    Column("title", String),
+    Column("context", JSON, nullable=False, default=dict),
 )
 activities_table = Table(
     "activities",
@@ -56,6 +60,9 @@ activities_table = Table(
     Column("occurred_at", DateTime(timezone=True), nullable=False),
     Column("channel", String),
     Column("direction", String),
+    Column("summary", String),
+    Column("source_url", String),
+    Column("classification", String, nullable=False, server_default="unknown"),
 )
 
 

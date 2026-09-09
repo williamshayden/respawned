@@ -21,3 +21,8 @@ wheels/
 
 # Local test caches
 .pytest_cache/
+
+# Frontend dependencies and local browser output
+node_modules/
+/web/test-results/
+/web/playwright-report/

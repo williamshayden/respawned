@@ -1,0 +1,2 @@
+web/** text=auto eol=lf
+src/respawned/web_assets/** -text

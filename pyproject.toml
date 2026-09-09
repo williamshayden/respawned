@@ -31,6 +31,21 @@ respawned = "respawned.__main__:main"
 requires = ["uv_build==0.12.3"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+# Published source archives retain the frontend sources and locked rebuild tools.
+# Compiled assets live under src/respawned and are included in both artifacts.
+source-include = [
+    "web/src/**",
+    "web/scripts/**",
+    "web/tests/**",
+    "web/index.html",
+    "web/package.json",
+    "web/package-lock.json",
+    "web/tsconfig.json",
+    "web/vite.config.ts",
+    "web/playwright.config.ts",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",

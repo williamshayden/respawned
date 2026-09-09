@@ -14,3 +14,9 @@ class DraftPayload:
     max_characters: int
     sign_off: str
     require_owner_name: bool = False
+    kind: str = "generic"
+    title: str | None = None
+    company: str | None = None
+    role: str | None = None
+    stage: str | None = None
+    summary: str | None = None

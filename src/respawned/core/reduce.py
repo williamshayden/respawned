@@ -27,7 +27,10 @@ OPPORTUNITY_STATES_QUERY = text(
         last_outbound_at,
         view_timestamps,
         preferred_channel,
-        activities
+        activities,
+        kind,
+        title,
+        context
     FROM opportunity_states
     WHERE CAST(:contact_key AS TEXT) IS NULL OR contact_key = :contact_key
     ORDER BY opportunity_id
@@ -51,6 +54,9 @@ def _activity(values: dict[str, Any]) -> Activity:
         occurred_at=occurred_at,
         channel=values.get("channel"),
         direction=values.get("direction"),
+        summary=values.get("summary"),
+        source_url=values.get("source_url"),
+        classification=values.get("classification", "unknown"),
     )
 
 

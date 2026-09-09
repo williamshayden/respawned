@@ -37,6 +37,7 @@ def _configure_demo(parser: argparse.ArgumentParser) -> None:
 def _configure_serve(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=os.getenv("APP_PORT", "8000"))
+    parser.add_argument("--api-only", action="store_true", help="Serve the workflow API without the bundled browser UI")
 
 
 def _configure_outbox(parser: argparse.ArgumentParser) -> None:
@@ -70,7 +71,7 @@ def _configure_inbox(parser: argparse.ArgumentParser) -> None:
 COMMANDS = (
     CommandSpec("init", "Initialize or update the application schema"),
     CommandSpec("demo", "Load the bundled legacy demo data", _configure_demo),
-    CommandSpec("serve", "Run the local workflow API", _configure_serve),
+    CommandSpec("serve", "Run the bundled browser UI and local workflow API", _configure_serve),
     CommandSpec("sync", "Refresh the prioritized follow-up candidates", _configure_sync),
     CommandSpec("review", "Review the prioritized follow-up candidates", _configure_review),
     CommandSpec("inbox", "Inspect unanswered replies independently of outreach cooldown", _configure_inbox),
@@ -122,8 +123,17 @@ def _demo(args: argparse.Namespace) -> None:
 def _serve(args: argparse.Namespace) -> None:
     import uvicorn
 
-    _init(args)
-    uvicorn.run("respawned.api.app:app", host=args.host, port=args.port)
+    previous_assets = os.environ.get("RESPAWNED_UI_DIST")
+    if args.api_only:
+        os.environ["RESPAWNED_UI_DIST"] = "off"
+    try:
+        uvicorn.run("respawned.api.app:app", host=args.host, port=args.port)
+    finally:
+        if args.api_only:
+            if previous_assets is None:
+                os.environ.pop("RESPAWNED_UI_DIST", None)
+            else:
+                os.environ["RESPAWNED_UI_DIST"] = previous_assets
 
 
 def _outbox(args: argparse.Namespace) -> None:

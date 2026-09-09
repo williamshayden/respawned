@@ -1,5 +1,6 @@
 import importlib
 from importlib.metadata import version
+import os
 import runpy
 import sys
 from pathlib import Path
@@ -45,6 +46,7 @@ def test_no_command_shows_help_without_loading_seed(capsys):
     entrypoint = importlib.import_module("respawned.__main__")
     assert entrypoint.main([]) == 0
     output = capsys.readouterr().out
+    assert output.startswith("usage: respawned ")
     assert "demo" in output
     assert "serve" in output
 
@@ -202,3 +204,23 @@ def test_inbox_command_delegates_arguments(monkeypatch, tmp_path):
         "--now", "2026-09-08T12:00:00Z", "--limit", "3", "--json",
         "--policy", str(policy_path),
     ]]
+
+
+@pytest.mark.parametrize("api_only", [False, True])
+def test_serve_selects_bundled_ui_or_api_only(monkeypatch, api_only):
+    entrypoint = importlib.import_module("respawned.__main__")
+    import uvicorn
+
+    calls = []
+    monkeypatch.setenv("RESPAWNED_UI_DIST", "/existing/override")
+    monkeypatch.setattr(entrypoint, "_init", lambda _args: pytest.fail("Serving the bundled demo must not access PostgreSQL"))
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: calls.append(
+        (app, kwargs, os.environ.get("RESPAWNED_UI_DIST"))
+    ))
+    entrypoint.main(["serve", "--port", "8123", *(["--api-only"] if api_only else [])])
+
+    assert calls == [(
+        "respawned.api.app:app", {"host": "127.0.0.1", "port": 8123},
+        "off" if api_only else "/existing/override",
+    )]
+    assert os.environ["RESPAWNED_UI_DIST"] == "/existing/override"
