@@ -1,560 +1,177 @@
-"""Policy loading and deterministic quote scoring."""
+"""Deterministic opportunity ranking over configurable signal evaluators."""
 
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from decimal import Decimal, ROUND_CEILING
-from pathlib import Path
-from typing import Mapping, Sequence
+from datetime import datetime
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-import yaml
-
-from respawned.core.context import BusinessContext
-from respawned.core.reduce import QuoteState
-
-
-KNOWN_REASONS = frozenset(
-    {
-        "replied_no_answer",
-        "viewed_no_reply",
-        "high_value_quiet",
-        "repeat_views",
-        "aging",
-    }
+from respawned.core.contact import normalize_contact_key
+from respawned.core.domain import OpportunityState
+from respawned.core.opportunity import (
+    is_contactable_opportunity,
+    positive_value,
 )
+from respawned.core.policy import Policy
+from respawned.core.reasons import (
+    EVALUATORS,
+    ReasonContext,
+    ReasonEvaluator,
+    ReasonFactory,
+    ReasonMatch,
+)
+from respawned.core.time import aware_utc, within_cooldown
 
 
 @dataclass(frozen=True, slots=True)
-class ReasonPolicy:
-    base: Decimal
-    amount_weight: Decimal
-    recency_weight: Decimal
-    priority: int
-    recency_days: Decimal
-    min_signal_age_hours: Decimal = Decimal("0")
-    quiet_days: int = 0
-    min_view_days: int = 0
-    aging_days: int = 0
-    tone: str = "professional check-in"
-
-
-@dataclass(frozen=True, slots=True)
-class DraftingPolicy:
-    sign_off: str = "Service Team"
-    max_characters: int = 320
-    require_tech_name: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class Policy:
-    business_context: BusinessContext
-    cooldown_hours: Decimal
-    dead_after_days: int
-    high_pct: Decimal
-    reasons: Mapping[str, ReasonPolicy]
-    drafting: DraftingPolicy = DraftingPolicy()
-
-
-@dataclass(frozen=True, slots=True)
-class ReasonContribution:
+class ScoredReason:
     reason: str
-    score: Decimal
-    base_factor: Decimal
-    amount_factor: Decimal
-    recency_factor: Decimal
+    signal_strength: Decimal
     signal_at: datetime | None
-    priority: int
+    score: Decimal
 
 
 @dataclass(frozen=True, slots=True)
-class ScoredQuote:
-    quote_id: str
-    customer_phone: str | None
-    primary_reason: str
+class ScoredOpportunity:
+    opportunity_id: str
     score: Decimal
-    base_factor: Decimal
-    amount_factor: Decimal
-    recency_factor: Decimal
-    matched_reasons: tuple[ReasonContribution, ...]
-    amount_percentile: Decimal
-    high_value_cutoff: Decimal | None
-    effective_last_outbound_at: datetime | None
-
-
-def _decimal(value: object, field: str) -> Decimal:
-    try:
-        converted = Decimal(str(value))
-    except Exception as exc:
-        raise ValueError(f"Invalid numeric policy field {field!r}") from exc
-    if not converted.is_finite():
-        raise ValueError(f"Invalid numeric policy field {field!r}")
-    return converted
-
-
-def _nonnegative_int(value: object, field: str) -> int:
-    if isinstance(value, bool):
-        raise ValueError(f"Invalid integer policy field {field!r}")
-    try:
-        converted = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"Invalid integer policy field {field!r}") from exc
-    if converted < 0 or Decimal(str(value)) != converted:
-        raise ValueError(f"Invalid integer policy field {field!r}")
-    return converted
-
-
-def _nonempty_string(value: object, field: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"Invalid text policy field {field!r}")
-    return value.strip()
-
-
-def load_policy(path: str | Path) -> Policy:
-    """Load and minimally validate a scoring policy YAML file."""
-    policy_path = Path(path)
-    try:
-        raw = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise ValueError(f"Unable to load policy {policy_path}") from exc
-    if not isinstance(raw, dict):
-        raise ValueError(f"Policy {policy_path} must contain a mapping")
-
-    try:
-        business_context = BusinessContext(raw.get("business_timezone", "UTC"))
-        cooldown_hours = _decimal(raw["cooldown_hours"], "cooldown_hours")
-        dead_after_days = _nonnegative_int(
-            raw["dead_after_days"], "dead_after_days"
-        )
-        high_pct = _decimal(raw["high_pct"], "high_pct")
-        raw_reasons = raw["reasons"]
-        raw_drafting = raw.get("drafting", {})
-    except KeyError as exc:
-        raise ValueError(f"Policy {policy_path} is missing {exc.args[0]!r}") from exc
-
-    if cooldown_hours < 0:
-        raise ValueError("cooldown_hours must be non-negative")
-    if dead_after_days <= 0:
-        raise ValueError("dead_after_days must be positive")
-    if not Decimal("0") < high_pct <= Decimal("1"):
-        raise ValueError("high_pct must be greater than zero and at most one")
-    if not isinstance(raw_reasons, dict):
-        raise ValueError("reasons must be a mapping")
-    if not isinstance(raw_drafting, dict):
-        raise ValueError("drafting must be a mapping")
-
-    require_tech_name = raw_drafting.get("require_tech_name", False)
-    if not isinstance(require_tech_name, bool):
-        raise ValueError(
-            "Invalid boolean policy field 'drafting.require_tech_name'"
-        )
-    drafting = DraftingPolicy(
-        sign_off=_nonempty_string(
-            raw_drafting.get("sign_off", "Service Team"),
-            "drafting.sign_off",
-        ),
-        max_characters=_nonnegative_int(
-            raw_drafting.get("max_characters", 320),
-            "drafting.max_characters",
-        ),
-        require_tech_name=require_tech_name,
-    )
-    if drafting.max_characters <= 0:
-        raise ValueError("drafting.max_characters must be positive")
-
-    unknown = set(raw_reasons) - KNOWN_REASONS
-    if unknown:
-        raise ValueError(f"Unknown scoring reasons: {sorted(unknown)!r}")
-
-    reasons: dict[str, ReasonPolicy] = {}
-    for reason, values in raw_reasons.items():
-        if not isinstance(values, dict):
-            raise ValueError(f"Reason {reason!r} must be a mapping")
-        try:
-            parsed = ReasonPolicy(
-                base=_decimal(values["base"], f"{reason}.base"),
-                amount_weight=_decimal(
-                    values["amount_weight"], f"{reason}.amount_weight"
-                ),
-                recency_weight=_decimal(
-                    values["recency_weight"], f"{reason}.recency_weight"
-                ),
-                priority=_nonnegative_int(
-                    values["priority"], f"{reason}.priority"
-                ),
-                recency_days=_decimal(
-                    values.get("recency_days", 7), f"{reason}.recency_days"
-                ),
-                min_signal_age_hours=_decimal(
-                    values.get("min_signal_age_hours", 0),
-                    f"{reason}.min_signal_age_hours",
-                ),
-                quiet_days=_nonnegative_int(
-                    values.get("quiet_days", 0), f"{reason}.quiet_days"
-                ),
-                min_view_days=_nonnegative_int(
-                    values.get("min_view_days", 0), f"{reason}.min_view_days"
-                ),
-                aging_days=_nonnegative_int(
-                    values.get("aging_days", 0), f"{reason}.aging_days"
-                ),
-                tone=_nonempty_string(
-                    values.get("tone", "professional check-in"),
-                    f"{reason}.tone",
-                ),
-            )
-        except KeyError as exc:
-            raise ValueError(
-                f"Reason {reason!r} is missing {exc.args[0]!r}"
-            ) from exc
-        numeric_values = (
-            parsed.base,
-            parsed.amount_weight,
-            parsed.recency_weight,
-            parsed.min_signal_age_hours,
-        )
-        if any(value < 0 for value in numeric_values) or parsed.recency_days <= 0:
-            raise ValueError(f"Reason {reason!r} has an invalid negative value")
-        reasons[reason] = parsed
-
-    return Policy(
-        business_context=business_context,
-        cooldown_hours=cooldown_hours,
-        dead_after_days=dead_after_days,
-        high_pct=high_pct,
-        reasons=reasons,
-        drafting=drafting,
-    )
-
-
-def _phone_key(phone: str | None) -> str | None:
-    if phone is None:
-        return None
-    stripped = phone.strip()
-    return stripped or None
-
-
-def _open_status(state: QuoteState) -> bool:
-    return isinstance(state.status, str) and state.status.strip().lower() == "open"
-
-
-def _aware_utc(value: datetime, field: str, quote_id: str) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError(f"{quote_id}.{field} must be timezone-aware")
-    return value.astimezone(UTC)
-
-
-def _origin(state: QuoteState) -> datetime | None:
-    return state.quote_sent_at or state.created_at
-
-
-def _calendar_days_since(
-    value: datetime,
-    now: datetime,
-    timezone: ZoneInfo,
-) -> int:
-    local_value = value.astimezone(timezone).date()
-    local_now = now.astimezone(timezone).date()
-    return max(0, (local_now - local_value).days)
-
-
-def _elapsed_hours(value: datetime, now: datetime) -> Decimal:
-    seconds = Decimal(str((now - value).total_seconds()))
-    return max(Decimal("0"), seconds / Decimal("3600"))
-
-
-def _positive_amount(state: QuoteState) -> Decimal | None:
-    amount = state.amount
-    if amount is None:
-        return None
-    if not amount.is_finite() or amount <= 0:
-        return None
-    return amount
-
-
-def _is_dead(
-    state: QuoteState,
-    policy: Policy,
-    now: datetime,
-    timezone: ZoneInfo,
-) -> bool:
-    origin = _origin(state)
-    if origin is not None:
-        origin = _aware_utc(origin, "quote_origin_at", state.quote_id)
-    return bool(
-        origin is not None
-        and _calendar_days_since(origin, now, timezone) >= policy.dead_after_days
-    )
+    value_percentile: Decimal
+    reasons: tuple[ScoredReason, ...]
 
 
 def _latest_outbounds(
-    states: Sequence[QuoteState],
+    states: Sequence[OpportunityState], now: datetime
 ) -> dict[str, datetime]:
     latest: dict[str, datetime] = {}
     for state in states:
-        phone = _phone_key(state.customer_phone)
-        outbound = state.last_outbound_at
-        if phone is None or outbound is None:
+        key = normalize_contact_key(state.contact_key)
+        if key is None or state.last_outbound_at is None:
             continue
-        outbound = _aware_utc(outbound, "last_outbound_at", state.quote_id)
-        if phone not in latest or outbound > latest[phone]:
-            latest[phone] = outbound
+        outbound = aware_utc(
+            state.last_outbound_at, f"{state.opportunity_id}.last_outbound_at"
+        )
+        if outbound <= now:
+            latest[key] = max(outbound, latest.get(key, outbound))
     return latest
 
 
-def _high_value_cutoff(
-    states: Sequence[QuoteState],
+def _value_percentiles(population: Sequence[Decimal]) -> dict[Decimal, Decimal]:
+    """Return midpoint percentiles in O(n log n), including tied values."""
+
+    counts = Counter(population)
+    total = Decimal(len(population))
+    lower = 0
+    result: dict[Decimal, Decimal] = {}
+    for value in sorted(counts):
+        equal = counts[value]
+        result[value] = (Decimal(lower) + Decimal(equal) / 2) / total
+        lower += equal
+    return result
+
+
+def _configured_evaluators(
+    policy: Policy,
+    factories: Mapping[str, ReasonFactory] | None,
+) -> tuple[tuple[str, Decimal, ReasonEvaluator], ...]:
+    available = dict(EVALUATORS)
+    available.update(factories or {})
+    missing = sorted(
+        {
+            reason.evaluator
+            for reason in policy.reasons.values()
+            if reason.evaluator not in available
+        }
+    )
+    if missing:
+        raise ValueError(f"Unknown reason evaluators: {missing!r}")
+    configured = []
+    for name, reason in policy.reasons.items():
+        try:
+            evaluator = available[reason.evaluator](reason.params)
+        except ValueError as exc:
+            raise ValueError(f"Invalid configuration for reason {name!r}: {exc}") from exc
+        configured.append((name, reason.base_score, evaluator))
+    return tuple(configured)
+
+
+def score_opportunities(
+    states: Sequence[OpportunityState],
     policy: Policy,
     now: datetime,
-    timezone: ZoneInfo,
-) -> tuple[tuple[Decimal, ...], Decimal | None]:
-    amounts = tuple(
-        sorted(
-            amount
-            for state in states
-            if _open_status(state) and not _is_dead(state, policy, now, timezone)
-            if (amount := _positive_amount(state)) is not None
-        )
-    )
-    if not amounts:
-        return amounts, None
-    rank = int(
-        (policy.high_pct * Decimal(len(amounts))).to_integral_value(
-            rounding=ROUND_CEILING
-        )
-    )
-    return amounts, amounts[rank - 1]
+    *,
+    evaluators: Mapping[str, ReasonFactory] | None = None,
+) -> list[ScoredOpportunity]:
+    """Rank eligible opportunities; custom factories may extend built-ins."""
 
-
-def _amount_percentile(amount: Decimal | None, population: Sequence[Decimal]) -> Decimal:
-    if amount is None or not population:
-        return Decimal("0")
-    less = sum(candidate < amount for candidate in population)
-    equal = sum(candidate == amount for candidate in population)
-    return (Decimal(less) + Decimal(equal) / Decimal("2")) / Decimal(
-        len(population)
-    )
-
-
-def _freshness(policy: ReasonPolicy, signal_at: datetime, now: datetime) -> Decimal:
-    horizon_hours = policy.recency_days * Decimal("24")
-    return max(
-        Decimal("0"),
-        Decimal("1") - _elapsed_hours(signal_at, now) / horizon_hours,
-    )
-
-
-def _aging_factor(age_days: int, threshold: int, policy: ReasonPolicy) -> Decimal:
-    return min(
-        Decimal("1"),
-        max(
-            Decimal("0"),
-            Decimal(age_days - threshold) / policy.recency_days,
-        ),
-    )
-
-
-def _view_days_after_outbound(
-    state: QuoteState,
-    outbound: datetime | None,
-    timezone: ZoneInfo,
-) -> int:
-    business_dates = set()
-    for value in state.view_timestamps:
-        viewed_at = _aware_utc(value, "view_timestamps", state.quote_id)
-        if outbound is None or viewed_at > outbound:
-            business_dates.add(viewed_at.astimezone(timezone).date())
-    return len(business_dates)
-
-
-def _contribution(
-    reason: str,
-    policy: ReasonPolicy,
-    amount_percentile: Decimal,
-    recency_multiplier: Decimal,
-    signal_at: datetime | None,
-) -> ReasonContribution:
-    amount_factor = policy.amount_weight * amount_percentile
-    recency_factor = policy.recency_weight * recency_multiplier
-    return ReasonContribution(
-        reason=reason,
-        score=policy.base + amount_factor + recency_factor,
-        base_factor=policy.base,
-        amount_factor=amount_factor,
-        recency_factor=recency_factor,
-        signal_at=signal_at,
-        priority=policy.priority,
-    )
-
-
-def score_quotes(
-    states: Sequence[QuoteState],
-    policy: Policy,
-    now: datetime,
-) -> list[ScoredQuote]:
-    """Score eligible quotes from one complete reduced-state snapshot."""
-    now = _aware_utc(now, "now", "score_quotes")
+    now = aware_utc(now, "score_opportunities.now")
     timezone = ZoneInfo(policy.business_context.timezone_name)
-    customer_outbounds = _latest_outbounds(states)
-    amount_population, high_value_cutoff = _high_value_cutoff(
-        states, policy, now, timezone
+    configured = _configured_evaluators(policy, evaluators)
+    outbounds = _latest_outbounds(states, now)
+    eligible = tuple(
+        state
+        for state in states
+        if is_contactable_opportunity(state, now, timezone, policy.dead_after_days)
     )
-    results: list[ScoredQuote] = []
-
-    for state in states:
-        if not _open_status(state) or _is_dead(state, policy, now, timezone):
-            continue
-        if state.view_days < 0:
-            raise ValueError(f"{state.quote_id}.view_days must be non-negative")
-
-        phone = _phone_key(state.customer_phone)
-        effective_outbound = customer_outbounds.get(phone) if phone else None
-        if effective_outbound is None and state.last_outbound_at is not None:
-            effective_outbound = _aware_utc(
-                state.last_outbound_at, "last_outbound_at", state.quote_id
-            )
-        if effective_outbound is not None:
-            outbound_age = _elapsed_hours(effective_outbound, now)
-            if outbound_age < policy.cooldown_hours:
-                continue
-
-        timestamps: dict[str, datetime | None] = {}
-        for field in ("last_viewed_at", "last_replied_at"):
-            value = getattr(state, field)
-            timestamps[field] = (
-                _aware_utc(value, field, state.quote_id) if value is not None else None
-            )
-        viewed_at = timestamps["last_viewed_at"]
-        replied_at = timestamps["last_replied_at"]
-        origin = _origin(state)
-        if origin is not None:
-            origin = _aware_utc(origin, "quote_origin_at", state.quote_id)
-
-        amount = _positive_amount(state)
-        percentile = _amount_percentile(amount, amount_population)
-        matches: list[ReasonContribution] = []
-
-        reason_policy = policy.reasons.get("replied_no_answer")
-        if (
-            reason_policy is not None
-            and replied_at is not None
-            and (effective_outbound is None or replied_at > effective_outbound)
-        ):
-            matches.append(
-                _contribution(
-                    "replied_no_answer",
-                    reason_policy,
-                    percentile,
-                    _freshness(reason_policy, replied_at, now),
-                    replied_at,
-                )
-            )
-
-        view_is_current = bool(
-            viewed_at is not None
-            and (effective_outbound is None or viewed_at > effective_outbound)
+    population = tuple(
+        sorted(
+            value
+            for state in eligible
+            if (value := positive_value(state)) is not None
         )
-        reason_policy = policy.reasons.get("viewed_no_reply")
-        if (
-            reason_policy is not None
-            and view_is_current
-            and (replied_at is None or replied_at < viewed_at)
-            and _elapsed_hours(viewed_at, now) >= reason_policy.min_signal_age_hours
+    )
+    percentiles = _value_percentiles(population) if population else {}
+    scored: list[ScoredOpportunity] = []
+
+    for state in eligible:
+        key = normalize_contact_key(state.contact_key)
+        outbound = outbounds.get(key) if key is not None else None
+        if outbound is None and state.last_outbound_at is not None:
+            direct = aware_utc(
+                state.last_outbound_at, f"{state.opportunity_id}.last_outbound_at"
+            )
+            outbound = direct if direct <= now else None
+        if outbound is not None and within_cooldown(
+            outbound, now, policy.cooldown_hours
         ):
+            continue
+
+        context = ReasonContext(state, now, timezone, outbound, population)
+        matches: list[ScoredReason] = []
+        for reason, base_score, evaluator in configured:
+            match = evaluator(context)
+            if match is None:
+                continue
+            if not isinstance(match, ReasonMatch):
+                raise TypeError(f"Reason evaluator {reason!r} returned an invalid match")
+            if match.signal_at is not None and aware_utc(
+                match.signal_at, f"{reason}.signal_at"
+            ) > now:
+                raise ValueError(f"Reason evaluator {reason!r} returned a future signal")
             matches.append(
-                _contribution(
-                    "viewed_no_reply",
-                    reason_policy,
-                    percentile,
-                    _freshness(reason_policy, viewed_at, now),
-                    viewed_at,
+                ScoredReason(
+                    reason=reason,
+                    signal_strength=match.signal_strength,
+                    signal_at=match.signal_at,
+                    score=base_score
+                    + policy.ranking.signal_weight * match.signal_strength,
                 )
             )
-
-        reason_policy = policy.reasons.get("repeat_views")
-        if (
-            reason_policy is not None
-            and view_is_current
-            and _view_days_after_outbound(state, effective_outbound, timezone)
-            >= reason_policy.min_view_days
-        ):
-            matches.append(
-                _contribution(
-                    "repeat_views",
-                    reason_policy,
-                    percentile,
-                    _freshness(reason_policy, viewed_at, now),
-                    viewed_at,
-                )
-            )
-
-        reason_policy = policy.reasons.get("high_value_quiet")
-        if (
-            reason_policy is not None
-            and amount is not None
-            and high_value_cutoff is not None
-            and amount >= high_value_cutoff
-            and origin is not None
-        ):
-            contact_times = tuple(
-                value
-                for value in (origin, effective_outbound, replied_at)
-                if value is not None
-            )
-            quiet_since = max(contact_times)
-            quiet_age_days = _calendar_days_since(quiet_since, now, timezone)
-            if quiet_age_days >= reason_policy.quiet_days:
-                matches.append(
-                    _contribution(
-                        "high_value_quiet",
-                        reason_policy,
-                        percentile,
-                        _aging_factor(
-                            quiet_age_days,
-                            reason_policy.quiet_days,
-                            reason_policy,
-                        ),
-                        quiet_since,
-                    )
-                )
-
-        reason_policy = policy.reasons.get("aging")
-        if reason_policy is not None and origin is not None:
-            quote_age_days = _calendar_days_since(origin, now, timezone)
-            if quote_age_days >= reason_policy.aging_days:
-                matches.append(
-                    _contribution(
-                        "aging",
-                        reason_policy,
-                        percentile,
-                        _aging_factor(
-                            quote_age_days,
-                            reason_policy.aging_days,
-                            reason_policy,
-                        ),
-                        origin,
-                    )
-                )
-
         if not matches:
             continue
-        matches.sort(key=lambda item: (-item.score, item.priority, item.reason))
-        primary = matches[0]
-        results.append(
-            ScoredQuote(
-                quote_id=state.quote_id,
-                customer_phone=phone,
-                primary_reason=primary.reason,
-                score=primary.score,
-                base_factor=primary.base_factor,
-                amount_factor=primary.amount_factor,
-                recency_factor=primary.recency_factor,
-                matched_reasons=tuple(matches),
-                amount_percentile=percentile,
-                high_value_cutoff=high_value_cutoff,
-                effective_last_outbound_at=effective_outbound,
+        matches.sort(key=lambda item: (-item.score, item.reason))
+        value = positive_value(state)
+        percentile = percentiles.get(value, Decimal("0"))
+        scored.append(
+            ScoredOpportunity(
+                opportunity_id=state.opportunity_id,
+                score=matches[0].score
+                + policy.ranking.value_weight * percentile,
+                value_percentile=percentile,
+                reasons=tuple(matches),
             )
         )
 
-    return sorted(results, key=lambda item: item.quote_id)
+    return sorted(scored, key=lambda item: item.opportunity_id)

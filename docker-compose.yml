@@ -7,9 +7,11 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "${DB_PORT}:5432"
+      - "${BIND_HOST:-127.0.0.1}:${DB_PORT}:5432"
     volumes:
-      - pgdata:/var/lib/postgresql
+      # PostgreSQL 16 default; PostgreSQL 18 needs /var/lib/postgresql.
+      # Preserve existing major version and inspect mounts before changing this.
+      - pgdata:${DB_DATA_MOUNT:-/var/lib/postgresql/data}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 5s
@@ -31,20 +33,21 @@ services:
       retries: 10
     volumes:
       - litellm_pgdata:/var/lib/postgresql/data
-    profiles: ["litellm", "app"]
+    profiles: ["litellm"]
 
   litellm:
     image: docker.litellm.ai/berriai/litellm-database:latest
     restart: unless-stopped
     command: ["--config", "/llm/litellm_proxy_config.yaml"]
     ports:
-      - "${LITELLM_PROXY_PORT}:4000"
+      - "${BIND_HOST:-127.0.0.1}:${LITELLM_PROXY_PORT}:4000"
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       LITELLM_SALT_KEY: ${LITELLM_SALT_KEY}
       DATABASE_URL: postgresql://${LITELLM_DB_USER}:${LITELLM_DB_PASSWORD}@litellm_db:5432/${LITELLM_DB_NAME}
       STORE_MODEL_IN_DB: ${STORE_MODEL_IN_DB}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      LITELLM_UPSTREAM_MODEL: ${LITELLM_UPSTREAM_MODEL}
+      LITELLM_UPSTREAM_API_KEY: ${LITELLM_UPSTREAM_API_KEY}
     volumes:
       - ./src/respawned/llm/litellm_proxy_config.yaml:/llm/litellm_proxy_config.yaml:ro
     depends_on:
@@ -62,41 +65,36 @@ services:
       timeout: 5s
       retries: 12
       start_period: 15s
-    profiles: ["litellm", "app"]
+    profiles: ["litellm"]
 
   app:
     build: .
-    command:
-      [
-        "uv",
-        "run",
-        "--no-sync",
-        "python",
-        "-m",
-        "respawned",
-        "load",
-        "--seed-dir",
-        "/seed",
-      ]
+    restart: unless-stopped
+    command: ["uv", "run", "--no-sync", "respawned", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:${APP_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
-      litellm:
-        condition: service_healthy
     environment:
-      DB_TYPE: ${DB_TYPE}
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
-      LITELLM_PROXY_URL: http://litellm:4000
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
-      LITELLM_MODEL_ALIAS: respawned-default
-      EVENTS_FILENAME: ${EVENTS_FILENAME}
-      QUOTES_FILENAME: ${QUOTES_FILENAME}
-    volumes:
-      - ./seed:/seed:ro
+      # Processing stays disabled until an operator sets this separate credential.
+      RESPAWNED_PROCESS_TOKEN: ${RESPAWNED_PROCESS_TOKEN:-}
+      # A container cannot use the host-facing localhost proxy URL.
+      LITELLM_PROXY_URL: ${APP_LITELLM_PROXY_URL:-http://litellm:4000}
+      LITELLM_MODEL_ALIAS: ${LITELLM_MODEL_ALIAS:-respawned-default}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+      LITELLM_TIMEOUT_SECONDS: ${LITELLM_TIMEOUT_SECONDS:-60}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=8)"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 10s
     profiles: ["app"]
 
 volumes:

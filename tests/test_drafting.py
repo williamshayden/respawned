@@ -10,12 +10,12 @@ from respawned.llm.adapter import LiteLLMAdapter
 
 def _payload(**overrides):
     values = {
-        "customer_name": "John",
-        "tech_name": "Bob",
+        "contact_name": "John",
+        "owner_name": "Bob",
         "tone": "warm check-in",
-        "other_open_quote_count": 1,
+        "other_open_opportunity_count": 1,
         "max_characters": 180,
-        "sign_off": "Service Team",
+        "sign_off": "Follow-up Team",
     }
     values.update(overrides)
     return DraftPayload(**values)
@@ -25,7 +25,7 @@ def test_draft_payload_is_immutable():
     payload = _payload()
 
     with pytest.raises(FrozenInstanceError):
-        payload.customer_name = "Jane"
+        payload.contact_name = "Jane"
 
 
 def test_draft_follow_up_uses_safe_context_and_applies_sign_off():
@@ -37,7 +37,7 @@ def test_draft_follow_up_uses_safe_context_and_applies_sign_off():
             "choices": [
                 {
                     "message": {
-                        "content": "Hi John, just checking in on both quotes."
+                        "content": "Hi John, just checking in on both opportunities."
                     }
                 }
             ]
@@ -50,26 +50,26 @@ def test_draft_follow_up_uses_safe_context_and_applies_sign_off():
         completion_fn=fake_completion,
     )
 
-    body = draft_follow_up(_payload(), quote_status="open", adapter=adapter)
+    body = draft_follow_up(_payload(), opportunity_status="open", adapter=adapter)
 
     assert body == (
-        "Hi John, just checking in on both quotes.\n\nService Team"
+        "Hi John, just checking in on both opportunities.\n\nFollow-up Team"
     )
     prompt = captured["messages"][1]["content"]
     assert "John" in prompt
     assert "Bob" in prompt
     assert "warm check-in" in prompt
-    assert "2 open quotes" in prompt
-    assert "Service Team" in prompt
+    assert "2 open opportunities" in prompt
+    assert "Follow-up Team" in prompt
 
 
-def test_draft_follow_up_blocks_terminal_quote_before_model_call():
+def test_draft_follow_up_blocks_closed_opportunity_before_model_call():
     called = False
 
     def fake_completion(**_kwargs):
         nonlocal called
         called = True
-        raise AssertionError("terminal quote must not call the model")
+        raise AssertionError("closed opportunity must not call the model")
 
     adapter = LiteLLMAdapter(
         proxy_url="http://proxy.test:4000",
@@ -78,15 +78,15 @@ def test_draft_follow_up_blocks_terminal_quote_before_model_call():
         completion_fn=fake_completion,
     )
 
-    with pytest.raises(DraftValidationError, match="terminal"):
-        draft_follow_up(_payload(), quote_status="dismissed", adapter=adapter)
+    with pytest.raises(DraftValidationError, match="opportunity status"):
+        draft_follow_up(_payload(), opportunity_status="lost", adapter=adapter)
 
     assert called is False
 
 
 def test_draft_follow_up_validates_generated_copy():
     def fake_completion(**_kwargs):
-        return {"choices": [{"message": {"content": "Your quote is $500."}}]}
+        return {"choices": [{"message": {"content": "The value is $500."}}]}
 
     adapter = LiteLLMAdapter(
         proxy_url="http://proxy.test:4000",
@@ -96,4 +96,4 @@ def test_draft_follow_up_validates_generated_copy():
     )
 
     with pytest.raises(DraftValidationError, match="currency"):
-        draft_follow_up(_payload(), quote_status="open", adapter=adapter)
+        draft_follow_up(_payload(), opportunity_status="open", adapter=adapter)

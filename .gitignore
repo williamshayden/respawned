@@ -11,3 +11,13 @@ wheels/
 
 # Environment Files
 .env
+.env.*
+!.env.example
+
+# Local delivery exports
+/outbox.csv
+/exports/
+/backups/
+
+# Local test caches
+.pytest_cache/
