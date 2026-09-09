@@ -2,10 +2,10 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from follow_up_engine.core.draft import draft_follow_up
-from follow_up_engine.core.helpers.payload import DraftPayload
-from follow_up_engine.core.helpers.validate import DraftValidationError
-from follow_up_engine.llm.adapter import LiteLLMAdapter
+from respawned.core.draft import draft_follow_up
+from respawned.core.helpers.payload import DraftPayload
+from respawned.core.helpers.validate import DraftValidationError
+from respawned.llm.adapter import LiteLLMAdapter
 
 
 def _payload(**overrides):

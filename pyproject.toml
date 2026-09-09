@@ -1,7 +1,7 @@
 [project]
-name = "follow-up-engine"
+name = "respawned"
 version = "0.1.0"
-description = "Add your description here"
+description = "Respawned follow-up orchestration with human review"
 readme = "README.md"
 authors = [
     { name = "William Hayden", email = "will.hayden0702@gmail.com" }
@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-follow-up-engine = "follow_up_engine.__main__:main"
+respawned = "respawned.__main__:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

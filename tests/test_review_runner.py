@@ -10,11 +10,11 @@ from uuid import uuid4
 import pytest
 from rich.console import Console
 
-from follow_up_engine.cli.review import PersistedDraft, ReviewSummary, run_review
-from follow_up_engine.cli.ui import prompt_choice
-from follow_up_engine.core.context import BusinessContext
-from follow_up_engine.core.score import DraftingPolicy, Policy, ReasonPolicy
-from follow_up_engine.llm.adapter import LiteLLMAdapter
+from respawned.cli.review import PersistedDraft, ReviewSummary, run_review
+from respawned.cli.ui import prompt_choice
+from respawned.core.context import BusinessContext
+from respawned.core.score import DraftingPolicy, Policy, ReasonPolicy
+from respawned.llm.adapter import LiteLLMAdapter
 
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
@@ -101,7 +101,7 @@ def _draft(candidate, *, created_at: datetime) -> PersistedDraft:
 def test_run_review_renders_latest_pending_candidates_ranked_by_score(
     monkeypatch,
 ):
-    import follow_up_engine.cli.review as review
+    import respawned.cli.review as review
 
     low = _candidate(
         "QUOTE-LOW",
@@ -160,7 +160,7 @@ def test_run_review_renders_latest_pending_candidates_ranked_by_score(
 
 
 def test_run_review_renders_draft_body_at_full_width_with_context(monkeypatch):
-    import follow_up_engine.cli.review as review
+    import respawned.cli.review as review
 
     candidate = _candidate(
         "QUOTE-12345",
@@ -203,7 +203,7 @@ def test_run_review_renders_literal_ares_prompt_and_accepts_edit_key(
     monkeypatch,
     edit_key,
 ):
-    import follow_up_engine.cli.review as review
+    import respawned.cli.review as review
 
     candidate = _candidate("QUOTE-EDIT", "90")
     original = _draft(candidate, created_at=NOW)
@@ -251,7 +251,7 @@ def test_run_review_renders_literal_ares_prompt_and_accepts_edit_key(
 
 
 def test_run_review_rejects_legacy_message_key(monkeypatch):
-    import follow_up_engine.cli.review as review
+    import respawned.cli.review as review
 
     candidate = _candidate("QUOTE-EDIT", "90")
     draft = _draft(candidate, created_at=NOW)
@@ -290,7 +290,7 @@ def test_run_review_rejects_legacy_message_key(monkeypatch):
 
 
 def test_run_review_uses_a_fresh_clock_value_when_approving(monkeypatch):
-    import follow_up_engine.cli.review as review
+    import respawned.cli.review as review
 
     candidate = _candidate("QUOTE-CLOCK", "90")
     approval_time = NOW + timedelta(minutes=3)

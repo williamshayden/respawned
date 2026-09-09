@@ -1,5 +1,5 @@
 model_list:
-  - model_name: claude-5-sonnet
+  - model_name: respawned-default
     litellm_params:
       model: anthropic/claude-sonnet-5
       api_base: https://api.anthropic.com

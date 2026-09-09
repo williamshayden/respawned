@@ -1,6 +1,6 @@
 import pytest
 
-from follow_up_engine.core.helpers.validate import (
+from respawned.core.helpers.validate import (
     DraftValidationError,
     validate_draft,
 )

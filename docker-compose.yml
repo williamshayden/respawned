@@ -46,7 +46,7 @@ services:
       STORE_MODEL_IN_DB: ${STORE_MODEL_IN_DB}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     volumes:
-      - ./src/follow_up_engine/llm/litellm_proxy_config.yaml:/llm/litellm_proxy_config.yaml:ro
+      - ./src/respawned/llm/litellm_proxy_config.yaml:/llm/litellm_proxy_config.yaml:ro
     depends_on:
       litellm_db:
         condition: service_healthy
@@ -73,7 +73,7 @@ services:
         "--no-sync",
         "python",
         "-m",
-        "follow_up_engine",
+        "respawned",
         "load",
         "--seed-dir",
         "/seed",
@@ -92,7 +92,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       LITELLM_PROXY_URL: http://litellm:4000
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
-      LITELLM_MODEL_ALIAS: claude-5-sonnet
+      LITELLM_MODEL_ALIAS: respawned-default
       EVENTS_FILENAME: ${EVENTS_FILENAME}
       QUOTES_FILENAME: ${QUOTES_FILENAME}
     volumes:

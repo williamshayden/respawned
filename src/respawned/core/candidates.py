@@ -9,8 +9,8 @@ import json
 from typing import Sequence
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from follow_up_engine.core.reduce import QuoteState
-from follow_up_engine.core.score import ScoredQuote
+from respawned.core.reduce import QuoteState
+from respawned.core.score import ScoredQuote
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +83,8 @@ def _candidate_id(
         ),
         "version": 1,
     }
+    # Persisted UUID namespace: preserve existing candidate and draft identities.
+    # This legacy protocol constant is independent of the Respawned product name.
     return uuid5(
         NAMESPACE_URL,
         "follow-up-engine:candidate:"

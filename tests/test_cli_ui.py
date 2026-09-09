@@ -14,7 +14,7 @@ def _plain_console(output: StringIO) -> Console:
 
 
 def test_print_table_renders_heading_columns_and_rows():
-    from follow_up_engine.cli.ui import print_table
+    from respawned.cli.ui import print_table
 
     output = StringIO()
     print_table(
@@ -33,7 +33,7 @@ def test_print_table_renders_heading_columns_and_rows():
 
 
 def test_prompt_choice_uses_rich_choices_and_returns_selected_action():
-    from follow_up_engine.cli.ui import prompt_choice
+    from respawned.cli.ui import prompt_choice
 
     output = StringIO()
     answer = prompt_choice(
@@ -49,7 +49,7 @@ def test_prompt_choice_uses_rich_choices_and_returns_selected_action():
 
 
 def test_prompt_choice_can_hide_metadata_and_normalize_case():
-    from follow_up_engine.cli.ui import prompt_choice
+    from respawned.cli.ui import prompt_choice
 
     for raw_answer, expected in (("E\n", "e"), ("", "s")):
         output = StringIO()

@@ -1,11 +1,11 @@
 """Generate guarded follow-up copy from deliberately limited context."""
 
-from follow_up_engine.core.helpers.payload import DraftPayload
-from follow_up_engine.core.helpers.validate import (
+from respawned.core.helpers.payload import DraftPayload
+from respawned.core.helpers.validate import (
     ensure_quote_is_contactable,
     validate_draft,
 )
-from follow_up_engine.llm.adapter import ChatMessage, LiteLLMAdapter
+from respawned.llm.adapter import ChatMessage, LiteLLMAdapter
 
 
 _SYSTEM_PROMPT = """\

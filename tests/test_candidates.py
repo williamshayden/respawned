@@ -1,9 +1,9 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from follow_up_engine.core.candidates import select_candidates
-from follow_up_engine.core.reduce import QuoteState
-from follow_up_engine.core.score import ReasonContribution, ScoredQuote
+from respawned.core.candidates import select_candidates
+from respawned.core.reduce import QuoteState
+from respawned.core.score import ReasonContribution, ScoredQuote
 
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
@@ -92,6 +92,8 @@ def test_same_phone_yields_one_stable_candidate_with_other_open_quote():
     assert candidate.customer_name == "Customer Q-high"
     assert candidate.customer_phone == "+13125550123"
     assert candidate.other_quote_ids == ("Q-low",)
+    # Rename must preserve persisted candidate identities.
+    assert str(candidate.id) == "c9ce0024-7e66-5d80-acf8-a50d72ab4c27"
     assert candidate.id == same_opportunity_later.id
 
 

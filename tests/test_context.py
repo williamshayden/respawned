@@ -1,6 +1,6 @@
 import pytest
 
-from follow_up_engine.core.context import BusinessContext
+from respawned.core.context import BusinessContext
 
 
 def test_business_context_rejects_invalid_iana_timezone():

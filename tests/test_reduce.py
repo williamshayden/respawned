@@ -3,8 +3,8 @@ from decimal import Decimal
 
 from sqlalchemy import text
 
-from follow_up_engine.core.context import BusinessContext
-from follow_up_engine.core.reduce import QuoteState, reduce_quotes
+from respawned.core.context import BusinessContext
+from respawned.core.reduce import QuoteState, reduce_quotes
 
 
 NOW = datetime(2026, 8, 20, tzinfo=UTC)

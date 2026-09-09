@@ -11,8 +11,8 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-from follow_up_engine.core.context import BusinessContext
-from follow_up_engine.core.reduce import QuoteState
+from respawned.core.context import BusinessContext
+from respawned.core.reduce import QuoteState
 
 
 KNOWN_REASONS = frozenset(
