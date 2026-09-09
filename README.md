@@ -4,7 +4,7 @@ Respawned turns opportunity and activity data into ranked follow-ups and an unse
 
 Respawned is the product, Python package, and CLI name. The GitHub repository URL remains unchanged until a separate repository rename.
 
-This repository ships a shared browser review UI, a local PostgreSQL stack, ingestion, reply-inbox, processing, and outbox APIs, a CLI review workflow, a configurable policy, a provider-neutral LiteLLM adapter, and a legacy demo adapter for the included quote fixtures. The same UI adapts to job applications, sales, and other record kinds. It does not ship a source connector or a message delivery worker.
+This repository ships a shared browser review UI, a local PostgreSQL stack, ingestion, reply-inbox, processing, and outbox APIs, a CLI review workflow, configurable policy, Codex and OpenAI-compatible drafting backends, and a legacy demo adapter for the included quote fixtures. The same UI adapts to job applications, sales, and other record kinds. It does not ship a source connector or a message delivery worker.
 
 ```mermaid
 flowchart LR
@@ -15,7 +15,7 @@ flowchart LR
     Store --> Reduce[Reduce current state]
     Reduce --> Policy[Eligibility + scoring]
     Policy --> Candidates[One candidate per contact]
-    Candidates --> Draft[LiteLLM draft]
+    Candidates --> Draft[Codex or API draft]
     Draft --> Review[Human review / explicit automatic policy]
     Review --> Outbox[(Idempotent outbox)]
     Outbox -. future delivery worker .-> Channels[Email / SMS provider]
@@ -42,18 +42,22 @@ The historical agent transcript and release artifact names retain their original
 
 ## Open Respawned
 
-From the source checkout, install and start the bundled application:
+Configure the database environment using the [quickstart](#quickstart), then
+start the bundled application from the source checkout:
 
 ```bash
 uv sync --frozen
-uv run respawned serve --host 127.0.0.1 --port 8000
+uv run --env-file .env respawned ui
 ```
 
-Open [Respawned](http://127.0.0.1:8000). An installed package uses the same command
-without `uv run`. The application opens **Setup** with review access, model
-backend, record import, and outbox guidance. It starts without seeded records.
-Set `RESPAWNED_REVIEW_TOKEN` on the engine, enter that token under **Review access**,
-and connect PostgreSQL to save settings, workspaces, and records.
+The CLI opens [Respawned](http://127.0.0.1:8000) with review access connected;
+no manual token is needed. An installed package uses `respawned ui` with the
+database environment set. Use `--no-open` for a one-use launch link or `--port`
+when 8000 is occupied. The local session survives reloads for 12 hours or until
+logout/server shutdown. Setup provides model, record import, and outbox guidance
+without seeded records. PostgreSQL stores settings, workspaces, and records.
+`respawned serve` and Docker retain optional `RESPAWNED_REVIEW_TOKEN` Bearer access
+for scripts and server use; see the [access guide](docs/WEB_UI.md#server-and-api-access).
 
 Use **Workspaces** to create named views for any record kinds, or include all
 types. Workspaces persist in the engine and share its records, model, and policy.
@@ -71,7 +75,7 @@ remains unknown; approval reserves an unsent outbox item.
 - [uv](https://docs.astral.sh/uv/)
 - Docker with Compose v2
 - `curl` for the API example
-- An upstream model API key only if you want live drafting
+- A Codex ChatGPT login or upstream model API credential for live drafting
 
 The project was developed and tested on Windows through WSL2 and Docker Desktop. uv and Docker keep the workflow portable, but native Windows, macOS, other Linux distributions, and production platforms may expose differences in networking, filesystem permissions, bind mounts, and service lifecycle.
 
