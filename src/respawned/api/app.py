@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 import hmac
 import os
+from threading import Lock
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
@@ -41,7 +42,7 @@ from respawned.llm.adapter import LiteLLMAdapter
 
 
 @lru_cache(maxsize=1)
-def get_api_engine() -> Engine:
+def _get_cached_api_engine() -> Engine:
     try:
         engine = get_engine()
     except ValueError as exc:
@@ -52,6 +53,26 @@ def get_api_engine() -> Engine:
         engine.dispose()
         raise
     return engine
+
+
+_api_engine_lock = Lock()
+
+
+def get_api_engine() -> Engine:
+    # lru_cache alone allows concurrent misses to execute the factory multiple
+    # times. Lock outside the cache so only one engine initializes the schema.
+    with _api_engine_lock:
+        return _get_cached_api_engine()
+
+
+def _clear_api_engine_cache() -> None:
+    with _api_engine_lock:
+        _get_cached_api_engine.cache_clear()
+
+
+# Keep the existing lifecycle/testing interface on the public dependency.
+get_api_engine.cache_clear = _clear_api_engine_cache
+get_api_engine.cache_info = _get_cached_api_engine.cache_info
 
 
 def get_connection(
@@ -70,8 +91,11 @@ def get_workflow_policy() -> Policy:
 
 
 def get_workflow_adapter() -> LiteLLMAdapter:
+    from respawned.core.settings import configured_adapter
+
     try:
-        return LiteLLMAdapter.from_env()
+        with get_api_engine().connect() as connection:
+            return configured_adapter(connection)
     except ValueError as exc:
         raise HTTPException(503, "Drafting model is not configured") from exc
 
@@ -139,9 +163,10 @@ def readiness(
     connection.exec_driver_sql("SET LOCAL statement_timeout = '2s'")
     connection.exec_driver_sql("""
         SELECT opportunities.id, activities.id, sync_runs.id, candidates.id,
-               drafts.id, outbox.authorization_mode, opportunity_states.opportunity_id
+               drafts.id, outbox.authorization_mode, opportunity_states.opportunity_id,
+               workspaces.id, application_settings.key
         FROM opportunities, activities, sync_runs, candidates, drafts, outbox,
-             opportunity_states
+             opportunity_states, workspaces, application_settings
         LIMIT 0
     """)
     return ReadinessResponse()
@@ -254,11 +279,15 @@ def outbox(
 
 def _register_review_interface() -> None:
     # Delay importing the router until its shared dependencies are defined.
+    from respawned.api.setup import create_setup_router
     from respawned.api.ui import create_ui_router
+    from respawned.api.workspaces import create_workspace_router
 
     app.include_router(create_ui_router(
         get_connection, get_workflow_policy, get_workflow_clock,
     ))
+    app.include_router(create_workspace_router(get_connection))
+    app.include_router(create_setup_router(get_connection))
 
 
 _register_review_interface()

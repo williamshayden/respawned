@@ -1,6 +1,7 @@
 """Read-only visibility of unanswered replies, independent of outreach eligibility."""
 
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
@@ -54,6 +55,7 @@ def list_reply_inbox(
     now: datetime,
     policy: Policy,
     limit: int = 50,
+    kinds: Iterable[str] | None = None,
 ) -> ReplyInboxResult:
     """List ingested human replies that have no later contact-wide outbound.
 
@@ -65,6 +67,8 @@ def list_reply_inbox(
     are displayed, never inferred from reply evidence. An outbox reservation is
     not an answer: only ingested outbound state resolves an inbox item. Counts of
     pending reservations are contact-wide and visible at the requested cutoff.
+    Optional workspace kinds select complete groups containing matching reply
+    evidence, after contact-wide resolution and before the result limit.
     """
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
         raise ValueError("limit must be an integer between 1 and 200")
@@ -112,6 +116,7 @@ def list_reply_inbox(
                 )
 
     items: list[ReplyInboxItem] = []
+    selected_kinds = set(kinds or ())
     for (contact_key, channel, _address), grouped in groups.items():
         grouped.sort(key=lambda pair: (
             pair[1].occurred_at, pair[1].opportunity_id, pair[1].activity_id
@@ -119,6 +124,8 @@ def list_reply_inbox(
         primary, latest = grouped[-1]
         route = resolve_contact(primary)
         assert route is not None
+        if selected_kinds and not any(state.kind in selected_kinds for state, _ in grouped):
+            continue
         items.append(ReplyInboxItem(
             contact_key=contact_key,
             contact_name=primary.contact_name,

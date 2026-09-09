@@ -39,7 +39,7 @@ jobs:
         run: npm test
       - name: Install Chromium for browser checks
         run: npx playwright install --with-deps chromium
-      - name: Test demo and mocked HTTP browser workflows
+      - name: Test setup, workspaces, and mocked HTTP review workflows
         run: npm run test:e2e
 
   qualify:

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { InboxResult, OutboxItem, ReviewClient, UIConfig, UIRecord } from './data/types'
 
-export function useReview(client: ReviewClient) {
+export function useReview(client: ReviewClient | null, selectedRecordId: string | null = null) {
   const [records, setRecords] = useState<UIRecord[]>([])
   const [outbox, setOutbox] = useState<OutboxItem[]>([])
   const [inbox, setInbox] = useState<InboxResult | null>(null)
@@ -16,12 +16,14 @@ export function useReview(client: ReviewClient) {
   const currentClient = useRef(client)
   const inFlight = useRef<object | null>(null)
   const detailId = useRef<string | null>(null)
+  const selection = useRef(selectedRecordId)
+  selection.current = selectedRecordId
   const nextOffset = useRef(0)
   currentClient.current = client
 
   const load = useCallback(async (offset = 0) => {
     // Old workspace requests must not invalidate the active workspace load.
-    if (currentClient.current !== client) return
+    if (!client || currentClient.current !== client) return
     const request = ++generation.current
     const [page, nextConfig, nextOutbox, nextInbox] = await Promise.all([
       client.listRecords(offset), client.config(), client.listOutbox(), client.listInbox(),
@@ -39,16 +41,17 @@ export function useReview(client: ReviewClient) {
 
   useEffect(() => {
     let active = true
-    detailId.current = null; nextOffset.current = 0; inFlight.current = null
+    detailId.current = selection.current; nextOffset.current = 0; inFlight.current = null
     setLoading(true); setBusy(null); setError(null); setMessage(null); setRecords([]); setOutbox([]); setInbox(null); setConfig(null)
     setTotal(0); setHasMore(false)
+    if (!client) { setLoading(false); return }
     load().catch(reason => { if (active && currentClient.current === client) setError(reason instanceof Error ? reason.message : 'Could not load this workspace.') })
       .finally(() => { if (active && currentClient.current === client) setLoading(false) })
     return () => { active = false; generation.current++ }
   }, [client, load])
 
   const operate = useCallback(async (label: string, operation: () => Promise<unknown>, success?: string, refresh = true) => {
-    if (inFlight.current || currentClient.current !== client) return false
+    if (!client || inFlight.current || currentClient.current !== client) return false
     const request = {}
     inFlight.current = request
     const isCurrent = () => currentClient.current === client && inFlight.current === request
@@ -71,12 +74,13 @@ export function useReview(client: ReviewClient) {
   return { records, outbox, inbox, config, total, hasMore, loading, busy, error, message, setMessage, setError,
     rememberSelection: (id: string | null) => { detailId.current = id },
     openRecord: (id: string) => operate('Opening record', async () => {
+      if (!client) return
       const record = await client.getRecord(id)
       if (currentClient.current !== client) return
       detailId.current = id
       setRecords(previous => [...new Map([...previous, record].map(item => [item.id, item])).values()])
     }, undefined, false),
-    reload: () => operate('Refreshing', async () => { await client.sync() }, 'Queue refreshed.'),
+    reload: () => operate('Refreshing', async () => { await client?.sync() }, 'Queue refreshed.'),
     retry: () => operate('Reloading', async () => undefined),
     more: () => operate('Loading', () => load(nextOffset.current), undefined, false),
     operate,

@@ -1,40 +1,41 @@
 import { useMemo, useState } from 'react'
 import { AlertCircle, Check, LoaderCircle, Menu, RefreshCw, UserRound, X } from 'lucide-react'
-import { createDemoClient, createHttpClient } from './data/client'
-import type { RecordRef, ReviewClient } from './data/types'
+import { createHttpClient } from './data/client'
+import type { RecordRef } from './data/types'
+import { useWorkspaces } from './data/workspaces'
 import { actionable, contextLine, type Page } from './presentation'
 import { useReview } from './useReview'
 import { Sidebar } from './components/Sidebar'
 import { QueueList } from './components/QueueList'
 import { ReviewPanel, type LocalEdit } from './components/ReviewPanel'
 import { AuxiliaryViews } from './components/AuxiliaryViews'
-import { ConnectDialog } from './components/ConnectDialog'
+import { SetupView } from './components/SetupView'
+import { WorkspaceManager } from './components/WorkspaceManager'
 
 export default function App() {
-  const [client, setClient] = useState<ReviewClient>(() => createDemoClient())
-  const review = useReview(client)
-  const [page, setPage] = useState<Page>('Review queue')
-  const [scope, setScope] = useState('job_application')
+  const [token, setToken] = useState('')
+  const [scope, setScope] = useState('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [workspaceRevision, setWorkspaceRevision] = useState(0)
+  const client = useMemo(() => token ? createHttpClient('', token, scope === 'all' ? '' : scope) : null, [token, scope, workspaceRevision])
+  const review = useReview(client, selectedId)
+  const workspaces = useWorkspaces(token)
+  const [page, setPage] = useState<Page>('Setup')
   const [query, setQuery] = useState('')
   const [channel, setChannel] = useState('all')
   const [view, setView] = useState('ready')
   const [sort, setSort] = useState('priority')
   const [showDetail, setShowDetail] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [connectOpen, setConnectOpen] = useState(false)
   const [edits, setEdits] = useState<Record<string, LocalEdit>>({})
 
-  const scopes = useMemo(() => [...new Set([
-    ...review.records.map(record => record.kind),
-    ...review.outbox.flatMap(item => item.record_refs?.map(record => record.kind) ?? []),
-    ...(review.inbox?.items ?? []).flatMap(item => item.record_refs?.map(record => record.kind) ?? []),
-  ])], [review.records, review.outbox, review.inbox])
-  const scopedRecords = review.records.filter(record => scope === 'all' || record.kind === scope)
+  const workspace = workspaces.items.find(item => item.id === scope)
+  const kinds = workspace?.kinds ?? []
+  const scopedRecords = review.records.filter(record => !kinds.length || kinds.includes(record.kind))
   const inScope = (item: { opportunity_ids: string[]; record_refs?: RecordRef[] }) => {
-    if (scope === 'all') return true
+    if (!kinds.length) return true
     const refs = item.record_refs ?? item.opportunity_ids.flatMap(id => review.records.find(record => record.id === id) ?? [])
-    return refs.some(record => record.kind === scope) || refs.length < item.opportunity_ids.length
+    return refs.some(record => kinds.includes(record.kind)) || refs.length < item.opportunity_ids.length
   }
   const scopedOutbox = review.outbox.filter(inScope)
   const scopedInbox = (review.inbox?.items ?? []).filter(inScope)
@@ -51,18 +52,31 @@ export default function App() {
   const openConnection = () => {
     if (review.busy || review.loading) { review.setError('Wait for the current action to finish before changing the workspace connection.'); return }
     if (Object.keys(edits).length) { review.setError('Save or discard your edited drafts before changing the workspace connection.'); return }
-    setConnectOpen(true)
+    navigate('Setup')
+  }
+  const changeWorkspace = (next: string) => {
+    if (review.busy) { review.setError('Wait for the current action to finish before switching workspaces.'); return }
+    setScope(next); review.rememberSelection(null); setSelectedId(null); setShowDetail(false)
+  }
+  const connect = async (value: string) => {
+    if (review.busy || Object.keys(edits).length) throw new Error('Save or discard your draft edits and wait for the current action to finish first.')
+    await createHttpClient('', value).config()
+    setToken(value); setScope('all'); setSelectedId(null)
+  }
+  const disconnect = () => {
+    if (review.busy || Object.keys(edits).length) { review.setError('Save or discard your draft edits and wait for the current action to finish first.'); return }
+    setToken(''); setScope('all'); setSelectedId(null); setPage('Setup')
   }
 
   return <div className={`app ${showDetail ? 'show-detail' : ''}`}>
-    <Sidebar page={page} onNavigate={navigate} scope={scope} scopes={scopes} onScope={next => { setScope(next); review.rememberSelection(null); setSelectedId(null); setShowDetail(false) }}
+    <Sidebar page={page} onNavigate={navigate} scope={scope} workspaces={workspaces.items} onScope={changeWorkspace}
       counts={{ 'Review queue': count, 'Reply inbox': scopedInbox.length, Outbox: scopedOutbox.filter(item => item.status === 'pending').length }}
-      mode={client.mode} onConnect={openConnection} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      connected={!!token} onConnect={openConnection} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
     <main className="main-workspace">
       <header className="page-header"><div className="page-title"><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={23} /></button>
-        <div><h1>{page}</h1><p>{page === 'Review queue' ? `${count} follow-up${count === 1 ? '' : 's'} ready for a decision${review.hasMore ? ' in loaded records' : ''}` : page === 'Outbox' ? 'Every reviewed message, with a clear history.' : page === 'Reply inbox' ? 'Keep the conversation moving.' : page === 'Activity' ? 'The evidence behind each next step.' : 'Clear rules for thoughtful follow-ups.'}</p></div></div>
-        <div className="header-actions"><button className="button refresh-button" onClick={review.reload} disabled={!!review.busy || review.loading}>
-          <RefreshCw size={19} className={review.busy === 'Refreshing' ? 'spin' : ''} />Refresh queue</button>
+        <div><h1>{page}</h1><p>{page === 'Setup' ? 'Connect your engine. Make it yours.' : page === 'Workspaces' ? 'Your work, organized your way.' : page === 'Review queue' ? `${count} follow-up${count === 1 ? '' : 's'} ready for a decision${review.hasMore ? ' in loaded records' : ''}` : page === 'Outbox' ? 'Every reviewed message, with a clear history.' : page === 'Reply inbox' ? 'Keep the conversation moving.' : page === 'Activity' ? 'The evidence behind each next step.' : 'Clear rules for thoughtful follow-ups.'}</p></div></div>
+        <div className="header-actions">{page !== 'Setup' && page !== 'Workspaces' && <button className="button refresh-button" onClick={review.reload} disabled={!client || !!review.busy || review.loading}>
+          <RefreshCw size={19} className={review.busy === 'Refreshing' ? 'spin' : ''} />Refresh queue</button>}
           <span className="review-mode"><UserRound size={21} />{review.config ? review.config.policy_mode === 'automatic' ? 'Automatic policy' : 'Human review' : 'Review policy'}</span></div>
       </header>
       {(review.error || review.message) && <div className={`feedback ${review.error ? 'is-error' : ''}`} role={review.error ? 'alert' : 'status'}>
@@ -70,7 +84,11 @@ export default function App() {
         {review.error && <button className="text-button" onClick={review.retry} disabled={!!review.busy}>Reload</button>}
         <button className="icon-button" aria-label="Dismiss message" onClick={() => { review.setError(null); review.setMessage(null) }}><X size={16} /></button>
       </div>}
-      {review.loading ? <div className="loading-workspace" role="status"><LoaderCircle size={25} className="spin" /><p>Loading your workspace…</p></div> : page === 'Review queue' ?
+      {page === 'Setup' ? <SetupView token={token} connected={!!token} onConnect={connect} onDisconnect={disconnect} onOpenOutbox={() => navigate('Outbox')} onImported={() => { void review.retry(); void workspaces.reload() }} /> :
+        page === 'Workspaces' ? <WorkspaceManager key={token ? 'connected' : 'disconnected'} token={token} workspaces={workspaces.items} kinds={workspaces.available_kinds} loading={workspaces.loading} error={workspaces.error}
+          onSetup={() => navigate('Setup')} onOpen={id => { changeWorkspace(id); navigate('Review queue') }} onSaved={async id => { await workspaces.reload(); changeWorkspace(id ?? 'all'); setWorkspaceRevision(value => value + 1) }} /> :
+        !client ? <div className="empty-state"><h2>Connect to start tracking</h2><p>Set up review access, import your records, and configure a model when you are ready to draft.</p><button className="button primary" onClick={() => navigate('Setup')}>Open setup</button></div> :
+        review.loading ? <div className="loading-workspace" role="status"><LoaderCircle size={25} className="spin" /><p>Loading your workspace…</p></div> : page === 'Review queue' ?
         <div className="review-layout">
           <QueueList records={visibleRecords} selected={selected?.id ?? null} onSelect={select} query={query} onQuery={setQuery} channel={channel} onChannel={setChannel}
             view={view} onView={setView} sort={sort} onSort={setSort} total={review.total} hasMore={review.hasMore} onMore={review.more} busy={!!review.busy} />
@@ -103,7 +121,5 @@ export default function App() {
           setScope('all'); setView('all'); setQuery(''); setChannel('all'); select(id)
         }} />}
     </main>
-    {connectOpen && <ConnectDialog mode={client.mode} onClose={() => setConnectOpen(false)} onDemo={() => { setClient(createDemoClient()); setScope('job_application'); setSelectedId(null) }}
-      onConnect={async token => { const next = createHttpClient('', token); await next.config(); setClient(next); setScope('all'); setSelectedId(null) }} />}
   </div>
 }

@@ -90,6 +90,7 @@ services:
       LITELLM_PROXY_URL: ${APP_LITELLM_PROXY_URL:-http://litellm:4000}
       LITELLM_MODEL_ALIAS: ${LITELLM_MODEL_ALIAS:-respawned-default}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+      RESPAWNED_MODEL_API_KEY: ${RESPAWNED_MODEL_API_KEY:-}
       LITELLM_TIMEOUT_SECONDS: ${LITELLM_TIMEOUT_SECONDS:-60}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=8)"]

@@ -30,6 +30,7 @@ function sampleRecord(id: string, name: string, overrides: Partial<UIRecord> = {
 async function connectMock(page: Page, workspace: MockWorkspace): Promise<RequestLog[]> {
   const requests: RequestLog[] = []
   const allRecords = () => [...workspace.records, ...(workspace.details ?? [])]
+  await page.route('**/v1/setup/bootstrap', route => route.fulfill({ json: { review_enabled: true } }))
   await page.route('**/v1/ui/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
@@ -41,7 +42,11 @@ async function connectMock(page: Page, workspace: MockWorkspace): Promise<Reques
       await route.fulfill({ status: 401, json: { detail: 'Missing test authorization' } })
       return
     }
-    if (path === '/config') {
+    if (path === '/workspaces') {
+      await route.fulfill({ json: { items: [{ id: 'sales', name: 'Sales', description: '', kinds: ['sales'], created_at: '', updated_at: '' }], available_kinds: ['sales'], scope: 'shared_engine' } })
+    } else if (path === '/setup') {
+      await route.fulfill({ json: { database: { ready: true }, review: { authorized: true }, model: { base_url: 'http://127.0.0.1:4000', model_alias: 'test', timeout_seconds: 60, api_key_env: 'LITELLM_MASTER_KEY', source: 'environment', ready: false, key_configured: false }, outbox: { mode: 'export_only', delivery_enabled: false }, sources: { mode: 'import' } } })
+    } else if (path === '/config') {
       await route.fulfill({ json: { policy_mode: 'human', cooldown_hours: 48, max_draft_characters: 320, source_freshness: 'unknown' } })
     } else if (path === '/records') {
       const offset = Number(url.searchParams.get('offset') ?? 0)
@@ -96,10 +101,10 @@ async function connectMock(page: Page, workspace: MockWorkspace): Promise<Reques
     }
   })
   await page.goto('/')
-  await page.getByRole('button', { name: 'Workspace connection settings', exact: true }).click()
   await page.getByLabel('Review access token', { exact: true }).fill('regression-test-token')
   await page.getByRole('button', { name: 'Connect local engine', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Local workspace', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Engine connected', exact: true })).toBeVisible()
+  await navigation(page, 'Review queue')
   await expect(page.getByRole('status').filter({ hasText: 'Loading your workspace' })).toHaveCount(0)
   return requests
 }
@@ -204,14 +209,14 @@ test('workspace switching waits for a pending approval to finish', async ({ page
   await page.getByRole('button', { name: 'Workspace connection settings', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Workspace connection', exact: true })).toHaveCount(0)
   await expect(page.getByRole('alert')).toContainText('Wait for the current action to finish')
-  await expect(page.getByRole('button', { name: 'Local workspace', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Engine connected', exact: true })).toBeVisible()
   await expect(panel(page).getByRole('heading', { name: 'Pending Approval Contact', exact: true })).toBeVisible()
   releaseApproval()
   await expect.poll(() => record.draft?.status).toBe('approved')
   await expect(page.getByRole('button', { name: 'Refresh queue', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Workspace connection settings', exact: true }).click()
-  await expect(page.getByRole('dialog', { name: 'Workspace connection', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Use demo', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Demo workspace', exact: true })).toBeVisible()
-  await expect(panel(page).getByRole('heading', { name: 'Maya Chen', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Setup', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Lock access', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Setup required', exact: true })).toBeVisible()
+  await expect(panel(page)).toHaveCount(0)
 })

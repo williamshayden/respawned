@@ -44,8 +44,16 @@ def get_engine():
 
 
 def create_tables(engine):
-    """Create tables/indexes from schema.sql if they don't already exist."""
+    """Initialize this schema once at a time, including across app processes."""
     with DEFAULT_SCHEMA_PATH.open() as f:
         schema_sql = f.read()
     with engine.begin() as conn:
+        # IF NOT EXISTS is not sufficient when concurrent transactions create
+        # the same PostgreSQL catalog entries. Release this per-schema lock on
+        # commit or rollback, without blocking unrelated application schemas.
+        conn.exec_driver_sql("""
+            SELECT pg_advisory_xact_lock(
+                hashtext('respawned:schema-initialization'), hashtext(current_schema())
+            )
+        """)
         conn.exec_driver_sql(schema_sql)

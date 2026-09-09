@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createDemoClient, createHttpClient, validateDraft } from './client'
+import { createHttpClient, validateDraft } from './client'
+import { createDemoClient } from './demoClient'
 import { DEMO_AS_OF, DEMO_DRAFT_BODIES, DEMO_STORAGE_KEY } from './fixtures'
 import type { StorageLike, UIRecord } from './types'
 

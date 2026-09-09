@@ -30,6 +30,7 @@ from respawned.core.review import (
     update_draft_message,
 )
 from respawned.core.time import aware_utc
+from respawned.core.settings import configured_adapter
 from respawned.db.helpers.pg_connect import create_tables, get_engine
 from respawned.llm.adapter import LiteLLMAdapter
 
@@ -229,11 +230,14 @@ def main(
     engine = get_engine()
     try:
         create_tables(engine)
+        if adapter is None:
+            with engine.connect() as connection:
+                adapter = configured_adapter(connection)
         summary = run_review(
             engine,
             now=args.now,
             policy=policy,
-            adapter=adapter or LiteLLMAdapter.from_env(),
+            adapter=adapter,
         )
     finally:
         engine.dispose()

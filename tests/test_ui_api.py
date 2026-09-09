@@ -149,7 +149,7 @@ def test_reads_and_sync_preserve_context_and_contactless_tracking_without_model_
     job = records["one"]
     assert job["kind"] == "job_application" and job["stage"] == "Interview"
     assert job["reason"]["code"] == "human_reply" and job["next_action"] == "reply"
-    assert job["source_freshness"] == "unknown" and job["candidate_id"] is None
+    assert job["source_freshness"] == "unknown" and job["candidate_id"] is not None
     assert job["draft"] is None and job["activities"][0]["classification"] == "human"
     assert job["activities"][0]["summary"] == "Can we speak this week?"
     assert "Value" not in {field["label"] for field in job["fields"]}
@@ -198,6 +198,50 @@ def test_lazy_draft_edit_stale_approval_and_idempotent_unsent_outbox(review_api)
     assert rows[0]["authorization_mode"] == "human"
     assert rows[0]["status"] == "pending" and rows[0]["sent_at"] is None
     assert _get(state, "/records")["items"][0]["next_action"] == "approved"
+    assert len(state.calls) == 1
+
+
+@pytest.mark.parametrize("sync_first", [False, True])
+def test_selected_lazy_draft_is_independent_of_global_sync_limit(review_api, sync_first):
+    state = review_api
+    keys = [f"lazy-{index:03}" for index in range(201)]
+    ingest_records(state.connection, opportunities=[_record(key) for key in keys],
+                   activities=[_reply(key) for key in keys])
+    if sync_first:
+        assert _post(state, "/sync")["candidate_count"] == 200
+    last = _get(state, "/records?limit=1&offset=200")["items"][0]
+    assert last["candidate_id"] is not None
+    before = set(state.connection.execute(text("SELECT primary_opportunity_id FROM candidates")).scalars())
+    assert last["id"] not in before
+    before_runs = state.connection.execute(text("SELECT count(*) FROM sync_runs")).scalar_one()
+    assert state.client.post(f"/v1/ui/records/{last['id']}/draft").status_code == 401
+    assert state.connection.execute(text("SELECT count(*) FROM sync_runs")).scalar_one() == before_runs
+    assert state.calls == []
+    draft = _post(state, f"/records/{last['id']}/draft")
+    assert draft["status"] == "pending" and len(state.calls) == 1
+    after = set(state.connection.execute(text("SELECT primary_opportunity_id FROM candidates")).scalars())
+    assert after - before == {last["id"]}
+    assert state.connection.execute(text("SELECT count(*) FROM sync_runs")).scalar_one() == before_runs + 1
+    assert state.connection.execute(text("SELECT count(*) FROM drafts")).scalar_one() == 1
+    assert _get(state, "/outbox")["items"] == []
+
+
+def test_selected_drafting_cannot_promote_an_ineligible_contact_sibling(review_api):
+    state = review_api
+    ingest_records(state.connection, opportunities=[
+        _record(key, contact_key="shared-person", contact_email="shared@example.com", value=value)
+        for key, value in (("group-primary", 1000), ("group-sibling", 0))
+    ], activities=[_reply("group-primary"), _reply("group-sibling")])
+    records = _get(state, "/records")["items"]
+    primary = next(item for item in records if item["candidate_id"] is not None)
+    sibling = next(item for item in records if item["candidate_id"] is None)
+    inbox = _get(state, "/inbox")["items"]
+    assert inbox[0]["review_record_id"] == primary["id"]
+    _post(state, f"/records/{sibling['id']}/draft", status=409)
+    assert state.calls == []
+    assert state.connection.execute(text("SELECT count(*) FROM candidates")).scalar_one() == 0
+    assert state.connection.execute(text("SELECT count(*) FROM sync_runs")).scalar_one() == 0
+    assert _post(state, f"/records/{primary['id']}/draft")["status"] == "pending"
     assert len(state.calls) == 1
 
 

@@ -164,8 +164,13 @@ def sync_candidates(
     dry_run: bool = False,
     limit: int = 10,
     evaluators: Mapping[str, ReasonFactory] | None = None,
+    primary_opportunity_id: str | None = None,
 ) -> SyncResult:
-    """Run one idempotent candidate sync in the caller's transaction."""
+    """Run one idempotent sync, optionally persisting only a selected primary.
+
+    Selection happens after global eligibility, contact grouping, and review
+    history. It cannot promote an ineligible sibling or bypass a cooldown.
+    """
 
     _validate_limit(limit)
     states = reduce_opportunities(conn, now)
@@ -199,6 +204,8 @@ def sync_candidates(
         for candidate in ranked
         if existing.get(candidate.id) not in {"approved", "rejected"}
         and candidate.contact_key not in reserved_contacts
+        and (primary_opportunity_id is None
+             or candidate.primary_opportunity_id == primary_opportunity_id)
     )[:limit]
     if dry_run:
         inserted_count = sum(

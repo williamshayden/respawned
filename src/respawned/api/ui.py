@@ -20,13 +20,14 @@ from respawned.api.ui_models import (
 from respawned.core.inbox import list_reply_inbox
 from respawned.core.policy import Policy
 from respawned.core.review import (
-    ReviewBlockedError, approve_draft, draft_candidate, load_latest_candidates,
+    ReviewBlockedError, approve_draft, draft_candidate,
     reject_draft, update_draft_message,
 )
 from respawned.core.sync import sync_candidates
 from respawned.core.ui_queries import (
     draft_view, inbox_review_targets, list_ui_records, load_ui_draft, record_references,
 )
+from respawned.core.workspaces import load_workspace_kinds
 from respawned.llm.adapter import LiteLLMAdapter
 
 
@@ -88,10 +89,18 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency)
     @router.get("/records", response_model=UIRecordList)
     def records(connection: ConnectionDep, policy: PolicyDep, clock: ClockDep,
                 limit: Annotated[int, Query(ge=1, le=200)] = 50,
-                offset: Annotated[int, Query(ge=0)] = 0) -> UIRecordList:
+                offset: Annotated[int, Query(ge=0)] = 0,
+                workspace_id: Annotated[UUID | None, Query(
+                    description="Saved view filter; eligibility remains shared across all records.",
+                )] = None) -> UIRecordList:
+        kinds = None
+        if workspace_id is not None:
+            kinds = load_workspace_kinds(connection, workspace_id)
+            if kinds is None:
+                raise HTTPException(404, "Workspace not found")
         try:
             result = list_ui_records(connection, now=clock(), policy=policy,
-                                     limit=limit, offset=offset)
+                                     limit=limit, offset=offset, kinds=kinds)
         except ValueError as exc:
             raise HTTPException(503, "Workflow policy or tracked state is invalid") from exc
         return UIRecordList(**result)
@@ -113,11 +122,19 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency)
 
     @router.get("/inbox", response_model=UIInboxResult)
     def inbox(connection: ConnectionDep, policy: PolicyDep, clock: ClockDep,
-              limit: Annotated[int, Query(ge=1, le=200)] = 200) -> UIInboxResult:
+              limit: Annotated[int, Query(ge=1, le=200)] = 200,
+              workspace_id: Annotated[UUID | None, Query(
+                  description="Saved view filter; reply groups retain contact-wide evidence.",
+              )] = None) -> UIInboxResult:
         """Outstanding ingested replies remain visible during outreach cooldowns."""
+        kinds = None
+        if workspace_id is not None:
+            kinds = load_workspace_kinds(connection, workspace_id)
+            if kinds is None:
+                raise HTTPException(404, "Workspace not found")
         try:
             now = clock()
-            result = list_reply_inbox(connection, now=now, policy=policy, limit=limit)
+            result = list_reply_inbox(connection, now=now, policy=policy, limit=limit, kinds=kinds)
             targets = inbox_review_targets(connection, now=now, policy=policy)
         except ValueError as exc:
             raise HTTPException(503, "Workflow policy or tracked state is invalid") from exc
@@ -152,17 +169,14 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency)
                                   {"id": record_id}).scalar_one_or_none():
             raise HTTPException(404, "Record not found")
         now = clock()
-        record_count = connection.execute(text("SELECT count(*) FROM opportunities")).scalar_one()
         try:
             current = sync_candidates(connection, now=now, policy=policy,
-                                      dry_run=True, limit=record_count).candidates
+                                      primary_opportunity_id=record_id, limit=1).candidates
         except ValueError as exc:
             raise HTTPException(503, "Workflow policy or tracked state is invalid") from exc
-        current_ids = {candidate.id for candidate in current}
-        candidate = next((item for item in load_latest_candidates(connection)
-                          if item.primary_opportunity_id == record_id and item.id in current_ids), None)
+        candidate = current[0] if current else None
         if candidate is None:
-            raise HTTPException(409, "No current candidate. Sync the queue and review eligibility first.")
+            raise HTTPException(409, "This record is not currently eligible for a draft. Review its current state and contact eligibility.")
         existing_id = connection.execute(text("SELECT id FROM drafts WHERE candidate_id = :id"),
                                          {"id": candidate.id}).scalar_one_or_none()
         if existing_id is not None:

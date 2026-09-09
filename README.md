@@ -50,15 +50,17 @@ uv run respawned serve --host 127.0.0.1 --port 8000
 ```
 
 Open [Respawned](http://127.0.0.1:8000). An installed package uses the same command
-without `uv run`. No database or model is needed for the default fictional-data
-demo. The shared queue, context panel, activity history, editable drafts, and
-unsent outbox work across record kinds; records without a confirmed recipient
-remain visible in All tracked.
+without `uv run`. The application opens **Setup** with review access, model
+backend, record import, and outbox guidance. It starts without seeded records.
+Set `RESPAWNED_REVIEW_TOKEN` on the engine, enter that token under **Review access**,
+and connect PostgreSQL to save settings, workspaces, and records.
 
-For real local records, configure a separate `RESPAWNED_REVIEW_TOKEN` on the engine,
-then enter it under **Workspace connection settings**. See the
-[UI setup guide](docs/WEB_UI.md) for API connection, the isolated PostgreSQL
-simulation, optional frontend development, and browser checks. Source freshness
+Use **Workspaces** to create named views for any record kinds, or include all
+types. Workspaces persist in the engine and share its records, model, and policy.
+The shared queue, context panel, activity history, editable drafts, and unsent
+outbox work across these views; contactless records remain visible in All tracked.
+See the [UI setup guide](docs/WEB_UI.md) for the complete setup flow, explicit
+test simulation, frontend development, and browser checks. Source freshness
 remains unknown; approval reserves an unsent outbox item.
 
 ## Quickstart
@@ -99,23 +101,21 @@ docker compose --profile app up -d --build --wait
 curl --fail http://localhost:8000/readyz
 ```
 
-A ready service returns `{"status":"ready"}`. Readiness checks the database, schema, and policy; `/healthz` separately reports process liveness. The first database-backed request initializes the canonical schema without loading fixture data or requiring a model connection. Serving the bundled demo alone does not open a database connection.
-Open [Respawned](http://127.0.0.1:8000) and use **Workspace connection settings**
-to connect with the configured `RESPAWNED_REVIEW_TOKEN`. The Docker image includes
+A ready service returns `{"status":"ready"}`. Readiness checks the database, schema, and policy; `/healthz` separately reports process liveness. The first database-backed request initializes the canonical schema without loading fixture data or requiring a model connection. Serving the initial Setup screen does not need a database connection.
+Open [Respawned](http://127.0.0.1:8000) and use **Setup → Review access**
+to unlock the engine with the configured `RESPAWNED_REVIEW_TOKEN`. The Docker image includes
 the same bundled UI; no separate frontend server or asset mount is needed.
 Interactive OpenAPI documentation is available at `http://localhost:8000/docs`.
 
 ### 3. Add data
 
-For the fastest local tour, load the bundled synthetic fixtures through the demo adapter:
+Use **Setup → Records & sources** to upload or paste canonical JSON, inspect its
+record and activity counts, then import it. This authenticated UI path accepts
+up to 1,000 combined records and activities and a 2 MB JSON payload. Importing
+does not draft or send messages. Workspaces organize these records by `kind`;
+creating a workspace does not copy or generate records.
 
-```bash
-uv run --env-file .env respawned demo
-```
-
-This is an explicit compatibility path, not the application's internal data model. Repeating it is safe: mutable opportunities are upserted, exact duplicate activity payloads are ignored, and reusing an activity ID with a different payload is rejected.
-
-To integrate a real source, translate its records to the canonical API instead:
+For a source integration, translate its records to the canonical API:
 
 ```bash
 curl -X POST http://localhost:8000/v1/ingest \
@@ -142,6 +142,11 @@ curl -X POST http://localhost:8000/v1/ingest \
     }]
   }'
 ```
+
+The optional `uv run --env-file .env respawned demo` command explicitly loads
+bundled synthetic quote fixtures for testing. It is not run on application
+startup. Replaying identical activity payloads is safe; changed payloads with an
+existing activity ID are rejected.
 
 For a contactable record, `contact_key` must be a stable, source-provided identity
 and at least one of `contact_email` or `contact_phone` must be present. Identity is
@@ -304,10 +309,10 @@ respawned --help
 respawned serve --host 127.0.0.1 --port 8000
 ```
 
-Open [Respawned](http://127.0.0.1:8000) for the fictional-data demo. Both wheel and
+Open [Respawned](http://127.0.0.1:8000) to configure the environment in Setup. Both wheel and
 source distribution contain prebuilt assets in `respawned/web_assets`; installing
 either artifact does not invoke npm or require Node.js. PostgreSQL is needed
-when connecting to engine records.
+for saved settings, workspaces, and engine records.
 
 Set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` in the process
 environment before `respawned init`. The CLI does not automatically load
@@ -321,7 +326,20 @@ containing a built `index.html` to override it, or to `off` for an API-only serv
 
 ## Configure models and providers
 
-The application talks to an OpenAI-compatible LiteLLM proxy, not directly to Anthropic, OpenAI, OpenRouter, or another provider. The default alias is `respawned-default`. Change providers without changing application code by editing two values in `.env`:
+Use **Setup → Model backend** to save an OpenAI-compatible chat-completions API
+base URL, model name or alias, timeout, and server credential variable. Settings
+persist in PostgreSQL and are shared by browser, API processing, and CLI review.
+The API can be a local model server, a direct compatible provider, or LiteLLM.
+Keys stay on the server: select `RESPAWNED_MODEL_API_KEY` for a direct backend or
+`LITELLM_MASTER_KEY` for the proxy, and set its value in the server environment.
+Use the API root reachable from that server, including `/v1` when required.
+Saving settings does not make a provider call or verify connectivity; generation
+occurs only when requested. Existing drafts and review do not require a model.
+
+Without saved settings, the engine uses `LITELLM_PROXY_URL`,
+`LITELLM_MODEL_ALIAS` (default `respawned-default`), `LITELLM_MASTER_KEY`, and
+`LITELLM_TIMEOUT_SECONDS`. For the included LiteLLM Compose service, configure its
+upstream in `.env`:
 
 ```dotenv
 LITELLM_UPSTREAM_MODEL=openai/your-model-name
@@ -339,7 +357,7 @@ Model network operations default to a 60-second timeout, configurable with
 are disabled so a failed generation is returned to the workflow for an explicit
 retry. This bounds individual network operations, not a whole processing batch.
 
-To expose multiple models, add another entry to `src/respawned/llm/litellm_proxy_config.yaml`, give it a distinct `model_name`, pass its provider settings into the LiteLLM container, and set `LITELLM_MODEL_ALIAS` to the alias the drafting workflow should use. Policy, prompting, and review code remain provider-independent.
+To expose multiple proxy models, add another entry to `src/respawned/llm/litellm_proxy_config.yaml`, give it a distinct `model_name`, and pass its provider settings into the LiteLLM container. Choose its alias in Setup, or use `LITELLM_MODEL_ALIAS` when no settings are saved. Policy, prompting, and review code remain provider-independent.
 
 ## Policy and extensibility
 

@@ -15,7 +15,7 @@ from respawned.core.helpers.validate import DraftValidationError, validate_draft
 from respawned.core.opportunity import is_contactable_opportunity
 from respawned.core.policy import Policy
 from respawned.core.reduce import reduce_opportunities
-from respawned.core.review import PersistedDraft, load_latest_candidates
+from respawned.core.review import PersistedDraft
 from respawned.core.sync import sync_candidates
 from respawned.core.time import aware_utc, local_calendar_days_since, within_cooldown
 
@@ -67,9 +67,8 @@ def inbox_review_targets(connection: Connection, *, now: datetime, policy: Polic
     """Find the current contact-group primary, independent of reply evidence IDs."""
     count = connection.execute(text("SELECT count(*) FROM opportunities")).scalar_one()
     eligible = sync_candidates(connection, now=now, policy=policy, dry_run=True, limit=count).candidates
-    saved = {candidate.id for candidate in load_latest_candidates(connection)}
     return {candidate.contact_key: candidate.primary_opportunity_id
-            for candidate in eligible if candidate.id in saved}
+            for candidate in eligible}
 
 
 def _label(value: str) -> str:
@@ -98,7 +97,7 @@ def _date(value: datetime, timezone: ZoneInfo) -> str:
 
 def _candidate_reason(
     state: OpportunityState, candidate: Candidate, policy: Policy,
-    now: datetime, outbound: datetime | None, *, persisted: bool,
+    now: datetime, outbound: datetime | None,
 ) -> dict[str, str]:
     """Explain the configured signal using the same ingested dates it evaluated."""
     timezone = ZoneInfo(policy.business_context.timezone_name)
@@ -147,21 +146,22 @@ def _candidate_reason(
         days = local_calendar_days_since(state.created_at, now, timezone)
         label = "Open record needs a check-in"
         detail = f"Open since {_date(state.created_at, timezone)} ({days} days), beyond the configured check-in threshold."
-    if not persisted:
-        detail += " Sync the queue to prepare this candidate."
     return _reason(candidate.reason, label, detail)
 
 
 def list_ui_records(
     connection: Connection, *, now: datetime, policy: Policy,
     limit: int = 50, offset: int = 0, record_id: str | None = None,
+    kinds: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Retain every tracked record, including records with no delivery route.
 
-    Eligibility is recomputed from the current ingested state; a persisted
-    candidate is only actionable if it still matches. Sync is a separate write.
+    Eligibility is recomputed from current ingested state. Reading does not
+    persist candidates; generating a draft prepares only its selected candidate.
     Pagination applies after deterministic priority sorting, so page boundaries
     may change when new evidence arrives and callers should reconcile by ID.
+    Saved workspace kinds filter presentation only: eligibility and cooldowns
+    always use the complete shared engine state, before filtering or pagination.
     """
     now = aware_utc(now, "list_ui_records.now")
     states = reduce_opportunities(connection, now)
@@ -169,7 +169,6 @@ def list_ui_records(
         connection, now=now, policy=policy, dry_run=True, limit=len(states)
     ).candidates
     current = {candidate.primary_opportunity_id: candidate for candidate in eligible}
-    saved = {candidate.id: candidate for candidate in load_latest_candidates(connection)}
     drafts = {
         row["primary_opportunity_id"]: _persisted_draft(row)
         for row in connection.execute(text(f"""
@@ -196,9 +195,12 @@ def list_ui_records(
             )
 
     timezone = ZoneInfo(policy.business_context.timezone_name)
+    selected_kinds = set(kinds or ())
     items: list[dict[str, Any]] = []
     for state in states:
         if record_id is not None and state.opportunity_id != record_id:
+            continue
+        if selected_kinds and state.kind not in selected_kinds:
             continue
         route = resolve_contact(state)
         candidate = current.get(state.opportunity_id)
@@ -239,8 +241,7 @@ def list_ui_records(
             reason = _reason("human_reply", "Human reply received", f"A human reply on {_date(latest, timezone)} has no later outbound response for this contact.")
         elif candidate is not None:
             action = "follow_up"
-            reason = _candidate_reason(state, candidate, policy, now, outbound,
-                                       persisted=candidate.id in saved)
+            reason = _candidate_reason(state, candidate, policy, now, outbound)
         elif state.contact_key in reservations:
             reason = _reason("outbox_cooldown", "Outbox reservation active", "Another approved draft has reserved this contact's cooldown window.")
         elif outbound is not None and within_cooldown(outbound, now, policy.cooldown_hours):
@@ -275,7 +276,7 @@ def list_ui_records(
                 (value for value in (outbound, state.last_replied_at) if value is not None),
                 default=None,
             ),
-            "candidate_id": candidate.id if candidate is not None and candidate.id in saved else None,
+            "candidate_id": candidate.id if candidate is not None else None,
             "referenced_record_ids": list(candidate.other_opportunity_ids) if candidate is not None
                 else [value for value in draft.opportunity_ids if value != state.opportunity_id] if draft else [],
             "activities": [{

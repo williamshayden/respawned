@@ -37,8 +37,10 @@ def test_create_tables_uses_packaged_schema_despite_container_environment(
         monkeypatch.delenv("SCHEMA_PATH")
         importlib.reload(pg_connect)
 
-    assert len(engine.connection.statements) == 1
-    assert "CREATE TABLE IF NOT EXISTS opportunities" in engine.connection.statements[0]
+    assert len(engine.connection.statements) == 2
+    assert "pg_advisory_xact_lock" in engine.connection.statements[0]
+    assert "current_schema()" in engine.connection.statements[0]
+    assert "CREATE TABLE IF NOT EXISTS opportunities" in engine.connection.statements[1]
 
 
 def test_build_engine_url_escapes_credentials(monkeypatch):

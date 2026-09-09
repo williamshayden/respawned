@@ -1,9 +1,9 @@
 import { expect, test, type Page } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
+import { connect, mockEngine, navigate } from './mock-engine'
 
 const selectedPanel = (page: Page) => page.getByRole('region', { name: 'Selected record' })
 const row = (page: Page, text: string) => page.locator('.record-row').filter({ hasText: text })
-const navigate = (page: Page, name: string) => page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: new RegExp(`^${name}`) }).click()
 const browserErrors = new WeakMap<Page, { runtime: string[]; console: string[] }>()
 
 test.beforeEach(async ({ page }) => {
@@ -11,9 +11,11 @@ test.beforeEach(async ({ page }) => {
   browserErrors.set(page, errors)
   page.on('pageerror', (error) => errors.runtime.push(error.message))
   page.on('console', (message) => { if (['error', 'warning'].includes(message.type())) errors.console.push(message.text()) })
+  await mockEngine(page)
   await page.goto('/')
+  await connect(page, 'job_application')
   await expect(page.getByRole('heading', { name: 'Review queue', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Demo workspace', exact: true, includeHidden: true })).toBeAttached()
+  await expect(page.getByRole('button', { name: 'Engine connected', exact: true, includeHidden: true })).toBeAttached()
 })
 
 test.afterEach(async ({ page }, testInfo) => {
@@ -73,6 +75,7 @@ test('unsaved copy survives switching records, and saved copy survives reload', 
   await page.getByRole('button', { name: 'Save changes', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Approve to outbox' })).toBeEnabled()
   await page.reload()
+  await connect(page, 'job_application')
   await expect(page.getByRole('textbox', { name: 'Draft message' })).toHaveValue(copy)
 })
 
@@ -87,7 +90,7 @@ test('approval produces one unsent outbox entry and an accurate CSV export', asy
   const downloading = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Export CSV', exact: true }).click()
   const download = await downloading
-  expect(download.suggestedFilename()).toBe('follow-up-outbox.csv')
+  expect(download.suggestedFilename()).toBe('respawned-outbox.csv')
   const file = await download.path()
   expect(file).not.toBeNull()
   const csv = await readFile(file!, 'utf8')
@@ -116,11 +119,11 @@ test('a live request failure stays live and never replaces records with the demo
   await page.route('**/v1/ui/records?*', (route) => route.fulfill({ status: 503, json: { detail: 'Live records are temporarily unavailable.' } }))
   await page.route('**/v1/ui/outbox?*', (route) => route.fulfill({ status: 200, json: { items: [], has_more: false } }))
   await page.route('**/v1/ui/inbox?*', (route) => route.fulfill({ status: 200, json: { items: [], total: 0, has_more: false, as_of: '2026-09-09T14:00:00Z', source_freshness: 'unknown', outreach_eligibility: 'not_evaluated' } }))
-  await page.getByRole('button', { name: 'Workspace connection settings', exact: true }).click()
+  await page.reload()
   await page.getByLabel('Review access token', { exact: true }).fill('fictional-test-operator-token')
   await page.getByRole('button', { name: 'Connect local engine', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Live records are temporarily unavailable.')
-  await expect(page.getByRole('button', { name: 'Local workspace', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Engine connected', exact: true })).toBeVisible()
   await expect(page.locator('.record-row')).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Maya Chen', exact: true })).toHaveCount(0)
   const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))

@@ -1,15 +1,17 @@
-import { BarChart3, ChevronDown, NotebookText, Mail, RefreshCw, Send, ShieldCheck, X } from 'lucide-react'
-import { contextNames, type Page } from '../presentation'
+import { BarChart3, ChevronDown, FolderCog, NotebookText, Mail, RefreshCw, Send, Settings2, ShieldCheck, X } from 'lucide-react'
+import { type Page } from '../presentation'
+import type { Workspace } from '../data/workspaces'
 
 const destinations = [
   { name: 'Review queue', icon: NotebookText }, { name: 'Reply inbox', icon: Mail },
   { name: 'Outbox', icon: Send }, { name: 'Activity', icon: BarChart3 }, { name: 'Policy', icon: ShieldCheck },
+  { name: 'Setup', icon: Settings2 },
 ] as const
 
 interface Props {
   page: Page; onNavigate: (page: Page) => void
-  scope: string; scopes: string[]; onScope: (scope: string) => void
-  counts: Partial<Record<Page, number>>; mode: 'demo' | 'live'
+  scope: string; workspaces: Workspace[]; onScope: (scope: string) => void
+  counts: Partial<Record<Page, number>>; connected: boolean
   onConnect: () => void; open: boolean; onClose: () => void
 }
 
@@ -27,9 +29,10 @@ export function Sidebar(props: Props) {
         <div className="select-wrap">
           <select id="context-scope" value={props.scope} onChange={event => props.onScope(event.target.value)}>
             <option value="all">All work</option>
-            {props.scopes.map(kind => <option key={kind} value={kind}>{contextNames[kind] || kind.replaceAll('_', ' ')}</option>)}
+            {props.workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
           </select><ChevronDown size={16} aria-hidden="true" />
         </div>
+        <button className="text-button manage-workspaces" aria-current={props.page === 'Workspaces' ? 'page' : undefined} onClick={() => props.onNavigate('Workspaces')}><FolderCog size={16} />Manage workspaces</button>
       </div>
       <nav aria-label="Main navigation">
         {destinations.map(({ name, icon: Icon }) => <button key={name}
@@ -41,12 +44,12 @@ export function Sidebar(props: Props) {
         </button>)}
       </nav>
       <div className="sidebar-bottom">
-        <button className="workspace-status" onClick={props.onConnect}>
-          <span className="status-dot" /><span>{props.mode === 'demo' ? 'Demo workspace' : 'Local workspace'}</span>
+        <button className={`workspace-status ${props.connected ? '' : 'is-disconnected'}`} onClick={props.onConnect}>
+          <span className="status-dot" /><span>{props.connected ? 'Engine connected' : 'Setup required'}</span>
         </button>
         <button className="profile" onClick={props.onConnect} aria-label="Workspace connection settings">
-          <span className="avatar">{props.mode === 'demo' ? 'W' : 'LO'}</span>
-          <span>{props.mode === 'demo' ? 'William' : 'Local operator'}</span><ChevronDown size={17} />
+          <span className="avatar">LO</span>
+          <span>Local operator</span><ChevronDown size={17} />
         </button>
       </div>
     </aside>

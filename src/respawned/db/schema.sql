@@ -49,6 +49,24 @@ ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS context
     JSONB NOT NULL DEFAULT '{}'::JSONB
     CHECK (jsonb_typeof(context) = 'object' AND octet_length(context::TEXT) <= 16384);
 
+-- Workspaces are saved filters within this engine, not tenant boundaries.
+-- They have no foreign keys to records, so deleting one only removes the view.
+CREATE TABLE IF NOT EXISTS workspaces (
+    id           UUID PRIMARY KEY,
+    name         TEXT NOT NULL CHECK (char_length(btrim(name)) BETWEEN 1 AND 120),
+    description  TEXT NOT NULL DEFAULT '' CHECK (char_length(description) <= 2000),
+    kinds        TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]
+                     CHECK (cardinality(kinds) <= 100 AND array_position(kinds, NULL) IS NULL),
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS application_settings (
+    key         TEXT PRIMARY KEY,
+    value       JSONB NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS activities (
     id              TEXT PRIMARY KEY,
     type            TEXT NOT NULL,

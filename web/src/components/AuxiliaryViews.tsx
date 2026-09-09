@@ -11,7 +11,7 @@ function downloadOutbox(items: OutboxItem[]) {
   const fields: (keyof OutboxItem)[] = ['id', 'draft_id', 'contact_address', 'channel', 'body', 'status', 'authorization_mode', 'created_at', 'sent_at']
   const rows = [fields.join(','), ...items.map(item => fields.map(field => cell(item[field])).join(','))]
   const url = URL.createObjectURL(new Blob([rows.join('\r\n')], { type: 'text/csv;charset=utf-8' }))
-  const link = document.createElement('a'); link.href = url; link.download = 'follow-up-outbox.csv'; link.click()
+  const link = document.createElement('a'); link.href = url; link.download = 'respawned-outbox.csv'; link.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 

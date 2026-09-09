@@ -13,7 +13,7 @@ it is historical evidence, not a publication record for the current Respawned
 artifacts. The UI does not connect to a mailbox, refresh an external source, or
 deliver messages. Connected records report source freshness as unknown.
 
-## Start the demo
+## Start the application
 
 From the repository root:
 
@@ -25,17 +25,11 @@ uv run respawned serve --host 127.0.0.1 --port 8000
 After installing a wheel or source distribution, run the same `respawned serve`
 command without `uv run`.
 
-Open [Respawned](http://127.0.0.1:8000). The default demo uses fictional records
-and deterministic draft copy, without a database or model provider. The server
-serves the files; demo actions do not call its workflow APIs.
-Demo edits and outbox decisions persist in browser storage when available. They
-do not create engine records. The UI labels this workspace as Demo.
-
-Use the workspace selector to switch contexts. **Ready for review** shows action
-items; **All tracked** also includes waiting, closed, and contactless records.
-**Reply inbox**, **Outbox**, **Activity**, and **Policy** use the same navigation.
-Opening a contactless record allows inspection, but does not generate a recipient
-or enable drafting. **Approve to outbox** records an unsent reservation.
+Open [Respawned](http://127.0.0.1:8000). It opens **Setup**, where you can unlock
+review access, configure a model, import records, and see how the outbox works.
+Normal startup does not create sample records or substitute browser data when
+the engine is unavailable. The initial page loads without PostgreSQL; saving
+settings, workspaces, and records requires the database.
 
 ## Connect a local engine
 
@@ -56,23 +50,107 @@ Use either this host server or the Compose app, then open
 The Docker image copies the prebuilt assets with the Python source; it needs
 neither a separate frontend server nor an asset mount.
 
-Open **Workspace connection settings**, enter the reviewer token, and choose
-**Connect local engine**. The token stays in browser memory for this session.
+Open **Setup → Review access**, enter the reviewer token, and unlock the engine.
+The token stays in browser memory for this session and clears on page reload.
 The server checks it before resolving database or provider dependencies for
 `/v1/ui` routes. This does not secure the older ingestion/read endpoints or add
 tenant isolation; keep the service within its trusted local deployment scope.
 
+The review access token is a shared operator credential, not an account or a
+provider key. Generate a value with `python -c "import secrets; print(secrets.token_urlsafe(32))"`,
+set it as `RESPAWNED_REVIEW_TOKEN` on the server, and restart the server. Setup
+explains this when review is disabled. Changing that server value revokes the
+old token. The independent `RESPAWNED_PROCESS_TOKEN` enables `/v1/process`; it
+does not unlock browser review. A draft's internal `review_token` is different:
+it fingerprints the displayed copy and recipient so stale edits and approvals
+can be rejected. The UI manages that fingerprint automatically.
+
 Queue refresh reevaluates ingested data and does not contact an external source.
 Reading records, editing existing drafts, and inspecting the outbox need no model.
-**Generate draft** calls the configured drafting adapter. Reuse the existing
-[model and provider configuration](../README.md#configure-models-and-providers)
-and choose the policy's sender/sign-off settings before generating real copy.
-No provider credential belongs in the browser or a frontend environment variable.
 
 The server rechecks current status, recipient, contact-wide cooldown, and draft
 version when saving or approving. A stale review returns a conflict; refresh and
 inspect the current copy before acting again. Approval writes to the engine's
 outbox with human authorization provenance and does not send a message.
+
+## Configure workspaces
+
+Open **Workspaces** and choose **New workspace**. Give the view a name, an
+optional description, and the record types it should contain. **Include all**
+includes every current and future kind. The type list is discovered from the
+whole database, including records outside the current queue page. **Add a
+record type** lets you prepare a view before that type has been imported.
+
+Use your own lowercase type identifiers, such as `partnership` or `project`;
+each allows letters, digits, and underscores up to 64 characters and starts with
+a letter. Use that same value as `kind` when importing records. Names allow 120
+characters, descriptions 2,000, and a view can select up to 100 unique kinds.
+No job, sales, or other domain workspace is predefined.
+
+**Save workspace** persists the view in PostgreSQL so it returns after reconnecting
+or restarting. Open a saved workspace to use the shared review layout. Filtering
+occurs before pagination and its result count reflects the selected kinds.
+**Ready for review** shows action items; **All tracked** also includes waiting,
+closed, and contactless records. A record without a confirmed recipient can be
+inspected but cannot become a drafting candidate.
+
+Workspaces share one engine's records, contacts, model settings, review policy,
+and outbox. They are organizational views, not accounts or isolation boundaries.
+A recent outbound for a contact in another view still applies its cooldown.
+**Remove workspace** removes only the saved view; its records, drafts, and outbox
+remain stored. The authenticated `/v1/ui/workspaces` API supports listing,
+creation, updates, and deletion. `/v1/ui/records?workspace_id=<id>` applies a
+saved view before pagination; direct record links can still open related records.
+
+## Connect a model backend
+
+Under **Setup → Model backend**, enter the API base URL, model name or alias,
+timeout, and server credential variable. Use an OpenAI-compatible
+chat-completions endpoint directly, through a local server, or through LiteLLM.
+Use the API root reachable from the Respawned server; include `/v1` if required
+by that endpoint. For LiteLLM, use the proxy URL and configured model alias.
+
+The UI stores the non-secret settings in PostgreSQL. They override the existing
+environment defaults and are shared by browser drafting, API processing, and
+CLI review. Choose `LITELLM_MASTER_KEY` or `RESPAWNED_MODEL_API_KEY`, set its value
+in the server environment, and restart that server. No provider key is entered
+or returned in the browser. For a local endpoint that ignores authentication,
+set a local-only placeholder in the selected variable because the client still
+requires a nonempty value.
+
+**Save model settings** saves configuration without contacting the endpoint.
+The configured state means a credential is present; it is not a provider test.
+**Generate draft** sends the chosen record's drafting context to that backend.
+Existing drafts stay available even if drafting is unconfigured or offline.
+Choose the policy's sender/sign-off settings before generating real copy. See
+[model and provider configuration](../README.md#configure-models-and-providers)
+for the included LiteLLM Compose setup and environment fallback.
+
+## Import records and use the outbox
+
+Under **Setup → Records & sources**, choose a JSON file or paste a canonical
+payload containing `opportunities` and `activities`. The interface previews their
+counts; submit **Import records** to validate and save the batch. The import
+allows up to 1,000 combined items and 2 MB. Download the template for field names
+and replace its values with your own source IDs and timestamps. Import does not
+generate drafts or send messages. Re-importing a record ID replaces its complete
+snapshot, including clearing omitted optional fields. Activity IDs represent
+immutable facts, so exact replays are accepted but changed payloads conflict.
+
+For ongoing integrations, map the source API or webhook to the same canonical
+contract. The authenticated browser path is `POST /v1/ui/import`; the existing
+`POST /v1/ingest` remains available to trusted local adapters. Source connectors
+own their credentials, pagination, and refresh schedule. Importing does not
+connect a mailbox or establish source freshness.
+
+Review the record, generate a draft when eligible, edit and save it as needed,
+then choose **Approve to outbox**. The **Outbox** shows the resulting unsent
+reservation. Download JSON from the UI to hand reviewed messages to your own
+delivery workflow, or export CSV with `respawned outbox --path outbox.csv`.
+Neither export sends a message or marks it sent. Once a message has actually
+been sent, ingest its `message_sent` activity with `direction: outbound` and the
+real source timestamp. The built-in V1 outbox has no provider connection or
+automatic delivery worker; Setup presents that current workflow explicitly.
 
 ## Run the connected simulation
 
@@ -94,7 +172,8 @@ no known human contact. Its deliberately known reviewer token is
 `ui-simulation-review-token`; use it only with this simulation.
 
 Open the bundled UI at [http://127.0.0.1:8001](http://127.0.0.1:8001) and connect
-using the simulation token. Generate a draft, edit it, save, approve it,
+through **Setup → Review access** using the simulation token. Create a workspace
+for any desired kind or use all records. Generate a draft, edit it, save, approve it,
 and inspect the persisted unsent outbox. The contactless application remains
 trackable without becoming a drafting candidate. Restart the harness for a fresh
 schema when repeating the complete approval walkthrough.
@@ -187,8 +266,8 @@ npm ci
 npm run dev
 ```
 
-Open [the development UI](http://127.0.0.1:5173). Its default workspace is the same
-fictional-data demo. To connect it to an API or simulation on a different port,
+Open [the development UI](http://127.0.0.1:5173). It opens the same Setup flow.
+To connect it to an API or explicit simulation on a different port,
 set the development proxy address when starting Vite:
 
 ```bash
@@ -226,7 +305,7 @@ RESPAWNED_UI_DIST="$PWD/web/dist" \
 UI. Missing or invalid asset directories fail startup clearly. API routes are
 registered before the asset mount, so reviewer authentication keeps working.
 
-`npm run preview` serves the production frontend on port 4173 for a demo preview.
+`npm run preview` serves the production frontend on port 4173 for a static preview.
 It does not use Vite's development API proxy; use the API's built-asset serving
 for a connected production-build walkthrough.
 
@@ -243,7 +322,7 @@ npm run test:e2e
 ```
 
 CI verifies bundle freshness and runs frontend checks with Node.js 22.20.0.
-Ordinary browser tests use the demo and mocked HTTP; the real PostgreSQL browser
+Ordinary browser tests use controlled HTTP fixtures; the real PostgreSQL browser
 test is skipped unless explicitly enabled. To run it, start a fresh simulation
 on port 8001 as above, stop any existing Vite server on 5173, then run:
 
