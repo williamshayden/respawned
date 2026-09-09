@@ -245,6 +245,52 @@ def test_selected_drafting_cannot_promote_an_ineligible_contact_sibling(review_a
     assert len(state.calls) == 1
 
 
+def test_selected_ui_drafting_preserves_the_cli_review_queue(review_api):
+    from respawned.core.review import load_latest_candidates
+
+    state = review_api
+    keys = {"shared-queue-one", "shared-queue-two"}
+    ingest_records(state.connection, opportunities=[_record(key) for key in sorted(keys)],
+                   activities=[_reply(key) for key in sorted(keys)])
+    _post(state, "/sync")
+    assert {candidate.primary_opportunity_id for candidate in load_latest_candidates(state.connection)} == keys
+    original_snapshot = state.connection.execute(text("""
+        SELECT sync_run_id, run_at, contact_name FROM candidates
+        WHERE primary_opportunity_id = 'shared-queue-one'
+    """)).one()
+    ingest_records(state.connection, opportunities=[_record("shared-queue-one", contact_name="Current Contact")])
+    _post(state, "/records/shared-queue-one/draft")
+    assert {candidate.primary_opportunity_id for candidate in load_latest_candidates(state.connection)} == keys
+    assert state.connection.execute(text("""
+        SELECT sync_run_id, run_at, contact_name FROM candidates
+        WHERE primary_opportunity_id = 'shared-queue-one'
+    """)).one() == original_snapshot
+    assert state.connection.execute(text("""
+        SELECT contact_name FROM drafts WHERE primary_opportunity_id = 'shared-queue-one'
+    """)).scalar_one() == "Current Contact"
+
+    # A newly discovered record can be drafted without publishing a new global
+    # queue; the next explicit full sync includes it normally.
+    ingest_records(state.connection, opportunities=[_record("shared-queue-three")],
+                   activities=[_reply("shared-queue-three")])
+    _post(state, "/records/shared-queue-three/draft")
+    assert {candidate.primary_opportunity_id for candidate in load_latest_candidates(state.connection)} == keys
+    _post(state, "/sync")
+    assert {candidate.primary_opportunity_id for candidate in load_latest_candidates(state.connection)} == keys | {"shared-queue-three"}
+
+
+def test_selected_ui_draft_does_not_publish_a_cli_queue_without_sync(review_api):
+    from respawned.core.review import load_latest_candidates
+
+    state = review_api
+    ingest_records(state.connection, opportunities=[_record("selected-only")],
+                   activities=[_reply("selected-only")])
+    _post(state, "/records/selected-only/draft")
+    assert load_latest_candidates(state.connection) == []
+    _post(state, "/sync")
+    assert [candidate.primary_opportunity_id for candidate in load_latest_candidates(state.connection)] == ["selected-only"]
+
+
 def test_rejection_and_validation_never_authorize_a_message(review_api):
     state = review_api
     draft = _draft(state)

@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { FolderOpen, LoaderCircle, Plus, Save, Trash2 } from 'lucide-react'
 import { workspaceRequest, type Workspace, type WorkspaceInput } from '../data/workspaces'
+import type { ReviewAccess } from '../data/auth'
 import './workspaces.css'
 
 interface Props {
-  token: string
+  token: ReviewAccess
   workspaces: Workspace[]
   kinds: string[]
   loading: boolean

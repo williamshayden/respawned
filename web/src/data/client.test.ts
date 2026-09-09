@@ -208,6 +208,23 @@ describe('synthetic review client', () => {
 })
 
 describe('HTTP review client', () => {
+  it('downloads the authenticated server CSV unchanged with workspace scope', async () => {
+    const csv = 'id,body\r\n1,"Server-approved copy"\r\n'
+    const fetch = vi.fn().mockResolvedValue(new Response(csv, { headers: { 'Content-Type': 'text/csv; charset=utf-8' } }))
+    vi.stubGlobal('fetch', fetch)
+    expect(await (await createHttpClient('', 'operator-secret', 'scope/one').exportOutbox()).text()).toBe(csv)
+    expect(fetch).toHaveBeenCalledWith('/v1/ui/outbox/export?format=csv&workspace_id=scope%2Fone', {
+      method: 'GET', headers: { Accept: 'text/csv', Authorization: 'Bearer operator-secret' },
+    })
+  })
+
+  it('preserves export failures and rejects an HTML fallback instead of downloading it', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: 'Database unavailable' }), { status: 503 })))
+    await expect(createHttpClient().exportOutbox()).rejects.toMatchObject({ status: 503, message: 'Database unavailable' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>Unexpected app shell</html>', { headers: { 'Content-Type': 'text/html' } })))
+    await expect(createHttpClient().exportOutbox()).rejects.toMatchObject({ code: 'invalid_response' })
+  })
+
   it('sends the operator credential in a header and review versions in request bodies', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'draft-1' }), { status: 200 }))
     vi.stubGlobal('fetch', fetch)

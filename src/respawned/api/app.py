@@ -34,11 +34,12 @@ from respawned.core.ingest import (
     ingest_records,
 )
 from respawned.core.policy import Policy, load_policy
+from respawned.core.outbox import list_outbox_rows
 from respawned.core.workflow import ProcessResult, process_candidates, utc_now
 from respawned.db.helpers.pg_connect import (
     DatabaseConnectionError, create_tables, get_engine,
 )
-from respawned.llm.adapter import LiteLLMAdapter
+from respawned.llm.adapter import DraftingAdapter
 
 
 @lru_cache(maxsize=1)
@@ -90,7 +91,7 @@ def get_workflow_policy() -> Policy:
         raise HTTPException(503, "Workflow policy configuration is invalid") from exc
 
 
-def get_workflow_adapter() -> LiteLLMAdapter:
+def get_workflow_adapter() -> DraftingAdapter:
     from respawned.core.settings import configured_adapter
 
     try:
@@ -136,6 +137,22 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Respawned", version="1.0.0", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def local_browser_origin_guard(request: Request, call_next):
+    from respawned.api.session import local_session
+
+    manager = local_session(request)
+    if manager is not None:
+        try:
+            manager.check_origin(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    response = await call_next(request)
+    if request.url.path.startswith("/v1/ui/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.exception_handler(DatabaseConnectionError)
 @app.exception_handler(SQLAlchemyError)
 async def database_unavailable(_request: Request, _exc: Exception) -> JSONResponse:
@@ -162,7 +179,7 @@ def readiness(
     """
     connection.exec_driver_sql("SET LOCAL statement_timeout = '2s'")
     connection.exec_driver_sql("""
-        SELECT opportunities.id, activities.id, sync_runs.id, candidates.id,
+        SELECT opportunities.id, activities.id, sync_runs.id, sync_runs.scope, candidates.id,
                drafts.id, outbox.authorization_mode, opportunity_states.opportunity_id,
                workspaces.id, application_settings.key
         FROM opportunities, activities, sync_runs, candidates, drafts, outbox,
@@ -228,7 +245,7 @@ def process(
     payload: ProcessRequest,
     engine: Annotated[Engine, Depends(get_api_engine)],
     policy: Annotated[Policy, Depends(get_workflow_policy)],
-    adapter: Annotated[LiteLLMAdapter, Depends(get_workflow_adapter)],
+    adapter: Annotated[DraftingAdapter, Depends(get_workflow_adapter)],
     clock: Annotated[Callable[[], datetime], Depends(get_workflow_clock)],
 ) -> ProcessResult:
     """Draft a bounded queue under server policy; never sends messages.
@@ -268,21 +285,18 @@ def outbox(
     Pagination is a snapshot read, not a synchronization checkpoint. Concurrent
     inserts or status changes require rereading/reconciling by stable item ID.
     """
-    rows = connection.execute(text("""
-        SELECT id, draft_id, contact_key, contact_address, contact_name,
-               channel, opportunity_ids, body, status, authorization_mode,
-               created_at, sent_at
-        FROM outbox ORDER BY id LIMIT :limit OFFSET :offset
-    """), {"limit": limit + 1, "offset": offset}).mappings().all()
+    rows = list_outbox_rows(connection, limit=limit + 1, offset=offset)
     return OutboxListResponse(items=rows[:limit], has_more=len(rows) > limit)
 
 
 def _register_review_interface() -> None:
     # Delay importing the router until its shared dependencies are defined.
     from respawned.api.setup import create_setup_router
+    from respawned.api.session import create_session_router
     from respawned.api.ui import create_ui_router
     from respawned.api.workspaces import create_workspace_router
 
+    app.include_router(create_session_router())
     app.include_router(create_ui_router(
         get_connection, get_workflow_policy, get_workflow_clock,
     ))

@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpRight, Check, Copy, Database, Download, KeyRound, LoaderCircle, Mail, RefreshCw, Server, Upload } from 'lucide-react'
 import { IMPORT_TEMPLATE, importRecords, parseImport, readBootstrap, readSetup, saveModel } from '../data/setup'
 import type { ModelSettings, SetupStatus } from '../data/setup'
+import { isLocalSession, type ReviewAccess } from '../data/auth'
 import './setup.css'
 
 interface Props {
   connected: boolean
-  token: string
+  token: ReviewAccess
   onConnect: (token: string) => Promise<void> | void
-  onDisconnect: () => void
+  onDisconnect: () => Promise<void> | void
   onImported?: () => void
   onOpenOutbox: () => void
 }
@@ -100,10 +101,10 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
     {statusError && <p className="inline-error" role="alert">{statusError}</p>}
 
     <section className="setup-section" aria-labelledby="setup-access-title">
-      <div className="setup-section-heading"><KeyRound size={23} /><div><h2 id="setup-access-title">Review access</h2><p>Your key to this environment</p></div></div>
+      <div className="setup-section-heading"><KeyRound size={23} /><div><h2 id="setup-access-title">Review access</h2><p>Your connection to this environment</p></div></div>
       <div className="setup-section-body">
-        <div className="setup-heading-row"><p>The review access token unlocks records, settings, and draft approval on this server.</p><span className={`setup-state ${connected ? 'is-ready' : ''}`}>{connected ? 'Unlocked' : 'Locked'}</span></div>
-        {connected ? <div className="setup-access-active"><Check size={18} /><p>Access is active for this browser session. The token stays in memory and clears when the page reloads.</p><button className="button small" onClick={onDisconnect}>Lock access</button></div> : <form className="setup-access-form" onSubmit={async event => {
+        <div className="setup-heading-row"><p>{isLocalSession(token) ? 'Connected securely through your local CLI.' : 'Launch with respawned ui to connect automatically, or use a server access token below.'}</p><span className={`setup-state ${connected ? 'is-ready' : ''}`}>{connected ? 'Unlocked' : 'Locked'}</span></div>
+        {connected ? <div className="setup-access-active"><Check size={18} /><p>{isLocalSession(token) ? 'This local connection survives page reloads and expires after 12 hours or when the server stops. Lock access ends it immediately.' : 'Access is active for this browser tab. The manually entered token stays in memory and clears when the page reloads.'}</p><button className="button small" onClick={onDisconnect}>Lock access</button></div> : <><div className="setup-note"><p>On the machine running Respawned, run:</p><pre><code>respawned ui</code></pre><p>It opens this interface with access already connected. In a terminal without a browser, use <code>respawned ui --no-open</code> and open the one-use link it prints on this machine. If port 8000 is occupied, stop the existing server or choose <code>--port 8001</code>.</p></div><form className="setup-access-form" onSubmit={async event => {
           event.preventDefault()
           setConnecting(true)
           setAccessError(null)
@@ -115,21 +116,21 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
           <div className="setup-input-action"><input id="setup-review-token" type="password" autoComplete="off" spellCheck={false} value={accessToken} onChange={event => setAccessToken(event.target.value)} placeholder="Enter the token from your server" required disabled={connecting} />
             <button type="submit" className="button primary" disabled={connecting || !accessToken.trim()}>{connecting && <LoaderCircle size={16} className="spin" />}Connect local engine</button></div>
           {accessError && <p className="inline-error" role="alert">{accessError}</p>}
-        </form>}
-        <details className="setup-details" open={reviewEnabled === false}>
-          <summary>{reviewEnabled === false ? 'Set up review access on the server' : 'Where do I get the token?'}</summary>
+        </form></>}
+        {!isLocalSession(token) && <details className="setup-details">
+          <summary>{reviewEnabled === false ? 'Optional: configure remote or API access' : 'Using a remote server or API client?'}</summary>
           <p>Set <code>RESPAWNED_REVIEW_TOKEN</code> on the machine running Respawned, then start or restart the server. In a Bash terminal, this generates a random token and prints it for you to enter above:</p>
           <pre><code>{TOKEN_COMMAND}</code></pre>
           <p>Keep the same value in your server environment for future starts. Docker users can set it in the app service environment. Anyone with this token can review records and change environment settings.</p>
           <p>The <code>review_token</code> attached to an individual draft is different: Respawned manages that version check automatically to prevent approving stale text.</p>
-        </details>
+        </details>}
       </div>
     </section>
 
     <section className="setup-section" aria-labelledby="setup-model-title">
       <div className="setup-section-heading"><Server size={23} /><div><h2 id="setup-model-title">Model backend</h2><p>Generate drafts on demand</p></div></div>
       <div className="setup-section-body">
-        <div className="setup-heading-row"><p>Connect an OpenAI-compatible chat-completions API, directly or through LiteLLM.</p><span className={`setup-state ${status?.model.ready ? 'is-ready' : ''}`}>{!connected ? 'Unlock to configure' : status?.model.ready ? 'Configured' : loading ? 'Checking' : 'Setup needed'}</span></div>
+        <div className="setup-heading-row"><p>Use your Codex ChatGPT login or connect an OpenAI-compatible API.</p><span className={`setup-state ${status?.model.ready ? 'is-ready' : ''}`}>{!connected ? 'Unlock to configure' : status?.model.ready ? 'Configured' : loading ? 'Checking' : 'Setup needed'}</span></div>
         {!connected && <p className="setup-note">Unlock review access to view and save the server’s model settings.</p>}
         {status?.model.error && <p className="inline-error">{status.model.error}. Enter valid settings below to replace it.</p>}
         {connected && model && <form onSubmit={async event => {
@@ -139,7 +140,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
           setModelError(null)
           setModelNotice(null)
           try {
-            const saved = await saveModel(token, { base_url: model.base_url.trim(), model_alias: model.model_alias.trim(), api_key_env: model.api_key_env, timeout_seconds: model.timeout_seconds })
+            const saved = await saveModel(token, { backend: model.backend ?? 'openai_compatible', base_url: model.backend === 'codex_cli' ? '' : model.base_url.trim(), model_alias: model.model_alias.trim(), api_key_env: model.api_key_env, timeout_seconds: model.timeout_seconds })
             if (currentAccess.current !== startedWith) return
             setModel(saved)
             setStatus(previous => previous ? { ...previous, model: saved } : previous)
@@ -148,17 +149,18 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
           finally { if (currentAccess.current === startedWith) setSavingModel(false) }
         }}>
           <fieldset className="setup-form-grid" disabled={savingModel || !databaseReady}>
-            <label className="setup-field-wide">API base URL<input type="url" value={model.base_url} onChange={event => setModel({ ...model, base_url: event.target.value })} placeholder="http://localhost:11434/v1" required /><span>Use the exact API root reachable from the Respawned server. Include /v1 if your backend requires it.</span></label>
-            <label>Model or proxy alias<input value={model.model_alias} onChange={event => setModel({ ...model, model_alias: event.target.value })} placeholder="Model name accepted by your backend" required /></label>
+            <label className="setup-field-wide">Backend<select value={model.backend ?? 'openai_compatible'} onChange={event => setModel({ ...model, backend: event.target.value as ModelSettings['backend'], model_alias: '', timeout_seconds: event.target.value === 'codex_cli' ? 120 : 60 })}><option value="openai_compatible">OpenAI-compatible API / LiteLLM</option><option value="codex_cli">Codex CLI · ChatGPT login</option></select></label>
+            {model.backend !== 'codex_cli' && <label className="setup-field-wide">API base URL<input type="url" value={model.base_url} onChange={event => setModel({ ...model, base_url: event.target.value })} placeholder="http://localhost:11434/v1" required /><span>Use the exact API root reachable from the Respawned server. Include /v1 if your backend requires it.</span></label>}
+            <label>{model.backend === 'codex_cli' ? 'Codex model (optional)' : 'Model or proxy alias'}<input value={model.model_alias} onChange={event => setModel({ ...model, model_alias: event.target.value })} placeholder={model.backend === 'codex_cli' ? 'Use the Codex CLI default' : 'Model name accepted by your backend'} required={model.backend !== 'codex_cli'} /></label>
             <label>Timeout (seconds)<input type="number" min="0.1" max="300" step="0.1" value={model.timeout_seconds} onChange={event => setModel({ ...model, timeout_seconds: Number(event.target.value) })} required /></label>
-            <label className="setup-field-wide">Server credential variable<select value={model.api_key_env} onChange={event => setModel({ ...model, api_key_env: event.target.value as ModelSettings['api_key_env'] })}><option value="LITELLM_MASTER_KEY">LITELLM_MASTER_KEY</option><option value="RESPAWNED_MODEL_API_KEY">RESPAWNED_MODEL_API_KEY</option></select><span>Set the key in this environment variable on the server and restart it. The key is never entered or returned here.</span></label>
+            {model.backend !== 'codex_cli' && <label className="setup-field-wide">Server credential variable<select value={model.api_key_env} onChange={event => setModel({ ...model, api_key_env: event.target.value as ModelSettings['api_key_env'] })}><option value="LITELLM_MASTER_KEY">LITELLM_MASTER_KEY</option><option value="RESPAWNED_MODEL_API_KEY">RESPAWNED_MODEL_API_KEY</option></select><span>Set the key in this environment variable on the server and restart it. The key is never entered or returned here.</span></label>}
           </fieldset>
-          <p className="setup-note">{model.api_key_env !== status?.model.api_key_env ? 'Save to check this credential variable.' : status?.model.key_configured ? 'The selected credential is set on the server.' : 'The selected credential is missing on the server.'} {status?.model.source === 'saved' ? 'Using saved model settings.' : 'Using server environment defaults.'}</p>
+          <p className="setup-note">{model.backend === 'codex_cli' ? (status?.model.backend === 'codex_cli' && status.model.login_ready ? 'Codex CLI and its ChatGPT login are available on the server.' : 'Run codex login with ChatGPT on the server. Save to check the CLI and login; no API key is needed.') : model.api_key_env !== status?.model.api_key_env ? 'Save to check this credential variable.' : status?.model.key_configured ? 'The selected credential is set on the server.' : 'The selected credential is missing on the server.'} {status?.model.source === 'saved' ? 'Using saved model settings.' : 'Using server environment defaults.'}</p>
           {modelError && <p className="inline-error" role="alert">{modelError}</p>}
           {modelNotice && <p className="setup-success" role="status"><Check size={15} />{modelNotice}</p>}
-          <div className="setup-form-actions"><p>Saving does not test the endpoint. Generating a draft sends its drafting context to this backend.</p><button type="submit" className="button primary" disabled={savingModel || !databaseReady}>{savingModel && <LoaderCircle size={16} className="spin" />}Save model settings</button></div>
+          <div className="setup-form-actions"><p>Saving makes no model request. Generating a draft sends its drafting context to this backend.</p><button type="submit" className="button primary" disabled={savingModel || !databaseReady}>{savingModel && <LoaderCircle size={16} className="spin" />}Save model settings</button></div>
         </form>}
-        <details className="setup-details"><summary>Which backend settings should I use?</summary><p>For a local model server, use its API base URL and the exact model name it serves. For LiteLLM, use the proxy URL, a model alias from its configuration, and <code>LITELLM_MASTER_KEY</code>. A direct provider can use <code>RESPAWNED_MODEL_API_KEY</code>.</p><p>If your local backend needs no authentication, set a local-only value in the selected server credential variable. Respawned’s API client requires a value, even when the backend ignores it.</p></details>
+        <details className="setup-details"><summary>Which backend settings should I use?</summary><p>Codex uses the CLI installed on the server and its existing ChatGPT login. It runs a bounded text-only task with structured output; the engine still validates the draft and requires approval. If Codex is not on PATH, set <code>RESPAWNED_CODEX_BIN</code> in the server environment. When calling Windows Codex from WSL, also set <code>RESPAWNED_CODEX_SCRATCH_DIR</code> to an existing directory on a mounted Windows drive.</p><p>For a local model server, use its API base URL and the exact model name it serves. For LiteLLM, use the proxy URL, a model alias from its configuration, and <code>LITELLM_MASTER_KEY</code>. A direct provider can use <code>RESPAWNED_MODEL_API_KEY</code>.</p><p>If your local backend needs no authentication, set a local-only value in the selected server credential variable. Respawned’s API client requires a value, even when the backend ignores it.</p></details>
       </div>
     </section>
 

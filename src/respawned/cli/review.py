@@ -32,7 +32,7 @@ from respawned.core.review import (
 from respawned.core.time import aware_utc
 from respawned.core.settings import configured_adapter
 from respawned.db.helpers.pg_connect import create_tables, get_engine
-from respawned.llm.adapter import LiteLLMAdapter
+from respawned.llm.adapter import DraftingAdapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +99,7 @@ def run_review(
     now: datetime | None = None,
     clock: Callable[[], datetime] = _utc_now,
     policy: Policy,
-    adapter: LiteLLMAdapter,
+    adapter: DraftingAdapter,
     console: Console = DEFAULT_CONSOLE,
     action_prompt: ActionPrompt = prompt_choice,
     message_prompt: MessagePrompt = _default_message_prompt,
@@ -219,7 +219,7 @@ def run_review(
 def main(
     argv: Sequence[str] | None = None,
     *,
-    adapter: LiteLLMAdapter | None = None,
+    adapter: DraftingAdapter | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(prog="respawned review")
     parser.add_argument("--now", type=parse_now)

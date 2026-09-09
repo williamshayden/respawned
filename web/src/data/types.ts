@@ -133,6 +133,7 @@ export interface ReviewClient {
   approve(draftId: string, reviewToken: string): Promise<UIDraft>
   reject(draftId: string, reviewToken: string): Promise<UIDraft>
   listOutbox(): Promise<OutboxItem[]>
+  exportOutbox(): Promise<Blob>
   listInbox(): Promise<InboxResult>
   resetDemo?(): Promise<void>
 }

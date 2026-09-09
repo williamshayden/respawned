@@ -13,10 +13,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
-import tempfile
-import time
 from typing import Literal
 from uuid import uuid4
 
@@ -29,6 +26,7 @@ from respawned.core.contracts import OpportunityIn
 from respawned.core.review import draft_candidate
 from respawned.db.helpers.pg_connect import create_tables
 from respawned.llm.adapter import LiteLLMAdapter
+from respawned.llm.codex import CodexRunner as Codex, DraftOutput
 
 from simulate_use_cases import Journey, NOW, POLICY, opportunity
 
@@ -52,78 +50,6 @@ class Finish(BaseModel):
     imported_source_ids: list[str]
     unresolved: list[Unresolved]
     reply_needed_ids: list[str]
-
-
-class DraftOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    body: str = Field(min_length=1, max_length=2000)
-
-
-class Codex:
-    def __init__(self, binary, scratch, *, timeout=120):
-        self.binary = shutil.which(binary) or str(Path(binary).resolve())
-        self.scratch = scratch
-        self.timeout = timeout
-        # Use Codex-owned login; never read/copy its credentials or silently use API billing.
-        self.env = {key: value for key, value in os.environ.items()
-                    if key not in {"OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"}}
-        status = subprocess.run([self.binary, "login", "status"], env=self.env,
-                                capture_output=True, text=True, timeout=15)
-        if status.returncode or "ChatGPT" not in status.stdout + status.stderr:
-            raise RuntimeError("An existing ChatGPT Codex CLI login is required")
-        self.version = subprocess.run([self.binary, "--version"], env=self.env,
-                                      capture_output=True, text=True, timeout=15,
-                                      check=True).stdout.strip()
-        self.calls = []
-
-    def native_path(self, path):
-        if os.name != "nt" and self.binary.lower().endswith(".exe"):
-            if not str(path.resolve()).startswith("/mnt/"):
-                raise ValueError("Windows Codex from WSL requires --scratch-dir on a mounted Windows drive")
-            return subprocess.run(["wslpath", "-w", str(path.resolve())], capture_output=True,
-                                  text=True, check=True, timeout=10).stdout.strip()
-        return str(path.resolve())
-
-    def ask(self, prompt, output_type, evidence):
-        evidence.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="respawned-agent-", dir=self.scratch) as folder:
-            directory = Path(folder)
-            schema, output = directory / "schema.json", directory / "answer.json"
-            schema.write_text(json.dumps(output_type.model_json_schema()), encoding="utf-8")
-            command = [self.binary, "-a", "never", "exec", "--ignore-user-config", "--ephemeral",
-                       "--skip-git-repo-check", "--sandbox", "read-only", "--json", "--color", "never",
-                       "-C", self.native_path(directory), "--output-schema", self.native_path(schema),
-                       "--output-last-message", self.native_path(output), "-c", 'web_search="disabled"']
-            for feature in ("plugins", "apps", "hooks", "memories", "shell_tool"):
-                command.extend(["--disable", feature])
-            started = time.monotonic()
-            try:
-                completed = subprocess.run(command + ["-"], input=prompt, capture_output=True,
-                                           text=True, encoding="utf-8", env=self.env, timeout=self.timeout)
-            except subprocess.TimeoutExpired as exc:
-                for suffix, partial in ((".jsonl", exc.stdout), (".stderr.txt", exc.stderr)):
-                    if isinstance(partial, bytes):
-                        partial = partial.decode("utf-8", errors="replace")
-                    evidence.with_suffix(suffix).write_text(partial or "", encoding="utf-8")
-                raise RuntimeError(f"Codex exceeded {self.timeout}s; partial evidence saved at {evidence}") from exc
-            evidence.with_suffix(".jsonl").write_text(completed.stdout, encoding="utf-8")
-            evidence.with_suffix(".stderr.txt").write_text(completed.stderr, encoding="utf-8")
-            if completed.returncode:
-                raise RuntimeError(f"Codex exited {completed.returncode}; see {evidence.with_suffix('.stderr.txt')}")
-            events = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
-            prohibited = {"command_execution", "mcp_tool_call", "web_search", "file_change"}
-            if any(event.get("item", {}).get("type") in prohibited for event in events):
-                raise RuntimeError("Unexpected native tool use; this simulation only permits the host tool loop")
-            # The CLI emits error events during recoverable transport retries.
-            # Only a successful terminal event can certify a completed result.
-            if (not events or events[-1].get("type") != "turn.completed"
-                    or any(event.get("type") == "turn.failed" for event in events)):
-                raise RuntimeError("Codex did not complete a successful turn")
-            answer = output_type.model_validate_json(output.read_text(encoding="utf-8-sig"))
-            self.calls.append({"seconds": round(time.monotonic() - started, 3),
-                               "usage": [event.get("usage") for event in events
-                                         if event.get("type") == "turn.completed"]})
-            return answer
 
 
 class ReplayCodex:

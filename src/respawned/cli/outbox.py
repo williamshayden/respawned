@@ -1,56 +1,22 @@
 """Export delivery reservations from the generic outbox."""
 
 import argparse
-import csv
-import json
 from collections.abc import Sequence
-from datetime import UTC
 from pathlib import Path
 
-from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from respawned.core.outbox import list_outbox_rows, render_outbox_csv
 from respawned.db.helpers.pg_connect import get_engine
-
-CSV_FIELDS = (
-    "id",
-    "draft_id",
-    "contact_key",
-    "contact_address",
-    "contact_name",
-    "channel",
-    "opportunity_ids",
-    "body",
-    "status",
-    "authorization_mode",
-    "created_at",
-    "sent_at",
-)
 
 
 def export_outbox(connection: Connection, path: str | Path) -> int:
-    """Write every outbox row to a deterministic CSV ordered by stable ID."""
-    rows = (
-        connection.execute(
-            text(f"SELECT {', '.join(CSV_FIELDS)} FROM outbox ORDER BY id")
-        )
-        .mappings()
-        .all()
-    )
+    """Write every outbox row to the shared, spreadsheet-safe CSV format."""
+    rows = list_outbox_rows(connection)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("w", newline="", encoding="utf-8") as output:
-        writer = csv.DictWriter(output, fieldnames=CSV_FIELDS)
-        writer.writeheader()
-        for row in rows:
-            values = dict(row)
-            for field in ("created_at", "sent_at"):
-                if values[field] is not None:
-                    values[field] = values[field].astimezone(UTC)
-            values["opportunity_ids"] = json.dumps(
-                values["opportunity_ids"], separators=(",", ":")
-            )
-            writer.writerow(values)
+        output.write(render_outbox_csv(rows))
     return len(rows)
 
 

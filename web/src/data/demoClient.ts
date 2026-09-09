@@ -252,6 +252,9 @@ export function createDemoClient(storage: StorageLike | null = defaultStorage())
       const current = read()
       return structuredClone(current.outbox.map((item) => ({ ...item, record_refs: recordReferences(current, item.opportunity_ids) })))
     },
+    async exportOutbox() {
+      throw new ClientError('Exports require a connected engine.')
+    },
     async listInbox() {
       return structuredClone(demoInbox(read()))
     },
@@ -260,4 +263,3 @@ export function createDemoClient(storage: StorageLike | null = defaultStorage())
     },
   }
 }
-

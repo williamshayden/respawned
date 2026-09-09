@@ -80,11 +80,11 @@ export function ReviewPanel(props: Props) {
         </div>}
       </section>
     </div>
-    <footer className="decision-bar"><p>{dirty ? 'Save your changes before approval.' : props.config?.policy_mode === 'automatic' ? 'Review actions are unavailable under automatic policy.' : 'Approval adds this draft to the unsent outbox.'}</p>
+    <footer className="decision-bar"><p>{dirty ? 'Save your changes before approval.' : 'Approval adds this draft to the unsent outbox.'}</p>
       <div className="decision-buttons">
-        <button className="button" onClick={props.onReject} disabled={!pending || dirty || !!busy || props.config?.policy_mode !== 'human'}><X size={18} />Reject</button>
+        <button className="button" onClick={props.onReject} disabled={!pending || dirty || !!busy}><X size={18} />Reject</button>
         <button className="button" onClick={props.onSkip} disabled={!!busy}><SkipForward size={18} />Skip</button>
-        <button className="button primary" onClick={props.onApprove} disabled={!canReview || dirty || invalid || !!busy || props.config?.policy_mode !== 'human'}>
+        <button className="button primary" onClick={props.onApprove} disabled={!canReview || dirty || invalid || !!busy}>
           {busy === 'Approving' ? <LoaderCircle size={17} className="spin" /> : null}Approve to outbox<ArrowRight size={19} />
         </button>
       </div>

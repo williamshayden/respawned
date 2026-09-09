@@ -90,6 +90,11 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Selected-record drafting materializes a candidate without replacing the
+-- published CLI queue. Existing runs retain their original queue semantics.
+ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS scope
+    TEXT NOT NULL DEFAULT 'queue' CHECK (scope IN ('queue', 'selection'));
+
 CREATE TABLE IF NOT EXISTS candidates (
     id                      UUID PRIMARY KEY,
     sync_run_id             UUID NOT NULL REFERENCES sync_runs(id),

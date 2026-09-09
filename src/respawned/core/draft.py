@@ -7,7 +7,7 @@ from respawned.core.helpers.validate import (
     ensure_opportunity_is_contactable,
     validate_draft,
 )
-from respawned.llm.adapter import ChatMessage, LiteLLMAdapter
+from respawned.llm.adapter import ChatMessage, DraftingAdapter
 
 
 _SYSTEM_PROMPT = """\
@@ -77,7 +77,7 @@ def draft_follow_up(
     payload: DraftPayload,
     *,
     opportunity_status: str,
-    adapter: LiteLLMAdapter,
+    adapter: DraftingAdapter,
 ) -> str:
     """Generate, sign, and validate copy for a contactable opportunity."""
     ensure_opportunity_is_contactable(opportunity_status)

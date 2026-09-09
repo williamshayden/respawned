@@ -1,5 +1,12 @@
 # Quality review
 
+> Historical review log. The dated findings, test counts, and remaining priorities
+> below describe their original commits, not the current Respawned branch.
+> Contactless tracking, configurable workspaces, and the bundled UI have since
+> been implemented. See the [current application boundary](WEB_UI.md#shared-application-boundary)
+> and [root documentation](../README.md) for current behavior. This file is not
+> evidence that the current branch has been published or released.
+
 September 9 publication qualification supersedes the earlier verification counts:
 [V1 release record](V1_RELEASE.md), **386 passed with Docker included**, installed
 wheel/sdist checks, and isolated persistence/restore verification. Earlier sections

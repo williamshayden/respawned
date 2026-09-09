@@ -16,7 +16,7 @@ from respawned.core.review import (
 )
 from respawned.core.sync import sync_candidates
 from respawned.core.time import aware_utc
-from respawned.llm.adapter import LiteLLMAdapter
+from respawned.llm.adapter import DraftingAdapter
 
 
 def utc_now() -> datetime:
@@ -43,7 +43,7 @@ def process_candidates(
     engine: Engine,
     *,
     policy: Policy,
-    adapter: LiteLLMAdapter,
+    adapter: DraftingAdapter,
     limit: int = 10,
     clock: Callable[[], datetime] = utc_now,
 ) -> ProcessResult:

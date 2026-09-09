@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { accessHeaders, type ReviewAccess } from './auth'
 
 export interface Workspace {
   id: string
@@ -11,9 +12,9 @@ export interface Workspace {
 export type WorkspaceInput = Pick<Workspace, 'name' | 'description' | 'kinds'>
 export interface WorkspaceList { items: Workspace[]; available_kinds: string[]; scope: 'shared_engine' }
 
-export async function workspaceRequest<T>(token: string, path = '', method = 'GET', body?: WorkspaceInput): Promise<T> {
+export async function workspaceRequest<T>(token: ReviewAccess, path = '', method = 'GET', body?: WorkspaceInput): Promise<T> {
   const response = await fetch(`/v1/ui/workspaces${path}`, {
-    method, headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    method, headers: { ...accessHeaders(token), ...(body ? { 'Content-Type': 'application/json' } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
   })
   if (response.status === 204) return undefined as T
@@ -22,7 +23,7 @@ export async function workspaceRequest<T>(token: string, path = '', method = 'GE
   return payload as T
 }
 
-export function useWorkspaces(token: string) {
+export function useWorkspaces(token: ReviewAccess) {
   const [data, setData] = useState<WorkspaceList>({ items: [], available_kinds: [], scope: 'shared_engine' })
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)

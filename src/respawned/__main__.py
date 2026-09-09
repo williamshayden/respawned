@@ -49,6 +49,11 @@ def _configure_outbox(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _configure_ui(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--port", type=int, default=os.getenv("APP_PORT", "8000"))
+    parser.add_argument("--no-open", action="store_true", help="Print the one-use local launch link without opening a browser")
+
+
 def _configure_sync(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int)
@@ -72,6 +77,7 @@ COMMANDS = (
     CommandSpec("init", "Initialize or update the application schema"),
     CommandSpec("demo", "Load the bundled legacy demo data", _configure_demo),
     CommandSpec("serve", "Run the bundled browser UI and local workflow API", _configure_serve),
+    CommandSpec("ui", "Open the local browser UI without copying an access token", _configure_ui),
     CommandSpec("sync", "Refresh the prioritized follow-up candidates", _configure_sync),
     CommandSpec("review", "Review the prioritized follow-up candidates", _configure_review),
     CommandSpec("inbox", "Inspect unanswered replies independently of outreach cooldown", _configure_inbox),
@@ -142,6 +148,12 @@ def _outbox(args: argparse.Namespace) -> None:
     outbox_main(["--path", os.fspath(args.path)])
 
 
+def _ui(args: argparse.Namespace) -> None:
+    from respawned.cli.browser import launch_ui
+
+    launch_ui(args.port, open_browser=not args.no_open)
+
+
 def _sync(args: argparse.Namespace) -> int:
     from respawned.cli.sync import main as sync_main
 
@@ -187,6 +199,7 @@ DEFAULT_HANDLERS: Mapping[str, CommandHandler] = {
     "init": _init,
     "demo": _demo,
     "serve": _serve,
+    "ui": _ui,
     "sync": _sync,
     "review": _review,
     "inbox": _inbox,

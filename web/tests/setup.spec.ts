@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import type { ModelStatus, SetupStatus } from '../src/data/setup'
 
 const access = 'setup-test-review-access'
-const initialModel: ModelStatus = { source: 'environment', base_url: 'http://litellm:4000', model_alias: 'respawned-default', timeout_seconds: 60, api_key_env: 'LITELLM_MASTER_KEY', key_configured: false, ready: false, verified: false, error: null }
+const initialModel: ModelStatus = { backend: 'openai_compatible', source: 'environment', base_url: 'http://litellm:4000', model_alias: 'respawned-default', timeout_seconds: 60, api_key_env: 'LITELLM_MASTER_KEY', key_configured: false, login_ready: false, ready: false, verified: false, error: null }
 
 async function environment(page: Page, databaseReady = true) {
   let model = structuredClone(initialModel)
@@ -13,6 +13,7 @@ async function environment(page: Page, databaseReady = true) {
     const path = new URL(request.url()).pathname
     const method = request.method()
     if (path === '/v1/setup/bootstrap') return route.fulfill({ json: { review_enabled: true } })
+    if (path === '/v1/ui/session' && method === 'GET') return route.fulfill({ json: { authenticated: false, local_launcher: false } })
     if (request.headers().authorization !== `Bearer ${access}`) return route.fulfill({ status: 401, json: { detail: 'Review access token was not accepted' } })
     if (method !== 'GET') writes.push({ path, body: request.postDataJSON() })
     if (path === '/v1/ui/config') return route.fulfill({ json: { policy_mode: 'human', cooldown_hours: 48, max_draft_characters: 320, source_freshness: 'unknown' } })
@@ -27,7 +28,9 @@ async function environment(page: Page, databaseReady = true) {
       return route.fulfill({ json: body })
     }
     if (path === '/v1/ui/setup/model' && method === 'PUT') {
-      model = { ...model, ...request.postDataJSON(), source: 'saved', ready: true, key_configured: true }
+      const payload = request.postDataJSON()
+      model = { ...model, ...payload, source: 'saved', ready: true,
+        key_configured: payload.backend !== 'codex_cli', login_ready: payload.backend === 'codex_cli' }
       return route.fulfill({ json: model })
     }
     if (path === '/v1/ui/import' && method === 'POST') {
@@ -57,7 +60,7 @@ test('starts empty with server setup, and review access clears on reload', async
   await expect(page.getByRole('heading', { name: 'Setup', exact: true })).toBeVisible()
   await expect(page.locator('.record-row')).toHaveCount(0)
   await expect(page.getByText(/fictional|demo workspace/i)).toHaveCount(0)
-  await page.getByText('Where do I get the token?', { exact: true }).click()
+  await page.getByText('Using a remote server or API client?', { exact: true }).click()
   await expect(page.getByText(/Respawned manages that version check automatically/)).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('setup-access-desktop.png') })
   await connect(page)
@@ -84,7 +87,7 @@ test('saves model configuration without inference and imports only after explici
   expect(writes).toHaveLength(0)
   await page.getByRole('button', { name: 'Save model settings', exact: true }).click()
   await expect(page.getByText('Model settings saved. No model request was made.', { exact: true })).toBeVisible()
-  expect(writes).toEqual([{ path: '/v1/ui/setup/model', body: { base_url: 'http://localhost:11434/v1', model_alias: 'local-writing-model', timeout_seconds: 45, api_key_env: 'RESPAWNED_MODEL_API_KEY' } }])
+  expect(writes).toEqual([{ path: '/v1/ui/setup/model', body: { backend: 'openai_compatible', base_url: 'http://localhost:11434/v1', model_alias: 'local-writing-model', timeout_seconds: 45, api_key_env: 'RESPAWNED_MODEL_API_KEY' } }])
   await page.screenshot({ path: testInfo.outputPath('setup-model-desktop.png') })
   const payload = { opportunities: [{ id: 'source-42', kind: 'partnership', title: 'Workshop planning', status: 'open', created_at: '2026-09-01T09:00:00Z' }], activities: [] }
   await page.getByLabel('Or paste your import JSON').fill(JSON.stringify(payload))
@@ -117,5 +120,38 @@ test('mobile setup keeps configuration and import controls reachable without ove
   const dimensions = await page.evaluate(() => ({ width: innerWidth, content: document.documentElement.scrollWidth }))
   expect(dimensions.content).toBeLessThanOrEqual(dimensions.width)
   await expect(page.getByRole('button', { name: 'Import records', exact: true })).toBeDisabled()
+  expect(unexpected).toEqual([])
+})
+
+test('saves the Codex CLI backend without an API URL, API key, or inference request', async ({ page }) => {
+  const { writes, unexpected } = await environment(page)
+  await page.goto('/')
+  await connect(page)
+  const modelSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Model backend', exact: true }) })
+  await page.getByRole('combobox', { name: 'Backend', exact: true }).selectOption('codex_cli')
+  await expect(page.getByLabel('API base URL')).toHaveCount(0)
+  await expect(page.getByLabel('Server credential variable')).toHaveCount(0)
+  await expect(page.getByLabel('Codex model (optional)')).toHaveValue('')
+  await expect(page.getByLabel('Codex model (optional)')).not.toHaveAttribute('required')
+  await expect(page.getByLabel('Timeout (seconds)')).toHaveValue('120')
+  await expect(modelSection.getByText(/Run codex login with ChatGPT on the server/)).toBeVisible()
+  expect(writes).toEqual([])
+
+  await page.getByRole('button', { name: 'Save model settings', exact: true }).click()
+  await expect(page.getByText('Model settings saved. No model request was made.', { exact: true })).toBeVisible()
+  const expectedWrite = { path: '/v1/ui/setup/model', body: {
+    backend: 'codex_cli', base_url: '', model_alias: '', timeout_seconds: 120,
+    api_key_env: 'LITELLM_MASTER_KEY',
+  } }
+  expect(writes).toEqual([expectedWrite])
+  await expect(modelSection.getByText('Configured', { exact: true })).toBeVisible()
+  await expect(modelSection.getByText(/Codex CLI and its ChatGPT login are available on the server/)).toBeVisible()
+  await expect(modelSection.getByText(/Using saved model settings/)).toBeVisible()
+
+  await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+  await expect(page.getByRole('combobox', { name: 'Backend', exact: true })).toHaveValue('codex_cli')
+  await expect(modelSection.getByText('Configured', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('API base URL')).toHaveCount(0)
+  expect(writes).toEqual([expectedWrite])
   expect(unexpected).toEqual([])
 })

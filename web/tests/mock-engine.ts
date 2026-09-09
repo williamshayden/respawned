@@ -13,7 +13,8 @@ export async function mockEngine(page: Page) {
     const kind = url.searchParams.get('workspace_id')
     try {
       let json: unknown
-      if (path === '/config') json = await client.config()
+      if (path === '/session') json = { authenticated: false, local_launcher: false }
+      else if (path === '/config') json = await client.config()
       else if (path === '/workspaces') json = { items: [...new Set(createFixtures().map(record => record.kind))].map(kind => ({ id: kind, name: kind, description: '', kinds: [kind], created_at: '', updated_at: '' })), available_kinds: [], scope: 'shared_engine' }
       else if (path === '/setup') json = {
         database: { ready: true }, review: { authorized: true, token_storage: 'memory' },

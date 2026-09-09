@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 import math
 import os
-from typing import Any
+from typing import Any, Protocol
 
 
 DEFAULT_PROXY_URL = "http://litellm:4000"
@@ -13,6 +13,12 @@ DEFAULT_TIMEOUT_SECONDS = 60.0
 
 CompletionFunction = Callable[..., Any]
 ChatMessage = Mapping[str, str]
+
+
+class DraftingAdapter(Protocol):
+    """Provider-independent text generation; the core owns validation and review."""
+
+    def complete(self, messages: Sequence[ChatMessage]) -> str: ...
 
 
 class LLMAdapterError(RuntimeError):

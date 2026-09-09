@@ -8,7 +8,7 @@ import os
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
@@ -19,6 +19,7 @@ from respawned.api.ui_models import (
 )
 from respawned.core.inbox import list_reply_inbox
 from respawned.core.policy import Policy
+from respawned.core.outbox import list_outbox_rows
 from respawned.core.review import (
     ReviewBlockedError, approve_draft, draft_candidate,
     reject_draft, update_draft_message,
@@ -28,14 +29,22 @@ from respawned.core.ui_queries import (
     draft_view, inbox_review_targets, list_ui_records, load_ui_draft, record_references,
 )
 from respawned.core.workspaces import load_workspace_kinds
-from respawned.llm.adapter import LiteLLMAdapter
+from respawned.llm.adapter import DraftingAdapter
 
 
 def require_review_authorization(
+    request: Request,
     authorization: Annotated[str | None, Header()] = None,
 ) -> None:
+    from respawned.api.session import local_session
+
+    manager = local_session(request)
+    if not authorization and manager is not None and manager.authenticated(request):
+        return
     expected = os.environ.get("RESPAWNED_REVIEW_TOKEN", "").strip()
     if not expected:
+        if manager is not None:
+            raise HTTPException(401, "Open the launch link from respawned ui to connect")
         raise HTTPException(404, "Review interface is disabled")
     scheme, _, supplied = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not hmac.compare_digest(
@@ -45,7 +54,7 @@ def require_review_authorization(
                             headers={"WWW-Authenticate": "Bearer"})
 
 
-def get_draft_adapter_factory() -> Callable[[], LiteLLMAdapter]:
+def get_draft_adapter_factory() -> Callable[[], DraftingAdapter]:
     """Resolve the model only for a new draft, never for loading existing copy."""
     from respawned.api.app import get_workflow_adapter
 
@@ -163,7 +172,7 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency)
     @router.post("/records/{record_id:path}/draft", response_model=UIDraft)
     def create_draft(
         record_id: str, connection: ConnectionDep, policy: PolicyDep, clock: ClockDep,
-        adapter_factory: Annotated[Callable[[], LiteLLMAdapter], Depends(get_draft_adapter_factory)],
+        adapter_factory: Annotated[Callable[[], DraftingAdapter], Depends(get_draft_adapter_factory)],
     ) -> UIDraft:
         if not connection.execute(text("SELECT 1 FROM opportunities WHERE id = :id"),
                                   {"id": record_id}).scalar_one_or_none():
@@ -230,12 +239,15 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency)
     @router.get("/outbox", response_model=UIOutboxList)
     def outbox(connection: ConnectionDep,
                limit: Annotated[int, Query(ge=1, le=200)] = 50,
-               offset: Annotated[int, Query(ge=0)] = 0) -> UIOutboxList:
-        rows = connection.execute(text("""
-            SELECT id, draft_id, contact_key, contact_address, contact_name, channel,
-                   opportunity_ids, body, status, authorization_mode, created_at, sent_at
-            FROM outbox ORDER BY id DESC LIMIT :limit OFFSET :offset
-        """), {"limit": limit + 1, "offset": offset}).mappings().all()
+               offset: Annotated[int, Query(ge=0)] = 0,
+               workspace_id: UUID | None = None) -> UIOutboxList:
+        kinds = None
+        if workspace_id is not None:
+            kinds = load_workspace_kinds(connection, workspace_id)
+            if kinds is None:
+                raise HTTPException(404, "Workspace not found")
+        rows = list_outbox_rows(connection, limit=limit + 1, offset=offset,
+                                newest_first=True, kinds=kinds)
         refs = record_references(connection, (record_id for row in rows[:limit]
                                               for record_id in row["opportunity_ids"]))
         return UIOutboxList(items=[dict(

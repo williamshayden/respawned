@@ -7,6 +7,7 @@ test.describe.configure({ mode: 'serial' })
 
 interface MockWorkspace {
   records: UIRecord[]
+  policyMode?: 'human' | 'automatic'
   details?: UIRecord[]
   inbox?: InboxItem[]
   outbox?: OutboxItem[]
@@ -38,6 +39,10 @@ async function connectMock(page: Page, workspace: MockWorkspace): Promise<Reques
     const method = request.method()
     const body: unknown = request.postData() ? request.postDataJSON() : null
     requests.push({ method, path, query: url.search, body })
+    if (path === '/session' && method === 'GET') {
+      await route.fulfill({ json: { authenticated: false, local_launcher: false } })
+      return
+    }
     if (request.headers().authorization !== 'Bearer regression-test-token') {
       await route.fulfill({ status: 401, json: { detail: 'Missing test authorization' } })
       return
@@ -47,7 +52,7 @@ async function connectMock(page: Page, workspace: MockWorkspace): Promise<Reques
     } else if (path === '/setup') {
       await route.fulfill({ json: { database: { ready: true }, review: { authorized: true }, model: { base_url: 'http://127.0.0.1:4000', model_alias: 'test', timeout_seconds: 60, api_key_env: 'LITELLM_MASTER_KEY', source: 'environment', ready: false, key_configured: false }, outbox: { mode: 'export_only', delivery_enabled: false }, sources: { mode: 'import' } } })
     } else if (path === '/config') {
-      await route.fulfill({ json: { policy_mode: 'human', cooldown_hours: 48, max_draft_characters: 320, source_freshness: 'unknown' } })
+      await route.fulfill({ json: { policy_mode: workspace.policyMode ?? 'human', cooldown_hours: 48, max_draft_characters: 320, source_freshness: 'unknown' } })
     } else if (path === '/records') {
       const offset = Number(url.searchParams.get('offset') ?? 0)
       await route.fulfill({ json: { items: offset ? workspace.nextPage ?? [] : workspace.records, total: workspace.total ?? workspace.records.length, has_more: !offset && (workspace.hasMore ?? false), as_of: DEMO_AS_OF } })
@@ -162,6 +167,37 @@ function invalidRecord(): UIRecord {
   return sampleRecord('invalid-pending', 'Invalid Draft Contact', {
     next_action: 'blocked', reason: { code: 'invalid_draft', label: 'Draft needs repair', detail: 'This persisted draft exceeds the current length limit.' },
     draft: { id: 'draft-invalid', body: 'x'.repeat(321), status: 'pending', review_token: 'invalid-version', validation_errors: ['Draft exceeds 320 characters.'], outbox_id: null },
+  })
+}
+
+test('priority preserves the server queue order instead of ranking records again', async ({ page }) => {
+  const reply = sampleRecord('urgent-reply', 'Urgent Reply Contact', { next_action: 'reply', score: 10 })
+  const followUp = sampleRecord('higher-score', 'Higher Score Contact', { next_action: 'follow_up', score: 100 })
+  await connectMock(page, { records: [reply, followUp] })
+  await expect(page.locator('.record-row').first()).toContainText('Urgent Reply Contact')
+  await expect(panel(page).getByRole('heading', { name: 'Urgent Reply Contact', exact: true })).toBeVisible()
+})
+
+for (const action of ['approve', 'reject'] as const) {
+  test(`explicit human ${action} remains available under automatic processing policy`, async ({ page }, testInfo) => {
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    page.on('console', message => { if (['error', 'warning'].includes(message.type())) errors.push(message.text()) })
+    const record = sampleRecord('manual-review', 'Human Review Contact', {
+      draft: { id: 'manual-draft', body: 'Hi, is there an update on the next steps?', status: 'pending', review_token: 'manual-version', validation_errors: [], outbox_id: null },
+    })
+    const requests = await connectMock(page, { records: [record], policyMode: 'automatic' })
+    await expect(page).toHaveTitle('Respawned')
+    await expect(page.locator('vite-error-overlay')).toHaveCount(0)
+    await expect(page.getByText('Automatic policy', { exact: true })).toBeVisible()
+    const control = page.getByRole('button', { name: action === 'approve' ? 'Approve to outbox' : 'Reject', exact: true })
+    await expect(control).toBeEnabled()
+    if (action === 'approve') await page.screenshot({ path: testInfo.outputPath('automatic-policy-human-review.png') })
+    await control.click()
+    await expect(page.getByRole('status')).toContainText(action === 'approve' ? 'Added to outbox' : 'Draft rejected')
+    expect(requests.find(request => request.path.endsWith(`/${action}`))?.body).toEqual({ review_token: 'manual-version' })
+    expect(record.draft?.status).toBe(action === 'approve' ? 'approved' : 'rejected')
+    expect(errors).toEqual([])
   })
 }
 

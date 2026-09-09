@@ -1,22 +1,24 @@
+import { useState } from 'react'
 import { ArrowUpRight, Download, ExternalLink, Mail, ShieldCheck } from 'lucide-react'
 import type { InboxItem, OutboxItem, UIConfig, UIRecord } from '../data/types'
 import { contextLine, safeSource, shortDate, type Page } from '../presentation'
 
-function downloadOutbox(items: OutboxItem[]) {
-  const cell = (value: unknown) => {
-    let text = String(value ?? '')
-    if (/^[=+@\-\t\r]/.test(text)) text = `'${text}`
-    return `"${text.replaceAll('"', '""')}"`
-  }
-  const fields: (keyof OutboxItem)[] = ['id', 'draft_id', 'contact_address', 'channel', 'body', 'status', 'authorization_mode', 'created_at', 'sent_at']
-  const rows = [fields.join(','), ...items.map(item => fields.map(field => cell(item[field])).join(','))]
-  const url = URL.createObjectURL(new Blob([rows.join('\r\n')], { type: 'text/csv;charset=utf-8' }))
+function downloadOutbox(exported: Blob) {
+  const url = URL.createObjectURL(exported)
   const link = document.createElement('a'); link.href = url; link.download = 'respawned-outbox.csv'; link.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-interface Props { page: Page; records: UIRecord[]; outbox: OutboxItem[]; inbox: InboxItem[]; inboxHasMore: boolean; config: UIConfig | null; onSelect: (id: string) => void }
-export function AuxiliaryViews({ page, records, outbox, inbox, inboxHasMore, config, onSelect }: Props) {
+interface Props { page: Page; records: UIRecord[]; outbox: OutboxItem[]; inbox: InboxItem[]; inboxHasMore: boolean; config: UIConfig | null; onSelect: (id: string) => void; onExport: () => Promise<Blob> }
+export function AuxiliaryViews({ page, records, outbox, inbox, inboxHasMore, config, onSelect, onExport }: Props) {
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const exportOutbox = async () => {
+    setExporting(true); setExportError(null)
+    try { downloadOutbox(await onExport()) }
+    catch (error) { setExportError(error instanceof Error ? error.message : 'Could not export the outbox. Please try again.') }
+    finally { setExporting(false) }
+  }
   if (page === 'Policy') return <div className="auxiliary-view policy-view"><div className="aux-heading"><ShieldCheck size={25} /><div><h2>Effective policy</h2><p>These rules apply across your workspace.</p></div></div>
     <dl className="policy-list"><div><dt>Review mode</dt><dd>{!config ? 'Unavailable' : config.policy_mode === 'human' ? 'Human review' : 'Automatic authorization'}</dd></div>
       <div><dt>Contact cooldown</dt><dd>{config?.cooldown_hours ?? '—'} hours</dd></div><div><dt>Draft length</dt><dd>{config?.max_draft_characters ?? '—'} characters maximum</dd></div>
@@ -24,7 +26,8 @@ export function AuxiliaryViews({ page, records, outbox, inbox, inboxHasMore, con
     <p className="subtle-note">Eligibility and ranking follow the engine policy. Changing context does not change approval authority.</p>
   </div>
   if (page === 'Outbox') return <div className="auxiliary-view"><div className="aux-heading"><div><h2>Your outbox</h2><p>Approved messages and their recorded status.</p></div>
-    <button className="button" onClick={() => downloadOutbox(outbox)} disabled={!outbox.length}><Download size={17} />Export CSV</button></div>
+    <button className="button" onClick={() => void exportOutbox()} disabled={!outbox.length || exporting}><Download size={17} />{exporting ? 'Exporting…' : 'Export CSV'}</button></div>
+    {exportError && <p className="feedback is-error" role="alert">{exportError}</p>}
     {!outbox.length ? <div className="empty-state"><Mail size={30} /><h2>Nothing in the outbox yet</h2><p>Approved drafts will appear here. Approval does not send a message.</p></div> :
       <div className="outbox-list">{outbox.map(item => <article key={item.id} className="outbox-item"><div className="outbox-item-top"><div><h3>{item.contact_name || item.contact_address}</h3><p>{item.contact_address}</p></div>
         <span className={`pill ${item.status === 'pending' ? 'teal' : ''}`}>{item.status === 'pending' ? 'Unsent' : item.status === 'sent' ? 'Sent' : 'Failed'}</span></div>

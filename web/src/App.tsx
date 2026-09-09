@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, Check, LoaderCircle, Menu, RefreshCw, UserRound, X } from 'lucide-react'
 import { createHttpClient } from './data/client'
+import { endLocalSession, isLocalSession, LOCAL_SESSION, restoreLocalSession, type ReviewAccess } from './data/auth'
 import type { RecordRef } from './data/types'
 import { useWorkspaces } from './data/workspaces'
 import { actionable, contextLine, type Page } from './presentation'
@@ -13,7 +14,7 @@ import { SetupView } from './components/SetupView'
 import { WorkspaceManager } from './components/WorkspaceManager'
 
 export default function App() {
-  const [token, setToken] = useState('')
+  const [token, setToken] = useState<ReviewAccess>(null)
   const [scope, setScope] = useState('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
@@ -29,6 +30,16 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [edits, setEdits] = useState<Record<string, LocalEdit>>({})
 
+  useEffect(() => {
+    let active = true
+    void restoreLocalSession().then(connected => {
+      if (active && connected) setToken(LOCAL_SESSION)
+    }).catch(error => {
+      if (active) review.setError(error instanceof Error ? error.message : 'Could not reconnect the browser session.')
+    })
+    return () => { active = false }
+  }, [])
+
   const workspace = workspaces.items.find(item => item.id === scope)
   const kinds = workspace?.kinds ?? []
   const scopedRecords = review.records.filter(record => !kinds.length || kinds.includes(record.kind))
@@ -42,7 +53,7 @@ export default function App() {
   const visibleRecords = scopedRecords.filter(record => (view === 'all' || actionable(record)) &&
     (channel === 'all' || record.contact?.channel === channel) &&
     [record.title, record.contact?.name, record.contact?.address, contextLine(record), record.reason.label].filter(Boolean).join(' ').toLowerCase().includes(query.toLowerCase()))
-    .sort((a, b) => sort === 'priority' ? (b.score ?? -1) - (a.score ?? -1) || a.id.localeCompare(b.id) : (b.last_contact_at ?? '').localeCompare(a.last_contact_at ?? '') || a.id.localeCompare(b.id))
+    .sort((a, b) => sort === 'priority' ? 0 : (b.last_contact_at ?? '').localeCompare(a.last_contact_at ?? '') || a.id.localeCompare(b.id))
   const selected = visibleRecords.find(record => record.id === selectedId) ?? visibleRecords[0] ?? null
   const count = scopedRecords.filter(actionable).length
   const edit = selected ? edits[selected.id] : undefined
@@ -63,9 +74,13 @@ export default function App() {
     await createHttpClient('', value).config()
     setToken(value); setScope('all'); setSelectedId(null)
   }
-  const disconnect = () => {
+  const disconnect = async () => {
     if (review.busy || Object.keys(edits).length) { review.setError('Save or discard your draft edits and wait for the current action to finish first.'); return }
-    setToken(''); setScope('all'); setSelectedId(null); setPage('Setup')
+    if (isLocalSession(token)) {
+      try { await endLocalSession() }
+      catch (error) { review.setError(error instanceof Error ? error.message : 'Could not lock access.'); return }
+    }
+    setToken(null); setScope('all'); setSelectedId(null); setPage('Setup')
   }
 
   return <div className={`app ${showDetail ? 'show-detail' : ''}`}>
@@ -116,7 +131,7 @@ export default function App() {
               review.rememberSelection(next); setSelectedId(next)
               review.setMessage('Skipped for now. Your draft stays pending.')
             }} />
-        </div> : <AuxiliaryViews page={page} records={scopedRecords} outbox={scopedOutbox} inbox={scopedInbox} inboxHasMore={!!review.inbox?.has_more} config={review.config} onSelect={async id => {
+        </div> : <AuxiliaryViews page={page} records={scopedRecords} outbox={scopedOutbox} inbox={scopedInbox} inboxHasMore={!!review.inbox?.has_more} config={review.config} onExport={() => client.exportOutbox()} onSelect={async id => {
           if (!await review.openRecord(id)) return
           setScope('all'); setView('all'); setQuery(''); setChannel('all'); select(id)
         }} />}

@@ -224,7 +224,7 @@ Candidates appear in score order. Drafts are generated lazily, so opening the qu
 
 Approval is idempotent. A database lock serializes approval for one `contact_key`, and a recent source contact or outbox reservation consumes the cooldown. The chosen channel follows `preferred_channel` when that destination exists, falls back to the other available destination, and defaults to SMS when both are present but no preference was supplied.
 
-Approve, reject, and edit actions are bound to the copy and recipient shown to the reviewer. If another reviewer changes the draft, the stale action is blocked; reopen review to inspect the current version. In-process callers must pass `expected_review_token=draft.review_token` to these services. This fingerprint detects changed content. Browser review additionally requires the separate `RESPAWNED_REVIEW_TOKEN` bearer credential; it does not use the processing token as human approval authority.
+Approve, reject, and edit actions are bound to the copy and recipient shown to the reviewer. If another reviewer changes the draft, the stale action is blocked; reopen review to inspect the current version. In-process callers must pass `expected_review_token=draft.review_token` to these services. This fingerprint detects changed content. Browser review additionally requires a local `respawned ui` session or the separate `RESPAWNED_REVIEW_TOKEN` bearer credential; it does not use the processing token as human approval authority.
 
 Human review can be toggled in a selected policy:
 
@@ -294,7 +294,7 @@ HTTP success is emitted after the ingestion transaction commits. If a transport
 failure still leaves the outcome unknown, replay the same source identities and
 payloads; do not invent new activity IDs to retry.
 
-The current HTTP service is intended for loopback development or a trusted private network. Legacy ingestion and read APIs remain unauthenticated. Browser endpoints under `/v1/ui` are disabled until `RESPAWNED_REVIEW_TOKEN` is configured and require that reviewer bearer token. Processing is independently disabled until `RESPAWNED_PROCESS_TOKEN` is configured; that credential grants policy-controlled processing, not human approval authority. A public deployment still needs authentication for all routes, tenant scoping, request limits, audit logging, and connector-specific secret management. If you deliberately change `BIND_HOST`, replace every example credential first.
+The current HTTP service is intended for loopback development or a trusted private network. Legacy ingestion and read APIs remain unauthenticated. Protected browser endpoints under `/v1/ui` require a local `respawned ui` session or a configured `RESPAWNED_REVIEW_TOKEN` Bearer credential. Processing is independently disabled until `RESPAWNED_PROCESS_TOKEN` is configured; that credential grants policy-controlled processing, not human approval authority. A public deployment still needs authentication for all routes, tenant scoping, request limits, audit logging, and connector-specific secret management. If you deliberately change `BIND_HOST`, replace every example credential first.
 
 ## Install a release artifact
 
@@ -306,7 +306,7 @@ python -m venv .venv
 python -m pip install /path/to/respawned-1.0.0-py3-none-any.whl
 respawned --version
 respawned --help
-respawned serve --host 127.0.0.1 --port 8000
+respawned ui
 ```
 
 Open [Respawned](http://127.0.0.1:8000) to configure the environment in Setup. Both wheel and
@@ -325,6 +325,14 @@ serves the bundled UI by default. Set `RESPAWNED_UI_DIST` to an absolute directo
 containing a built `index.html` to override it, or to `off` for an API-only server.
 
 ## Configure models and providers
+
+For headless Codex with your existing ChatGPT login, choose **Codex CLI** in
+Setup after installing Codex and running `codex login` on the server. No model
+API key is needed. The packaged runner is shared with the agent simulations;
+the API/CLI core still owns validation and approval. The optional server variables
+are `RESPAWNED_CODEX_BIN`, `RESPAWNED_CODEX_SCRATCH_DIR`, and (without saved
+settings) `RESPAWNED_MODEL_BACKEND=codex_cli`, `RESPAWNED_CODEX_MODEL`, and
+`RESPAWNED_CODEX_TIMEOUT_SECONDS`. See the [backend guide](docs/WEB_UI.md#connect-a-model-backend).
 
 Use **Setup → Model backend** to save an OpenAI-compatible chat-completions API
 base URL, model name or alias, timeout, and server credential variable. Settings
@@ -395,6 +403,9 @@ For a parent company with 50 teams or business units, identity and policy need a
 The review surface would also need tenant-aware RBAC, queues, audit history, and routing to the correct delivery credentials. Configuration would likely move from a single YAML file to versioned database records or a configuration service. That creates enough outcome data to evaluate policy and message quality across units without forcing every team into one definition of "follow up."
 
 ## What to build next
+
+The [current integration review](docs/INTEGRATION_REVIEW.md) records the shared-core,
+local browser session, headless Codex, and outbox checks for this implementation.
 
 The [UI guide](docs/WEB_UI.md) describes the current browser implementation.
 The [quality review](docs/QUALITY_REVIEW.md), [development handoff](docs/HANDOFF.md),

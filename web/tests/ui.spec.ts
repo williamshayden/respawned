@@ -81,6 +81,12 @@ test('unsaved copy survives switching records, and saved copy survives reload', 
 
 test('approval produces one unsent outbox entry and an accurate CSV export', async ({ page }) => {
   const copy = await page.getByRole('textbox', { name: 'Draft message' }).inputValue()
+  const serverCsv = `id,draft_id,contact_key,contact_address,contact_name,channel,opportunity_ids,body,status,authorization_mode,created_at,sent_at\r\n1,server-draft,server-contact,maya@northstar.example,Maya,email,[],"${copy}",pending,human,2026-09-09T12:00:00Z,\r\n`
+  await page.route('**/v1/ui/outbox/export?**', async route => {
+    expect(route.request().headers().authorization).toBe('Bearer browser-test-operator-token')
+    expect(new URL(route.request().url()).searchParams.get('workspace_id')).toBe('job_application')
+    await route.fulfill({ contentType: 'text/csv; charset=utf-8', body: serverCsv })
+  })
   await page.getByRole('button', { name: 'Approve to outbox' }).click()
   await expect(page.getByRole('status')).toContainText('Added to outbox')
   await navigate(page, 'Outbox')
@@ -94,9 +100,7 @@ test('approval produces one unsent outbox entry and an accurate CSV export', asy
   const file = await download.path()
   expect(file).not.toBeNull()
   const csv = await readFile(file!, 'utf8')
-  expect(csv).toContain('maya@northstar.example')
-  expect(csv).toContain('"pending"')
-  expect(csv).toContain(copy)
+  expect(csv).toBe(serverCsv)
   await navigate(page, 'Reply inbox')
   await expect(page.getByRole('button').filter({ hasText: 'Jordan Ellis' })).toBeVisible()
 })
@@ -112,6 +116,22 @@ test('inbox shows human replies during cooldown and navigation resolves to the r
   await navigate(page, 'Policy')
   await expect(page.getByRole('heading', { name: 'Effective policy' })).toBeVisible()
   await expect(page.getByText('48 hours', { exact: true })).toBeVisible()
+})
+
+test('a live request failure during export keeps the unsent reservation visible', async ({ page }) => {
+  await page.getByRole('button', { name: 'Approve to outbox' }).click()
+  await expect(page.getByRole('status')).toContainText('Added to outbox')
+  await navigate(page, 'Outbox')
+  const downloads: string[] = []
+  page.on('download', item => downloads.push(item.suggestedFilename()))
+  await page.route('**/v1/ui/outbox/export?**', route => route.fulfill({
+    status: 503, json: { detail: 'Database unavailable' },
+  }))
+  await page.getByRole('button', { name: 'Export CSV', exact: true }).click()
+  await expect(page.getByRole('alert')).toHaveText('Database unavailable')
+  await expect(page.getByRole('button', { name: 'Export CSV', exact: true })).toBeEnabled()
+  await expect(page.getByText('Unsent', { exact: true })).toBeVisible()
+  expect(downloads).toEqual([])
 })
 
 test('a live request failure stays live and never replaces records with the demo', async ({ page }) => {

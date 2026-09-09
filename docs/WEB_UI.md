@@ -13,65 +13,100 @@ it is historical evidence, not a publication record for the current Respawned
 artifacts. The UI does not connect to a mailbox, refresh an external source, or
 deliver messages. Connected records report source freshness as unknown.
 
+## Shared application boundary
+
+The browser is an HTTP client of the same Python application services used by
+the CLI. It holds selection, search, display ordering, and unsaved text locally;
+records, workspaces, configuration, draft versions, and outbox state come from
+the API. Browser length checks provide immediate feedback. The server validates
+the persisted message and current record again before accepting edits or review.
+
+| Operation | Browser/API entry point | Shared application service / CLI |
+| --- | --- | --- |
+| Import source facts | `POST /v1/ui/import`, `POST /v1/ingest` | `core.ingest.ingest_records`; in-process adapters use the same validation |
+| Refresh candidates | `POST /v1/ui/sync` | `core.sync.sync_candidates`; `respawned sync` |
+| Read queue and evidence | `GET /v1/ui/records`, `GET /v1/ui/inbox` | `core.ui_queries` projects canonical reduction and candidate results; `core.inbox` also powers `respawned inbox` |
+| Generate, edit, approve, reject | `/v1/ui/records/{id}/draft`, `/v1/ui/drafts/{id}/…` | `core.review`; `respawned review` |
+| Configure model and workspaces | `/v1/ui/setup/model`, `/v1/ui/workspaces` | `core.settings` and `core.workspaces`; saved settings also resolve for CLI and API processing |
+| Read and export reservations | `/v1/ui/outbox`, `/v1/ui/outbox/export`, `/v1/outbox/export` | `core.outbox`; `respawned outbox` |
+
+The API owns eligibility, contact grouping, cooldowns, default queue priority,
+validation, and authorization provenance. The browser preserves the server's
+priority order. Explicit browser approval is human authorization even when the
+operator configured automatic processing; it never changes that processing policy.
+Approving or rejecting submits the displayed draft version for a transactional
+server check, without the browser constructing a reservation.
+
+Generating one selected draft recomputes eligibility against the whole engine
+but materializes only that candidate. Its `selection` sync run does not replace
+the last published `queue` sync or move an existing candidate out of it, so
+switching from browser drafting to CLI review retains the queue. A subsequent
+explicit sync publishes a new queue normally. Existing databases receive the
+additive `sync_runs.scope` column during initialization; historical runs retain
+their queue classification. Run `respawned sync` once to publish a fresh queue
+after upgrading from a build that did not distinguish selected drafting.
+
+Workspaces and model configuration have API operations without a dedicated CLI
+subcommand. The UI calls those operations directly; it contains no alternative
+storage or evaluation engine. Fixtures and the simulated review client are
+test utilities and are not imported by the application entry point.
+
 ## Start the application
 
-From the repository root:
+Configure PostgreSQL using the [root quickstart](../README.md#quickstart), then:
 
 ```bash
 uv sync --frozen
-uv run respawned serve --host 127.0.0.1 --port 8000
+uv run --env-file .env respawned ui
 ```
 
-After installing a wheel or source distribution, run the same `respawned serve`
-command without `uv run`.
+After installing a wheel or source distribution, set the database environment
+and run `respawned ui` directly. The CLI binds `127.0.0.1:8000` and opens the
+bundled UI with an authenticated session. No review token needs to be generated
+or copied. Use `--port 8001` for another port, or `--no-open` to print a link
+for a browser on this machine. The launcher checks the port before printing it.
 
-Open [Respawned](http://127.0.0.1:8000). It opens **Setup**, where you can unlock
-review access, configure a model, import records, and see how the outbox works.
-Normal startup does not create sample records or substitute browser data when
-the engine is unavailable. The initial page loads without PostgreSQL; saving
-settings, workspaces, and records requires the database.
+The one-use link expires after five minutes. The browser immediately removes
+its secret fragment and exchanges it for an HttpOnly, SameSite=Strict cookie.
+The session survives reloads for 12 hours, until **Lock access**, or until the
+server stops. Restart `respawned ui` for a fresh link after expiry or logout.
+This mode is one local operator and one server process; it validates the exact
+host and origin and requires a same-origin header for browser mutations.
 
-## Connect a local engine
+The interface opens **Setup**. Configure a model, create workspaces, and import
+your records there. Normal startup creates no sample records. The initial page
+can load without PostgreSQL; durable configuration and records require it.
 
-First configure the database and API using the [root quickstart](../README.md#quickstart).
-Set `RESPAWNED_REVIEW_TOKEN` in the API process environment or its `.env` file to a
-separate, unpredictable reviewer credential. Leave `RESPAWNED_PROCESS_TOKEN` unset unless
-you also intend to enable the independent processing endpoint. Compose passes the
-reviewer token into the app container when it is started or recreated.
+### Server and API access
 
-For a host server, from the repository root:
+`respawned serve --host 127.0.0.1 --port 8000` retains Bearer authentication for
+the review API and supports the packaged UI in Docker. Set a separate random
+`RESPAWNED_REVIEW_TOKEN` in that server's environment, restart it, then enter
+the value under **Setup → Review access**. Manually entered credentials remain
+only in tab memory and clear on reload. Scripts send the same value as
+`Authorization: Bearer <token>`; it is a shared operator password, not an account
+or model credential. A URL-safe value is convenient but no special token format
+is required. Generate one with:
 
 ```bash
-uv run --env-file .env respawned serve --host 127.0.0.1 --port 8000
+python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Use either this host server or the Compose app, then open
-[Respawned](http://127.0.0.1:8000). The browser UI and API share that origin.
-The Docker image copies the prebuilt assets with the Python source; it needs
-neither a separate frontend server nor an asset mount.
+Changing the server value revokes that Bearer credential. The local launcher
+session is separately revocable and needs no environment token. The public
+session-status/bootstrap endpoints reveal only connection availability; protected
+review operations authenticate before database or provider dependencies.
 
-Open **Setup → Review access**, enter the reviewer token, and unlock the engine.
-The token stays in browser memory for this session and clears on page reload.
-The server checks it before resolving database or provider dependencies for
-`/v1/ui` routes. This does not secure the older ingestion/read endpoints or add
-tenant isolation; keep the service within its trusted local deployment scope.
+The separate `RESPAWNED_PROCESS_TOKEN` enables policy-controlled `/v1/process`;
+it does not authorize human review. The draft's internal `review_token` is an
+automatic fingerprint of the displayed version and recipient. It is not a
+password: the UI submits it to reject stale edits and approvals.
 
-The review access token is a shared operator credential, not an account or a
-provider key. Generate a value with `python -c "import secrets; print(secrets.token_urlsafe(32))"`,
-set it as `RESPAWNED_REVIEW_TOKEN` on the server, and restart the server. Setup
-explains this when review is disabled. Changing that server value revokes the
-old token. The independent `RESPAWNED_PROCESS_TOKEN` enables `/v1/process`; it
-does not unlock browser review. A draft's internal `review_token` is different:
-it fingerprints the displayed copy and recipient so stale edits and approvals
-can be rejected. The UI manages that fingerprint automatically.
-
-Queue refresh reevaluates ingested data and does not contact an external source.
-Reading records, editing existing drafts, and inspecting the outbox need no model.
-
-The server rechecks current status, recipient, contact-wide cooldown, and draft
-version when saving or approving. A stale review returns a conflict; refresh and
-inspect the current copy before acting again. Approval writes to the engine's
-outbox with human authorization provenance and does not send a message.
+Queue refresh reevaluates imported data without contacting an external source.
+Reading records and reviewing existing drafts need no model. Approval rechecks
+current state, recipient, cooldown, and version, then reserves an unsent outbox
+message with human provenance. Legacy ingestion/read endpoints remain intended
+for a trusted local deployment; these access modes do not add tenant isolation.
 
 ## Configure workspaces
 
@@ -104,27 +139,50 @@ saved view before pagination; direct record links can still open related records
 
 ## Connect a model backend
 
-Under **Setup → Model backend**, enter the API base URL, model name or alias,
-timeout, and server credential variable. Use an OpenAI-compatible
-chat-completions endpoint directly, through a local server, or through LiteLLM.
-Use the API root reachable from the Respawned server; include `/v1` if required
-by that endpoint. For LiteLLM, use the proxy URL and configured model alias.
+Choose a backend under **Setup → Model backend**. Non-secret settings persist in
+PostgreSQL and override environment defaults for browser drafting, API processing,
+and CLI review. Saving makes no model request. Existing drafts remain available
+when a provider is offline. Set your policy's sender/sign-off before real drafting.
 
-The UI stores the non-secret settings in PostgreSQL. They override the existing
-environment defaults and are shared by browser drafting, API processing, and
-CLI review. Choose `LITELLM_MASTER_KEY` or `RESPAWNED_MODEL_API_KEY`, set its value
-in the server environment, and restart that server. No provider key is entered
-or returned in the browser. For a local endpoint that ignores authentication,
-set a local-only placeholder in the selected variable because the client still
-requires a nonempty value.
+### Codex CLI with ChatGPT
 
-**Save model settings** saves configuration without contacting the endpoint.
-The configured state means a credential is present; it is not a provider test.
-**Generate draft** sends the chosen record's drafting context to that backend.
-Existing drafts stay available even if drafting is unconfigured or offline.
-Choose the policy's sender/sign-off settings before generating real copy. See
-[model and provider configuration](../README.md#configure-models-and-providers)
-for the included LiteLLM Compose setup and environment fallback.
+Install Codex on the server, run `codex login` with ChatGPT, and select **Codex
+CLI · ChatGPT login**. Leave the optional model blank to use the CLI default,
+or enter an available model. No API key is required. Setup checks the executable
+and login, while draft generation provides the actual inference check.
+
+If Codex is not on PATH, set `RESPAWNED_CODEX_BIN` to its executable and restart
+the server. `RESPAWNED_CODEX_SCRATCH_DIR` optionally selects an existing temporary
+working directory. Calling Windows Codex from WSL requires that directory to be
+on a mounted Windows drive (for example `/mnt/c/...`); these are host settings,
+not paths submitted by the browser. Codex must also be installed and logged in
+inside an application container if that is where the server runs.
+
+The packaged adapter uses `codex exec` with the existing ChatGPT login,
+`--ignore-user-config`, `--ephemeral`, a read-only sandbox, structured JSON output,
+and disabled shell, web, apps, plugins, hooks, and memories. It passes an allowlist
+of runtime/login environment variables, excluding application secrets and API
+billing overrides. Missing login, invalid output, failed turns, tool use, and
+timeouts fail the draft. The engine still validates the returned copy; Codex has
+no approval or delivery operation. The simulation harness imports this same runner.
+
+Without saved settings, select `RESPAWNED_MODEL_BACKEND=codex_cli`, optionally
+`RESPAWNED_CODEX_MODEL`, and `RESPAWNED_CODEX_TIMEOUT_SECONDS` (default 120,
+greater than zero and at most 300). Login/version checks have separate bounded
+timeouts. See the [current integration review](INTEGRATION_REVIEW.md) for evidence.
+
+### OpenAI-compatible API or LiteLLM
+
+Enter the API base URL, model name or proxy alias, timeout, and server credential
+variable. Use the API root reachable from the server, including `/v1` when
+required. Choose `LITELLM_MASTER_KEY` or `RESPAWNED_MODEL_API_KEY`, set the key on
+the server, and restart it. The browser never accepts or returns the secret.
+For an unauthenticated local endpoint, use a local-only placeholder in the selected
+variable because the client requires a nonempty value.
+
+Configured status means a credential is present, not that inference was tested.
+The default environment backend is `openai_compatible`; existing LiteLLM variables
+continue to work. See [provider configuration](../README.md#configure-models-and-providers).
 
 ## Import records and use the outbox
 
@@ -145,12 +203,19 @@ connect a mailbox or establish source freshness.
 
 Review the record, generate a draft when eligible, edit and save it as needed,
 then choose **Approve to outbox**. The **Outbox** shows the resulting unsent
-reservation. Download JSON from the UI to hand reviewed messages to your own
-delivery workflow, or export CSV with `respawned outbox --path outbox.csv`.
+reservation. Download CSV or JSON from the outbox, or export CSV with
+`respawned outbox --path outbox.csv`. Browser, API, and CLI use the same 12-field
+CSV formatter. CSV prefixes cells that could be interpreted as spreadsheet
+formulas; use JSON to preserve the exact original strings. Authenticated clients
+can use `GET /v1/outbox/export?format=json|csv`; the UI alias is
+`/v1/ui/outbox/export`. An optional `workspace_id` filters full approved snapshots.
 Neither export sends a message or marks it sent. Once a message has actually
 been sent, ingest its `message_sent` activity with `direction: outbound` and the
 real source timestamp. The built-in V1 outbox has no provider connection or
 automatic delivery worker; Setup presents that current workflow explicitly.
+An outbound event updates reply/cooldown state but does not identify which outbox
+row was delivered. Until a provider integration records an explicit correlated
+delivery result, that row remains an unsent reservation.
 
 ## Run the connected simulation
 
@@ -273,6 +338,9 @@ set the development proxy address when starting Vite:
 ```bash
 RESPAWNED_API_URL=http://127.0.0.1:8001 npm run dev
 ```
+
+The local session launcher is for the bundled same-origin UI. Use a Bearer
+token with a separate Vite development server.
 
 `RESPAWNED_API_URL` defaults to `http://127.0.0.1:8000`. Vite forwards `/v1` and
 `/readyz` requests to that API. This variable is a development API address, not a

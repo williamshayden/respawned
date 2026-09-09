@@ -28,12 +28,13 @@ from respawned.core.opportunity import is_contactable_opportunity
 from respawned.core.policy import Policy
 from respawned.core.reduce import reduce_opportunities
 from respawned.core.time import aware_utc, within_cooldown
-from respawned.llm.adapter import LiteLLMAdapter, LLMAdapterError
+from respawned.llm.adapter import DraftingAdapter, LLMAdapterError
 
 LATEST_CANDIDATES_QUERY = text(
     """
     WITH latest_run AS (
         SELECT id FROM sync_runs
+        WHERE scope = 'queue'
         ORDER BY run_at DESC, created_at DESC, id DESC
         LIMIT 1
     )
@@ -268,7 +269,7 @@ def draft_candidate(
     candidate: Candidate,
     now: datetime,
     policy: Policy,
-    adapter: LiteLLMAdapter,
+    adapter: DraftingAdapter,
 ) -> PersistedDraft | None:
     """Lazily persist safe copy for one current candidate."""
     now = aware_utc(now, "now")
@@ -358,7 +359,7 @@ def iter_candidate_drafts(
     candidates: Sequence[Candidate],
     now: datetime,
     policy: Policy,
-    adapter: LiteLLMAdapter,
+    adapter: DraftingAdapter,
 ) -> Iterator[PersistedDraft]:
     for candidate in rank_candidates(candidates):
         draft = draft_candidate(

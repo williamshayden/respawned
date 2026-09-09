@@ -20,8 +20,8 @@ from respawned.core.score import score_opportunities
 
 INSERT_SYNC_RUN = text(
     """
-    INSERT INTO sync_runs (id, run_at, candidate_count, created_at)
-    VALUES (:id, :run_at, :candidate_count, clock_timestamp())
+    INSERT INTO sync_runs (id, run_at, candidate_count, scope, created_at)
+    VALUES (:id, :run_at, :candidate_count, :scope, clock_timestamp())
     """
 )
 
@@ -170,6 +170,9 @@ def sync_candidates(
 
     Selection happens after global eligibility, contact grouping, and review
     history. It cannot promote an ineligible sibling or bypass a cooldown.
+    A selected materialization does not publish a queue snapshot or move an
+    existing candidate out of its full sync. Drafting uses the freshly computed
+    candidate and rechecks current state through the shared review service.
     """
 
     _validate_limit(limit)
@@ -221,6 +224,7 @@ def sync_candidates(
             "id": run_id,
             "run_at": now,
             "candidate_count": len(candidates),
+            "scope": "selection" if primary_opportunity_id is not None else "queue",
         },
     )
     inserted_count = 0
@@ -231,6 +235,7 @@ def sync_candidates(
         inserted_count += (
             conn.execute(INSERT_CANDIDATE, values).scalar_one_or_none() is not None
         )
-        conn.execute(UPDATE_CANDIDATE, values)
+        if primary_opportunity_id is None:
+            conn.execute(UPDATE_CANDIDATE, values)
 
     return SyncResult(candidates, inserted_count, run_id, False)

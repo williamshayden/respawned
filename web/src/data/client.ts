@@ -1,4 +1,5 @@
 import type { InboxResult, OutboxItem, RecordPage, ReviewClient, SyncResult, UIConfig, UIDraft, UIRecord } from './types'
+import { accessHeaders, type ReviewAccess } from './auth'
 
 export class ClientError extends Error {
   constructor(
@@ -34,17 +35,22 @@ function errorMessage(payload: unknown, fallback: string): string {
 }
 
 /** Credentials live only in this closure; they are never written to storage or URLs. */
-export function createHttpClient(baseUrl = '', operatorToken = '', workspaceId = ''): ReviewClient {
+export function createHttpClient(baseUrl = '', operatorToken: ReviewAccess = '', workspaceId = ''): ReviewClient {
   const root = `${baseUrl.replace(/\/+$/, '')}/v1/ui`
-  async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-    const headers: Record<string, string> = { Accept: 'application/json' }
-    if (operatorToken) headers.Authorization = `Bearer ${operatorToken}`
+  async function request<T>(path: string, method = 'GET', body?: unknown, csv = false): Promise<T> {
+    const headers: Record<string, string> = { Accept: csv ? 'text/csv' : 'application/json', ...accessHeaders(operatorToken) }
     if (body !== undefined) headers['Content-Type'] = 'application/json'
     let response: Response
     try {
       response = await fetch(`${root}${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     } catch {
       throw new ClientError('Could not reach the review API. Check the connection and try again.', 0, 'network_error')
+    }
+    if (response.ok && csv) {
+      if (!response.headers.get('Content-Type')?.toLowerCase().startsWith('text/csv')) {
+        throw new ClientError('The review API returned an unreadable export.', response.status, 'invalid_response')
+      }
+      return await response.blob() as T
     }
     let payload: unknown
     try {
@@ -54,7 +60,7 @@ export function createHttpClient(baseUrl = '', operatorToken = '', workspaceId =
     }
     if (!response.ok) {
       const fallback = response.status === 401 || response.status === 403
-        ? 'The operator token was not accepted. Check the connection settings.'
+        ? 'Review access expired or was not accepted. Open Setup to reconnect.'
         : response.status === 409
           ? 'The record or draft changed. Refresh and review the latest copy.'
           : 'The request could not be completed. Please try again.'
@@ -74,10 +80,11 @@ export function createHttpClient(baseUrl = '', operatorToken = '', workspaceId =
     approve: (draftId, reviewToken) => request<UIDraft>(`/drafts/${encodeURIComponent(draftId)}/approve`, 'POST', { review_token: reviewToken }),
     reject: (draftId, reviewToken) => request<UIDraft>(`/drafts/${encodeURIComponent(draftId)}/reject`, 'POST', { review_token: reviewToken }),
     listInbox: () => request<InboxResult>(`/inbox?limit=200${workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : ''}`),
+    exportOutbox: () => request<Blob>(`/outbox/export?format=csv${workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : ''}`, 'GET', undefined, true),
     async listOutbox() {
       const items: OutboxItem[] = []
       for (;;) {
-        const page = await request<{ items: OutboxItem[]; has_more: boolean }>(`/outbox?limit=100&offset=${items.length}`)
+        const page = await request<{ items: OutboxItem[]; has_more: boolean }>(`/outbox?limit=100&offset=${items.length}${workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : ''}`)
         items.push(...page.items)
         if (!page.has_more || !page.items.length) return items
       }

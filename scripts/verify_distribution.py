@@ -57,6 +57,7 @@ from respawned.api.app import app
 from respawned.cli.common import DEFAULT_POLICY_PATH
 from respawned.core.policy import load_policy
 from respawned.db.helpers.pg_connect import DEFAULT_SCHEMA_PATH
+from respawned.llm.codex import CodexRunner, CodexDraftingAdapter
 
 root = Path(respawned.__file__).resolve().parent
 assert root.is_relative_to(Path(sys.prefix).resolve()), root
@@ -177,7 +178,7 @@ def invoke(prefix, *args, environment=None, expected=0):
 for prefix in ([console], module):
     assert "respawned " + version("respawned") in invoke(prefix, "--version")
     assert "demo" in invoke(prefix, "--help")
-    for command in ("init", "demo", "serve", "sync", "review", "inbox", "outbox"):
+    for command in ("init", "demo", "serve", "ui", "sync", "review", "inbox", "outbox"):
         invoke(prefix, command, "--help")
     invoke(prefix, "sync", "--policy", str(Path.cwd() / "missing-policy.yaml"), expected=1)
     unavailable = dict(os.environ, DB_HOST="127.0.0.1", DB_PORT="0",
@@ -186,7 +187,7 @@ for prefix in ([console], module):
                        PGCONNECT_TIMEOUT="2")
     invoke(prefix, "init", environment=unavailable, expected=1)
 
-# The installed app must serve its browser demo even when PostgreSQL is unavailable.
+# The installed app must serve Setup even when PostgreSQL is unavailable.
 bundled_http_assets = verify_http([console, "serve"], environment=unavailable)
 database_verified = False
 cli_http_verified = False

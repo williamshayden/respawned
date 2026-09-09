@@ -126,13 +126,13 @@ def test_saved_model_configuration_is_shared_and_never_returns_secrets(setup_api
     monkeypatch.setenv("RESPAWNED_MODEL_API_KEY", "private-selected-key")
     response = client.put("/v1/ui/setup/model", headers=HEADERS, json=MODEL)
     assert response.status_code == 200, response.text
-    assert response.json() == {**MODEL, "source": "saved", "key_configured": True,
+    assert response.json() == {**MODEL, "backend": "openai_compatible", "login_ready": False, "source": "saved", "key_configured": True,
                                "ready": True, "verified": False, "error": None}
     assert "private" not in response.text
     status = client.get("/v1/ui/setup", headers=HEADERS).json()
     assert status["model"] == response.json()
     saved = connection.execute(text("SELECT value FROM application_settings WHERE key = 'drafting_model'")).scalar_one()
-    assert saved == MODEL
+    assert saved == {**MODEL, "backend": "openai_compatible"}
     adapter = configured_adapter(connection)
     assert adapter.proxy_url == MODEL["base_url"] and adapter.model_alias == MODEL["model_alias"]
     assert adapter.timeout_seconds == MODEL["timeout_seconds"]
