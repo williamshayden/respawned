@@ -8,12 +8,12 @@ from respawned.core.helpers.validate import (
 
 def test_validate_draft_rejects_blank_message():
     with pytest.raises(DraftValidationError, match="blank"):
-        validate_draft("   ", max_characters=160, quote_status="open")
+        validate_draft("   ", max_characters=160, opportunity_status="open")
 
 
 def test_validate_draft_rejects_message_over_maximum_length():
     with pytest.raises(DraftValidationError, match="4 characters"):
-        validate_draft("hello", max_characters=4, quote_status="open")
+        validate_draft("hello", max_characters=4, opportunity_status="open")
 
 
 @pytest.mark.parametrize(
@@ -27,7 +27,7 @@ def test_validate_draft_rejects_message_over_maximum_length():
 )
 def test_validate_draft_rejects_placeholders(body):
     with pytest.raises(DraftValidationError, match="placeholder"):
-        validate_draft(body, max_characters=160, quote_status="open")
+        validate_draft(body, max_characters=160, opportunity_status="open")
 
 
 @pytest.mark.parametrize(
@@ -40,37 +40,37 @@ def test_validate_draft_rejects_placeholders(body):
 )
 def test_validate_draft_rejects_currency_amounts(body):
     with pytest.raises(DraftValidationError, match="currency"):
-        validate_draft(body, max_characters=160, quote_status="open")
+        validate_draft(body, max_characters=160, opportunity_status="open")
 
 
-@pytest.mark.parametrize("status", ["accepted", "dismissed", " Accepted "])
-def test_validate_draft_rejects_terminal_quote_statuses(status):
-    with pytest.raises(DraftValidationError, match="terminal"):
+@pytest.mark.parametrize("status", ["won", "lost", "unknown"])
+def test_validate_draft_rejects_non_open_opportunity_statuses(status):
+    with pytest.raises(DraftValidationError, match="opportunity status"):
         validate_draft(
             "Hi John, just checking in.",
             max_characters=160,
-            quote_status=status,
+            opportunity_status=status,
         )
 
 
-def test_validate_draft_requires_tech_name_only_when_enabled():
+def test_validate_draft_requires_owner_name_only_when_enabled():
     body = "Hi John, just checking in."
 
     assert (
         validate_draft(
             body,
             max_characters=160,
-            quote_status="open",
-            tech_name="Bob",
+            opportunity_status="open",
+            owner_name="Bob",
         )
         == body
     )
 
-    with pytest.raises(DraftValidationError, match="tech name"):
+    with pytest.raises(DraftValidationError, match="owner name"):
         validate_draft(
             body,
             max_characters=160,
-            quote_status="open",
-            tech_name="Bob",
-            require_tech_name=True,
+            opportunity_status="open",
+            owner_name="Bob",
+            require_owner_name=True,
         )

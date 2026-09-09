@@ -2,54 +2,74 @@ version: 1
 business_timezone: UTC
 cooldown_hours: 72
 dead_after_days: 45
-high_pct: 0.75
+
+# Only trusted operator configuration can permit automatic authorization.
+review:
+  mode: human
+
+ranking:
+  value_weight: 20
+  signal_weight: 20
 
 drafting:
-  sign_off: Service Team
+  sign_off: Follow-up Team
   max_characters: 320
-  require_tech_name: false
+  require_owner_name: false
 
 reasons:
+  application_no_update:
+    evaluator: application_no_update
+    base_score: 42
+    tone: professional and interested in the application status
+    params:
+      minimum_days: 7
+      horizon_days: 14
+
+  promised_update_overdue:
+    evaluator: promised_update_overdue
+    base_score: 58
+    tone: courteous and attentive to the agreed next step
+    params:
+      grace_days: 1
+      horizon_days: 7
+
   replied_no_answer:
+    evaluator: reply_after_outbound
+    base_score: 60
     tone: helpful and responsive
-    base: 60
-    amount_weight: 15
-    recency_weight: 25
-    recency_days: 7
-    priority: 1
+    params:
+      horizon_days: 7
 
   viewed_no_reply:
+    evaluator: view_after_outbound
+    base_score: 45
     tone: warm and low-pressure
-    base: 45
-    amount_weight: 20
-    recency_weight: 20
-    recency_days: 7
-    min_signal_age_hours: 24
-    priority: 3
+    params:
+      minimum_age_hours: 24
+      horizon_days: 7
 
   high_value_quiet:
+    evaluator: high_value_quiet
+    base_score: 40
     tone: professional and attentive
-    base: 40
-    amount_weight: 30
-    recency_weight: 20
-    recency_days: 14
-    quiet_days: 3
-    priority: 4
+    params:
+      high_percentile: 0.75
+      quiet_days: 3
+      horizon_days: 14
 
   repeat_views:
+    evaluator: distinct_view_days
+    base_score: 55
     tone: friendly and concise
-    base: 55
-    amount_weight: 15
-    recency_weight: 25
-    recency_days: 7
-    min_view_days: 2
-    priority: 2
+    params:
+      minimum_days: 2
+      saturation_days: 4
+      horizon_days: 7
 
   aging:
+    evaluator: opportunity_age
+    base_score: 30
     tone: courteous final check-in
-    base: 30
-    amount_weight: 15
-    recency_weight: 25
-    recency_days: 14
-    aging_days: 14
-    priority: 5
+    params:
+      minimum_days: 14
+      horizon_days: 14

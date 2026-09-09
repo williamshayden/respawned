@@ -1,0 +1,64 @@
+name: V1 checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: "22.20.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci
+      - name: Typecheck and build frontend
+        run: npm run build
+      - name: Verify the bundled UI matches its sources
+        run: npm run bundle:check
+      - name: Test frontend behavior
+        run: npm test
+      - name: Install Chromium for browser checks
+        run: npx playwright install --with-deps chromium
+      - name: Test setup, workspaces, and mocked HTTP review workflows
+        run: npm run test:e2e
+
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.3"
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --frozen
+      - name: Check dependency lock
+        run: uv lock --check
+      - name: Test application, Docker persistence, and restore
+        run: uv run --frozen pytest -q
+      - name: Verify wheel and source distribution outside the checkout
+        run: uv run --frozen python scripts/verify_distribution.py --output dist/qualification

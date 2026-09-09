@@ -7,10 +7,16 @@ from dataclasses import dataclass
 class DraftPayload:
     """The complete context allowed into a follow-up drafting prompt."""
 
-    customer_name: str
-    tech_name: str | None
+    contact_name: str | None
+    owner_name: str | None
     tone: str
-    other_open_quote_count: int
+    other_open_opportunity_count: int
     max_characters: int
     sign_off: str
-    require_tech_name: bool = False
+    require_owner_name: bool = False
+    kind: str = "generic"
+    title: str | None = None
+    company: str | None = None
+    role: str | None = None
+    stage: str | None = None
+    summary: str | None = None

@@ -1,83 +1,83 @@
-"""Typed access to the database-backed quote-state reducer."""
+"""Project source activities into canonical opportunity state."""
 
-from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from respawned.core.context import BusinessContext
+from respawned.core.domain import Activity, OpportunityState
+from respawned.core.time import aware_utc
 
 
-@dataclass(frozen=True, slots=True)
-class QuoteState:
-    quote_id: str
-    status: str | None
-    amount: Decimal | None
-    customer_name: str
-    customer_phone: str | None
-    tech_name: str | None
-    created_at: datetime | None
-    quote_sent_at: datetime | None
-    last_viewed_at: datetime | None
-    view_days: int
-    last_replied_at: datetime | None
-    last_outbound_at: datetime | None
-    view_timestamps: tuple[datetime, ...] = ()
-    channel: str | None = None
-
-
-QUOTE_STATES_QUERY = text(
+OPPORTUNITY_STATES_QUERY = text(
     """
     SELECT
-        quote_id,
+        opportunity_id,
         status,
-        amount,
-        customer_name,
-        customer_phone,
-        tech_name,
+        value,
+        contact_key,
+        contact_name,
+        contact_phone,
+        contact_email,
+        owner_name,
         created_at,
-        quote_sent_at,
         last_viewed_at,
-        view_days,
         last_replied_at,
         last_outbound_at,
         view_timestamps,
-        channel
-    FROM quote_states
-    ORDER BY quote_id
+        preferred_channel,
+        activities,
+        kind,
+        title,
+        context
+    FROM opportunity_states
+    WHERE CAST(:contact_key AS TEXT) IS NULL OR contact_key = :contact_key
+    ORDER BY opportunity_id
     """
 )
 
-SET_BUSINESS_TIMEZONE_QUERY = text(
+SET_AS_OF_QUERY = text(
     """
-    SELECT set_config(
-        'respawned.business_timezone',
-        :timezone_name,
-        true
+    SELECT set_config('respawned.as_of', :as_of, true)
+    """
+)
+
+
+def _activity(values: dict[str, Any]) -> Activity:
+    occurred_at = values["occurred_at"]
+    if isinstance(occurred_at, str):
+        occurred_at = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+    return Activity(
+        activity_id=values["activity_id"],
+        activity_type=values["activity_type"],
+        occurred_at=occurred_at,
+        channel=values.get("channel"),
+        direction=values.get("direction"),
+        summary=values.get("summary"),
+        source_url=values.get("source_url"),
+        classification=values.get("classification", "unknown"),
     )
-    """
-)
 
 
-def reduce_quotes(
+def reduce_opportunities(
     conn: Connection,
     now: datetime,
     *,
-    business_context: BusinessContext | None = None,
-) -> list[QuoteState]:
-    """Return the current deterministic state for every quote."""
-    _ = now
-    context = business_context or BusinessContext()
-    conn.execute(
-        SET_BUSINESS_TIMEZONE_QUERY,
-        {"timezone_name": context.timezone_name},
-    )
-    rows = conn.execute(QUOTE_STATES_QUERY).mappings()
-    states: list[QuoteState] = []
-    for row in rows:
+    contact_key: str | None = None,
+) -> list[OpportunityState]:
+    """Return deterministic opportunity state using activities visible at ``now``."""
+    as_of = aware_utc(now, "reduce_opportunities.now")
+    conn.execute(SET_AS_OF_QUERY, {"as_of": as_of.isoformat()})
+
+    states: list[OpportunityState] = []
+    for row in conn.execute(
+        OPPORTUNITY_STATES_QUERY, {"contact_key": contact_key}
+    ).mappings():
         values = dict(row)
         values["view_timestamps"] = tuple(values["view_timestamps"] or ())
-        states.append(QuoteState(**values))
+        values["activities"] = tuple(
+            _activity(item) for item in (values["activities"] or ())
+        )
+        states.append(OpportunityState(**values))
     return states

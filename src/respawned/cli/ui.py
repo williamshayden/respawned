@@ -2,32 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from typing import TextIO
 
 from rich.console import Console
 from rich.prompt import Prompt
-from rich.table import Table
 
 
 DEFAULT_CONSOLE = Console()
-
-
-def print_table(
-    *,
-    title: str,
-    columns: Sequence[str],
-    rows: Iterable[Sequence[object]],
-    console: Console = DEFAULT_CONSOLE,
-) -> Table:
-    """Render a simple table and return it for optional caller customization."""
-    table = Table(title=title)
-    for column in columns:
-        table.add_column(column)
-    for row in rows:
-        table.add_row(*(str(value) for value in row))
-    console.print(table)
-    return table
 
 
 def prompt_choice(
