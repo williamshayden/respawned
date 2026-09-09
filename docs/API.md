@@ -261,4 +261,5 @@ bounded summary with contact/tone/sender context. Raw activity feeds, source URL
 expected timestamps, and monetary values are excluded. The engine validates both
 generated and edited copy for length, unresolved placeholders, prohibited currency
 amounts, and referenced-record eligibility. Facts remain data, not instructions.
-Configure [Codex or an API backend](WEB_UI.md#connect-a-model-backend) on the engine.
+Configure [a drafting backend](WEB_UI.md#connect-a-model-backend) on the engine.
+Saving settings validates configuration without probing a runtime, login, or provider.

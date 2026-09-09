@@ -1,4 +1,4 @@
-"""Bounded headless Codex using its existing ChatGPT login and structured output."""
+"""Optional bounded command adapter with structured output."""
 
 from collections.abc import Mapping, Sequence
 import json
@@ -20,8 +20,8 @@ class DraftOutput(BaseModel):
 
 
 def codex_environment() -> dict[str, str]:
-    # Keep host runtime/login discovery, while excluding application credentials
-    # and API billing overrides. Codex alone owns its login credential storage.
+    # Preserve command runtime discovery while excluding application credentials.
+    # The selected command owns its authentication and credential storage.
     allowed = {
         "PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "TMPDIR",
         "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "PROGRAMFILES", "PROGRAMFILES(X86)",
@@ -46,16 +46,10 @@ class CodexRunner:
             raise ValueError("RESPAWNED_CODEX_SCRATCH_DIR must be an existing directory")
         self.model = model or None
         self.env = codex_environment()
-        try:
-            status = subprocess.run([self.binary, "login", "status"], env=self.env,
-                                    capture_output=True, text=True, timeout=15)
-            if status.returncode or "ChatGPT" not in status.stdout + status.stderr:
-                raise ValueError("Run codex login on the server with your ChatGPT account")
-            self.version = subprocess.run([self.binary, "--version"], env=self.env,
-                                          capture_output=True, text=True, timeout=15,
-                                          check=True).stdout.strip()
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise ValueError("Could not run Codex CLI; check the server executable and login") from exc
+        # Construction does not execute the command or inspect its login state.
+        # Historical simulation reports may retain a recorded version; a newly
+        # configured adapter has no verified runtime version until supplied.
+        self.version = None
         self.calls = []
 
     def native_path(self, path):
@@ -132,4 +126,4 @@ class CodexDraftingAdapter:
         try:
             return self.runner.ask(prompt, DraftOutput).body
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-            raise LLMAdapterError("Headless Codex drafting failed; check CLI login and server configuration") from exc
+            raise LLMAdapterError("Command backend drafting failed; check server configuration and command output") from exc

@@ -87,20 +87,17 @@ with `docker compose --profile app --profile litellm down`, preserving volumes.
 
 ## Model backends
 
-In **Setup → Model backend**, choose:
-
-- **Codex CLI:** use an existing ChatGPT login on the machine running Respawned.
-  No API key is required. Codex runs headlessly with structured output and no
-  approval or delivery tools. The standard Docker image does not install Codex
-  or inherit the host login; use the host app for that setup.
-- **OpenAI-compatible API:** configure the server-reachable base URL, model or
-  proxy alias, timeout, and credential environment variable. LiteLLM is optional;
-  the `litellm` Compose profile supplies a proxy after its upstream model and key
-  are configured in `.env`.
+In **Setup → Model backend**, configure your chosen drafting service. The default
+adapter accepts an OpenAI-compatible API URL, model or proxy alias, timeout, and
+credential environment variable. LiteLLM is optional; the `litellm` Compose profile
+supplies a proxy after its upstream model and key are configured in `.env`.
 
 Saved model settings apply to the browser, CLI, and API on that engine. Credentials
-remain on the server. Saving checks configuration; generating a draft verifies
-inference. See [backend setup and troubleshooting](docs/WEB_UI.md#connect-a-model-backend).
+remain on the server. Saving validates configuration only; it does not test a
+provider, executable, or login. A backend is invoked when you explicitly generate
+a draft. No particular model provider or CLI login is a product or release
+requirement. See [backend configuration](docs/WEB_UI.md#connect-a-model-backend)
+for the available adapters, including the optional experimental CLI adapter.
 
 ## CLI and API
 
@@ -172,7 +169,7 @@ The GitHub repository URL and historical evidence names retain their old spellin
 | Build the UI and run browser checks | [Frontend development](docs/WEB_UI.md#frontend-development-and-bundled-assets) |
 | Preserve an existing database | [Database migration](docs/RELEASE_CHECKS.md) |
 | Review implementation evidence and remaining integration gaps | [Integration review](docs/INTEGRATION_REVIEW.md) |
-| Run isolated synthetic workflows | [Scripted simulations](docs/SIMULATIONS.md), [Codex simulations](docs/AGENT_SIMULATIONS.md), [HTTP connector simulation](docs/CONNECTOR_SIMULATION.md) |
+| Run isolated synthetic workflows | [Scripted simulations](docs/SIMULATIONS.md), [agent experiments](docs/AGENT_SIMULATIONS.md), [HTTP connector simulation](docs/CONNECTOR_SIMULATION.md) |
 | Changes in this version | [Changelog](CHANGELOG.md) |
 
 Run the Python suite with Docker available:

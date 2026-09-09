@@ -16,7 +16,6 @@ from sqlalchemy.pool import NullPool
 from respawned.api.models import IngestRequest, IngestResponse, OutboxResponse
 from respawned.api.ui import require_review_authorization
 from respawned.api.session import local_session
-from respawned.llm.codex import CodexRunner
 from respawned.core.ingest import IngestConflictError, UnknownOpportunityError, ingest_records
 from respawned.core.outbox import list_outbox_rows, render_outbox_csv
 from respawned.core.settings import (
@@ -34,7 +33,6 @@ class ModelStatus(BaseModel):
     timeout_seconds: float
     api_key_env: Literal["LITELLM_MASTER_KEY", "RESPAWNED_MODEL_API_KEY"]
     key_configured: bool
-    login_ready: bool = False
     ready: bool
     verified: Literal[False] = False
     error: str | None = None
@@ -51,6 +49,7 @@ class UIImportRequest(IngestRequest):
 
 
 def model_status(settings: ModelSettings | None) -> ModelStatus:
+    """Report configuration only; reading or saving setup never probes a backend."""
     source = "saved" if settings is not None else "environment"
     try:
         value = settings or environment_model_settings()
@@ -61,15 +60,8 @@ def model_status(settings: ModelSettings | None) -> ModelStatus:
                            ready=False, error="Server model environment is invalid")
     key_configured = bool(os.environ.get(value.api_key_env, "").strip())
     if value.backend == "codex_cli":
-        try:
-            CodexRunner(os.environ.get("RESPAWNED_CODEX_BIN", "codex"),
-                        os.environ.get("RESPAWNED_CODEX_SCRATCH_DIR") or None,
-                        timeout=value.timeout_seconds, model=value.model_alias)
-        except ValueError as exc:
-            return ModelStatus(**value.model_dump(), source=source, key_configured=False,
-                               ready=False, error=str(exc))
         return ModelStatus(**value.model_dump(), source=source, key_configured=False,
-                           login_ready=True, ready=True)
+                           ready=True)
     return ModelStatus(**value.model_dump(), source=source,
                        key_configured=key_configured, ready=key_configured)
 

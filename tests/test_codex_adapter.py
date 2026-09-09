@@ -26,10 +26,7 @@ def cli(monkeypatch, tmp_path):
     def run(command, **kwargs):
         commands.append((command, kwargs))
         assert not any(key in kwargs['env'] for key in ('OPENAI_API_KEY', 'DB_PASSWORD', 'RESPAWNED_REVIEW_TOKEN'))
-        if command[1:] == ['login', 'status']:
-            return SimpleNamespace(returncode=0, stdout='', stderr='Logged in using ChatGPT')
-        if command[1:] == ['--version']:
-            return SimpleNamespace(returncode=0, stdout='codex-cli test', stderr='')
+        assert 'exec' in command, 'Only explicit drafting may execute the selected command'
         output = Path(command[command.index('--output-last-message') + 1])
         schema = json.loads(Path(command[command.index('--output-schema') + 1]).read_text())
         assert schema['additionalProperties'] is False
@@ -44,10 +41,12 @@ def test_saved_codex_settings_use_same_packaged_backend_without_api_key(postgres
     settings = ModelSettings(backend='codex_cli', model_alias='operator-selected-model', timeout_seconds=17)
     save_model_settings(postgres_connection, settings)
     status = model_status(settings)
-    assert status.ready and status.login_ready and not status.key_configured and not status.verified
-    assert not any('exec' in command for command, _ in cli), 'Saving/status must not make an inference call'
+    assert status.ready and not status.key_configured and not status.verified
+    assert 'login_ready' not in status.model_dump()
+    assert cli == [], 'Saving/status must not execute a command'
     adapter = configured_adapter(postgres_connection)
     assert isinstance(adapter, codex.CodexDraftingAdapter)
+    assert cli == [], 'Constructing the adapter must not execute a command'
     assert adapter.complete([{'role': 'system', 'content': 'Use supplied facts.'}, {'role': 'user', 'content': 'Draft a follow-up.'}]).startswith('Hi Avery')
     command, kwargs = cli[-1]
     assert command[command.index('--model') + 1] == 'operator-selected-model'
@@ -67,10 +66,9 @@ def test_malformed_or_failed_cli_output_is_an_adapter_error(cli, monkeypatch, st
         adapter.complete([{'role': 'user', 'content': 'Draft'}])
 
 
-def test_missing_or_wrong_login_is_configuration_error(cli, monkeypatch):
-    monkeypatch.setattr(codex.subprocess, 'run', lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout='Logged in using an API key', stderr=''))
-    status = model_status(ModelSettings(backend='codex_cli'))
-    assert not status.ready and not status.login_ready
-    assert 'ChatGPT' in status.error
-    with pytest.raises(ValueError, match='ChatGPT'):
-        codex.CodexDraftingAdapter()
+def test_adapter_construction_does_not_probe_authentication_or_version(cli, monkeypatch):
+    monkeypatch.setattr(codex.subprocess, 'run', lambda *_args, **_kwargs: pytest.fail('Unexpected command probe'))
+    adapter = codex.CodexDraftingAdapter()
+    assert adapter.runner.version is None
+    assert adapter.runner.calls == []
+    assert cli == []

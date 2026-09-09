@@ -22,7 +22,7 @@ it.each(['import', 'workspace'])('releases a stalled %s write without retrying a
   const rejected = expect(pending).rejects.toThrow('Reload to check whether it completed before retrying')
   deadline.abort(new DOMException('Deadline exceeded', 'TimeoutError'))
   await rejected
-  expect(timeout).toHaveBeenCalledWith(operation === 'import' ? 60_000 : 20_000)
+  expect(timeout).toHaveBeenCalledWith(20_000)
   expect(fetch).toHaveBeenCalledOnce()
 })
 

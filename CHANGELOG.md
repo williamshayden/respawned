@@ -51,6 +51,9 @@ publication is a separate step.
 - Review existing CLI drafts without requiring model credentials. Bound browser
   setup/workspace waits and report uncertain write outcomes without automatic retries.
 - Fix narrow-screen Connections clipping and simplify interface copy and spacing.
+- Reset review scrolling when selecting another record while preserving unsaved edits.
+- Keep model setup limited to configuration; remove automatic CLI login and runtime
+  probes. Backend execution occurs only when drafting is requested.
 
 ### Scope and compatibility
 

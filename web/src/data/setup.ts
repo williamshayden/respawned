@@ -12,7 +12,6 @@ export interface ModelSettings {
 export interface ModelStatus extends ModelSettings {
   source: 'saved' | 'environment'
   key_configured: boolean
-  login_ready?: boolean
   ready: boolean
   verified: false
   error: string | null
@@ -96,8 +95,7 @@ async function request<T>(path: string, token: ReviewAccess, method = 'GET', bod
   const headers: Record<string, string> = { Accept: 'application/json', ...accessHeaders(token) }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   let response: Response
-  // Setup may run bounded Codex login/version checks as well as a database read.
-  const deadline = AbortSignal.timeout(60_000)
+  const deadline = AbortSignal.timeout(20_000)
   const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline
   try {
     response = await fetch(`${baseUrl}${path}`, { ...engineRequestOptions(token, baseUrl), method, headers, signal: requestSignal, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })

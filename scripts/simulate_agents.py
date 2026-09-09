@@ -1,6 +1,6 @@
 """Exploratory Codex agents using bounded tools against synthetic PostgreSQL data.
 
-Requires an existing ChatGPT Codex CLI login and SIMULATION_POSTGRES_URL.
+Explicit command execution requires operator-configured runtime access and SIMULATION_POSTGRES_URL.
 Each model response selects a tool; the host executes it and returns the result
 to the next model turn. The agent has no approval, sending, shell, or SQL tool.
 """
@@ -57,7 +57,9 @@ class ReplayCodex:
 
     def __init__(self, source):
         self.source = source
-        self.version = f"recorded decisions from {source}"
+        report_path = source / "results.json"
+        report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+        self.version = report.get("codex_version")
         self.calls = []
 
     def ask(self, prompt, output_type, evidence):

@@ -10,7 +10,7 @@ automatic policy can reserve a validated unsent message. Both use the same
 eligibility and review checks. The current application also supports protected
 human review through the bundled UI/API and richer record context than the
 original simulation build. [Integration qualification](INTEGRATION_REVIEW.md)
-records subsequent packaged Codex and UI checks.
+records subsequent UI checks and separate optional adapter experiments.
 
 ## What the simulation connects
 
@@ -65,8 +65,8 @@ uv run --frozen python scripts/simulate_connector.py \
 ```
 
 By default, classification and copy are scripted for reproducible boundary checks.
-To use the already supported, logged-in ChatGPT Codex CLI for classification and
-drafting instead:
+The existing Codex runner can optionally supply classification and copy in an
+experiment. This is not an application setup step or release requirement:
 
 ```bash
 uv run --frozen python scripts/simulate_connector.py \

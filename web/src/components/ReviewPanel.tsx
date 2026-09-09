@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react'
 import { ArrowLeft, ArrowRight, CalendarDays, Check, CircleCheck, ExternalLink, LoaderCircle, Mail, MessageSquare, Save, SkipForward, Sparkles, X } from 'lucide-react'
 import type { UIConfig, UIRecord } from '../data/types'
 import { actionLabel, actionable, displayName, safeSource, shortDate } from '../presentation'
@@ -12,6 +13,8 @@ interface Props {
 
 export function ReviewPanel(props: Props) {
   const { record, busy } = props
+  const scroll = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => { if (scroll.current) scroll.current.scrollTop = 0 }, [record?.id])
   if (!record) return <section className="review-pane empty-detail"><div className="empty-state"><CircleCheck size={36} />
     <h2>No record selected</h2><p>Select a record to review its context and next action.</p></div></section>
   const draft = record.draft
@@ -28,7 +31,7 @@ export function ReviewPanel(props: Props) {
   const referenced = record.referenced_record_ids.filter(id => id !== record.id)
     .map(id => props.records.find(item => item.id === id)?.title ?? id)
   return <section className="review-pane" aria-label="Selected record">
-    <div className="review-scroll">
+    <div className="review-scroll" ref={scroll}>
       <button className="text-button mobile-back" onClick={props.onBack}><ArrowLeft size={17} />Back to records</button>
       <div className="review-eyebrow"><span>Follow-up review</span><span>{props.index > -1 ? `${props.index + 1} of ${props.total}` : 'Tracked record'}</span></div>
       {safeSource(record.source_url) && <a className="record-source" href={safeSource(record.source_url)} target="_blank" rel="noreferrer">View source<ExternalLink size={13} /></a>}

@@ -57,7 +57,6 @@ from respawned.api.app import app
 from respawned.cli.common import DEFAULT_POLICY_PATH
 from respawned.core.policy import load_policy
 from respawned.db.helpers.pg_connect import DEFAULT_SCHEMA_PATH
-from respawned.llm.codex import CodexRunner, CodexDraftingAdapter
 
 root = Path(respawned.__file__).resolve().parent
 assert root.is_relative_to(Path(sys.prefix).resolve()), root

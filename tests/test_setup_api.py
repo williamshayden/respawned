@@ -126,7 +126,7 @@ def test_saved_model_configuration_is_shared_and_never_returns_secrets(setup_api
     monkeypatch.setenv("RESPAWNED_MODEL_API_KEY", "private-selected-key")
     response = client.put("/v1/ui/setup/model", headers=HEADERS, json=MODEL)
     assert response.status_code == 200, response.text
-    assert response.json() == {**MODEL, "backend": "openai_compatible", "login_ready": False, "source": "saved", "key_configured": True,
+    assert response.json() == {**MODEL, "backend": "openai_compatible", "source": "saved", "key_configured": True,
                                "ready": True, "verified": False, "error": None}
     assert "private" not in response.text
     status = client.get("/v1/ui/setup", headers=HEADERS).json()
@@ -148,6 +148,27 @@ def test_saved_model_configuration_is_shared_and_never_returns_secrets(setup_api
     assert client.get("/v1/ui/setup", headers=HEADERS).json()["model"]["ready"] is False
     with pytest.raises(ValueError):
         configured_adapter(connection)
+
+
+def test_command_backend_setup_saves_configuration_without_constructing_or_probing_runtime(setup_api, monkeypatch):
+    from respawned.llm import codex
+
+    client, _connection = setup_api
+    monkeypatch.setenv("RESPAWNED_CODEX_BIN", "/missing/optional-command")
+    monkeypatch.setenv("RESPAWNED_CODEX_SCRATCH_DIR", "/missing/optional-scratch")
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Setup must not construct or execute an optional model backend")
+
+    monkeypatch.setattr(codex, "CodexRunner", forbidden)
+    monkeypatch.setattr(codex.subprocess, "run", forbidden)
+    response = client.put("/v1/ui/setup/model", headers=HEADERS, json={"backend": "codex_cli"})
+    assert response.status_code == 200, response.text
+    status = response.json()
+    assert status["ready"] is True and status["verified"] is False
+    assert status["key_configured"] is False and status["error"] is None
+    assert "login_ready" not in status
+    assert client.get("/v1/ui/setup", headers=HEADERS).json()["model"] == status
 
 
 def test_api_and_cli_use_shared_saved_settings(setup_api, monkeypatch):

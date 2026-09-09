@@ -210,36 +210,11 @@ separate data and settings, while workspaces within an engine remain shared view
 
 Choose a backend under **Setup → Model backend**. Non-secret settings persist in
 PostgreSQL and override environment defaults for browser drafting, API processing,
-and CLI review on the selected engine. Saving makes no model request. Existing drafts remain available
-when a provider is offline. Set your policy's sender/sign-off before real drafting.
-
-### Codex CLI with ChatGPT
-
-Install Codex on the server, run `codex login` with ChatGPT, and select **Codex
-CLI · ChatGPT login**. Leave the optional model blank to use the CLI default,
-or enter an available model. No API key is required. Setup checks the executable
-and login, while draft generation provides the actual inference check.
-
-If Codex is not on PATH, set `RESPAWNED_CODEX_BIN` to its executable and restart
-the server. `RESPAWNED_CODEX_SCRATCH_DIR` optionally selects an existing temporary
-working directory. Calling Windows Codex from WSL requires that directory to be
-on a mounted Windows drive (for example `/mnt/c/...`); these are host settings,
-not paths submitted by the browser. The standard app image does not install Codex or inherit a host login. Use the
-host application for an existing login, or explicitly provision the executable,
-login, and writable scratch directory inside your own container configuration.
-
-The packaged adapter uses `codex exec` with the existing ChatGPT login,
-`--ignore-user-config`, `--ephemeral`, a read-only sandbox, structured JSON output,
-and disabled shell, web, apps, plugins, hooks, and memories. It passes an allowlist
-of runtime/login environment variables, excluding application secrets and API
-billing overrides. Missing login, invalid output, failed turns, tool use, and
-timeouts fail the draft. The engine still validates the returned copy; Codex has
-no approval or delivery operation. The simulation harness imports this same runner.
-
-Without saved settings, select `RESPAWNED_MODEL_BACKEND=codex_cli`, optionally
-`RESPAWNED_CODEX_MODEL`, and `RESPAWNED_CODEX_TIMEOUT_SECONDS` (default 120,
-greater than zero and at most 300). Login/version checks have separate bounded
-timeouts. See the [current integration review](INTEGRATION_REVIEW.md) for evidence.
+and CLI review on the selected engine. Saving validates configuration only; it
+does not run an executable, check a login, or contact a provider. Configured status
+does not confirm connection or inference. The backend is invoked when you explicitly
+generate a draft. Existing drafts remain available without a working provider.
+Set your policy's sender/sign-off before drafting.
 
 ### OpenAI-compatible API or LiteLLM
 
@@ -250,15 +225,38 @@ the server, and restart it. The browser never accepts or returns the secret.
 For an unauthenticated local endpoint, use a local-only placeholder in the selected
 variable because the client requires a nonempty value.
 
-Configured status means a credential is present, not that inference was tested.
 The default environment backend is `openai_compatible`; existing LiteLLM variables
 continue to work. For the optional Compose proxy, configure
 `LITELLM_UPSTREAM_MODEL`, `LITELLM_UPSTREAM_API_KEY`, and private proxy credentials
 in `.env`, then run `docker compose --profile litellm up -d --wait`. A host process
 uses `LITELLM_PROXY_URL`; the app container uses `APP_LITELLM_PROXY_URL` because
 its `localhost` is the container itself. The adapter disables SDK retries and
-uses a per-network-operation timeout. The Codex backend has a total child-process
-timeout instead.
+uses a per-network-operation timeout.
+
+### Optional experimental CLI adapter
+
+The existing `codex_cli` adapter remains available for opt-in experiments.
+Respawned does not require Codex, a Codex login, or a Codex-specific release check.
+Selecting or saving this backend does not execute login, version, or availability
+probes. Runtime and authentication are managed outside Respawned; a failed explicit
+draft request reports the execution failure without accepting copy.
+
+The server can use `RESPAWNED_CODEX_BIN` for an executable outside PATH and
+`RESPAWNED_CODEX_SCRATCH_DIR` for an existing temporary working directory. Calling
+a Windows executable from WSL requires scratch space on a mounted Windows drive.
+These are server settings, not paths supplied by the browser. The standard app
+image does not install the CLI or inherit host authentication.
+
+Without saved settings, `RESPAWNED_MODEL_BACKEND=codex_cli` selects this adapter;
+`RESPAWNED_CODEX_MODEL` is optional and `RESPAWNED_CODEX_TIMEOUT_SECONDS` defaults
+to 120 (greater than zero and at most 300). Explicit generation runs `codex exec`
+with structured output, an ephemeral read-only sandbox, and native tools disabled.
+Application secrets and API billing overrides are excluded from its environment.
+Invalid output, failed turns, tool use, and timeout reject the draft. The engine
+still validates accepted copy and owns all approval/outbox behavior.
+
+Earlier runs are preserved as [adapter experiments](AGENT_SIMULATIONS.md), not
+product requirements or evidence that Setup verifies a provider.
 
 ## Import records and use the outbox
 
@@ -300,7 +298,7 @@ delivery result, that row remains an unsent reservation.
 | Setup loads but the database is unavailable | Confirm the running server's `DB_*` values, PostgreSQL readiness, and permissions. An installed CLI does not load `.env` automatically. |
 | Local access is locked or expired | Restart `respawned ui` and use its new one-use link. A manually entered token clears on reload. |
 | A remote engine cannot connect | Check the exact URL, HTTPS certificate, network path, reviewer token, and `RESPAWNED_UI_ORIGINS` on that server. The Connections page shows this browser's origin. |
-| Model is configured but drafting fails | Configuration does not prove inference. Check the server's selected backend, model access, credential/login, and timeout. Existing drafts can still be reviewed without a model. |
+| Model is configured but drafting fails | Configuration does not prove inference. Check the server's selected backend, model access, credentials, and timeout. Existing drafts can still be reviewed without a model. |
 | A save/import times out | The server may have completed the write. Reconnect or refresh and inspect the saved state before retrying; the browser does not automatically repeat writes. |
 | No follow-ups are ready | Check **All tracked**, record status and recipient, recent contact/outbox cooldown, and the Policy view. Queue refresh evaluates imported facts; it does not fetch source updates. |
 
