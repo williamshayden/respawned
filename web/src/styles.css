@@ -209,6 +209,7 @@ select { appearance: none; width: 100%; background: #fff; border: 1px solid #dde
 @media (max-width: 1450px) {
   .brand { font-size: 22px; gap: 12px; padding-inline: 9px; }
   .brand-mark { width: 37px; }
+  .nav-item { gap: 12px; font-size: 13px; padding-inline: 11px; }
 }
 @media (max-width: 1250px) {
   .app { grid-template-columns: 210px minmax(0, 1fr); }
