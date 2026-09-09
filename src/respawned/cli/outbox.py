@@ -11,7 +11,7 @@ from typing import Sequence
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from follow_up_engine.db.helpers.pg_connect import get_engine
+from respawned.db.helpers.pg_connect import get_engine
 
 
 CSV_FIELDS = (

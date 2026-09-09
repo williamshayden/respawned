@@ -20,16 +20,16 @@ from rich.text import Text
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
-from follow_up_engine.cli.outbox import enqueue_outbox
-from follow_up_engine.cli.ui import DEFAULT_CONSOLE, prompt_choice
-from follow_up_engine.core.candidates import Candidate
-from follow_up_engine.core.draft import draft_follow_up
-from follow_up_engine.core.helpers.payload import DraftPayload
-from follow_up_engine.core.helpers.validate import validate_draft
-from follow_up_engine.core.reduce import QuoteState, reduce_quotes
-from follow_up_engine.core.score import Policy, load_policy
-from follow_up_engine.db.helpers.pg_connect import create_tables, get_engine
-from follow_up_engine.llm.adapter import LiteLLMAdapter
+from respawned.cli.outbox import enqueue_outbox
+from respawned.cli.ui import DEFAULT_CONSOLE, prompt_choice
+from respawned.core.candidates import Candidate
+from respawned.core.draft import draft_follow_up
+from respawned.core.helpers.payload import DraftPayload
+from respawned.core.helpers.validate import validate_draft
+from respawned.core.reduce import QuoteState, reduce_quotes
+from respawned.core.score import Policy, load_policy
+from respawned.db.helpers.pg_connect import create_tables, get_engine
+from respawned.llm.adapter import LiteLLMAdapter
 
 
 DEFAULT_POLICY_PATH = Path(__file__).parents[1] / "config" / "policy.yaml"
@@ -716,7 +716,7 @@ def main(
     *,
     adapter: LiteLLMAdapter | None = None,
 ) -> int:
-    parser = argparse.ArgumentParser(prog="follow-up-engine review")
+    parser = argparse.ArgumentParser(prog="respawned review")
     parser.add_argument("--now", type=_parse_now)
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY_PATH)
     args = parser.parse_args(argv)

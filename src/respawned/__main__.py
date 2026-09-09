@@ -1,4 +1,4 @@
-"""Command router for the follow-up engine."""
+"""Command router for Respawned."""
 
 from __future__ import annotations
 
@@ -65,8 +65,8 @@ COMMANDS = (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="follow-up-engine",
-        description="Automated quote follow-up engine",
+        prog="respawned",
+        description="Respawned quote follow-up orchestration",
     )
     subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
     for command in COMMANDS:
@@ -81,7 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _load(args: argparse.Namespace) -> None:
-    from follow_up_engine.cli.load_data import load_data
+    from respawned.cli.load_data import load_data
 
     seed_dir = getattr(args, "seed_dir", DEFAULT_SEED_DIR)
     quotes_filename = os.getenv("QUOTES_FILENAME", "quotes.json")
@@ -94,13 +94,13 @@ def _load(args: argparse.Namespace) -> None:
 
 
 def _outbox(args: argparse.Namespace) -> None:
-    from follow_up_engine.cli.outbox import main as outbox_main
+    from respawned.cli.outbox import main as outbox_main
 
     outbox_main(["--path", os.fspath(args.path)])
 
 
 def _sync(args: argparse.Namespace) -> int:
-    from follow_up_engine.cli.sync import main as sync_main
+    from respawned.cli.sync import main as sync_main
 
     forwarded: list[str] = []
     if args.dry_run:
@@ -115,7 +115,7 @@ def _sync(args: argparse.Namespace) -> int:
 
 
 def _review(args: argparse.Namespace) -> int:
-    from follow_up_engine.cli.review import main as review_main
+    from respawned.cli.review import main as review_main
 
     forwarded: list[str] = []
     if args.now is not None:

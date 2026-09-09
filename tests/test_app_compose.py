@@ -33,7 +33,7 @@ def test_app_service_receives_litellm_proxy_configuration(compose_environment):
     app_environment = json.loads(result.stdout)["services"]["app"]["environment"]
     assert app_environment["LITELLM_PROXY_URL"] == "http://litellm:4000"
     assert app_environment["LITELLM_MASTER_KEY"] == "sk-test-master-key"
-    assert app_environment["LITELLM_MODEL_ALIAS"] == "claude-5-sonnet"
+    assert app_environment["LITELLM_MODEL_ALIAS"] == "respawned-default"
 
 
 def test_app_startup_creates_required_services(app_stack):

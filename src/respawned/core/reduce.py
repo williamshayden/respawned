@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from follow_up_engine.core.context import BusinessContext
+from respawned.core.context import BusinessContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +53,7 @@ QUOTE_STATES_QUERY = text(
 SET_BUSINESS_TIMEZONE_QUERY = text(
     """
     SELECT set_config(
-        'follow_up_engine.business_timezone',
+        'respawned.business_timezone',
         :timezone_name,
         true
     )

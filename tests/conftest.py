@@ -48,11 +48,11 @@ def _test_environment() -> dict[str, str]:
         {
             "ANTHROPIC_API_KEY": "sk-ant-test",
             "DB_IMAGE": "postgres:16-alpine",
-            "DB_NAME": "follow_up_test",
-            "DB_PASSWORD": "follow_up_test",
+            "DB_NAME": "respawned_test",
+            "DB_PASSWORD": "respawned_test",
             "DB_PORT": _free_port(),
             "DB_TYPE": "postgres",
-            "DB_USER": "follow_up_test",
+            "DB_USER": "respawned_test",
             "EVENTS_FILENAME": "events.jsonl",
             "LITELLM_DB_NAME": "litellm_test",
             "LITELLM_DB_PASSWORD": "litellm_test",
@@ -75,7 +75,7 @@ def compose_environment() -> dict[str, str]:
 @pytest.fixture(scope="session")
 def app_stack(compose_environment: dict[str, str]) -> ComposeStack:
     stack = ComposeStack(
-        project=f"follow-up-engine-test-{os.getpid()}",
+        project=f"respawned-test-{os.getpid()}",
         environment=compose_environment,
     )
 

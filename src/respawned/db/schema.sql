@@ -128,7 +128,7 @@ SELECT
     COUNT(DISTINCT (
         deduplicated_events."timestamp" AT TIME ZONE COALESCE(
             NULLIF(
-                current_setting('follow_up_engine.business_timezone', true),
+                current_setting('respawned.business_timezone', true),
                 ''
             ),
             'UTC'

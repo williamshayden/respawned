@@ -22,9 +22,9 @@ class RecordingEngine:
 def test_create_tables_uses_packaged_schema_despite_container_environment(
     monkeypatch,
 ):
-    from follow_up_engine.db.helpers import pg_connect
+    from respawned.db.helpers import pg_connect
 
-    monkeypatch.setenv("SCHEMA_PATH", "/src/follow_up_engine/db/schema.sql")
+    monkeypatch.setenv("SCHEMA_PATH", "/src/respawned/db/schema.sql")
     reloaded_pg_connect = importlib.reload(pg_connect)
     engine = RecordingEngine()
 

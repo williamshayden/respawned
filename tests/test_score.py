@@ -3,9 +3,9 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from follow_up_engine.core.context import BusinessContext
-from follow_up_engine.core.reduce import QuoteState
-from follow_up_engine.core.score import (
+from respawned.core.context import BusinessContext
+from respawned.core.reduce import QuoteState
+from respawned.core.score import (
     Policy,
     ReasonPolicy,
     load_policy,
@@ -17,7 +17,7 @@ NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
 DEFAULT_POLICY_PATH = (
     Path(__file__).parents[1]
     / "src"
-    / "follow_up_engine"
+    / "respawned"
     / "config"
     / "policy.yaml"
 )

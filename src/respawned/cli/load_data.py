@@ -4,8 +4,8 @@ import sys
 
 from sqlalchemy.exc import IntegrityError
 
-from follow_up_engine.db.helpers.pg_connect import create_tables, get_engine
-from follow_up_engine.db.helpers.pg_load import load_from_database, load_json_file
+from respawned.db.helpers.pg_connect import create_tables, get_engine
+from respawned.db.helpers.pg_load import load_from_database, load_json_file
 
 
 def load_table(engine, table_name, source):

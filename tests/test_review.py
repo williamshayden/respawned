@@ -6,17 +6,17 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
-from follow_up_engine.cli.outbox import enqueue_outbox
-from follow_up_engine.core.candidates import Candidate
-from follow_up_engine.core.score import load_policy
-from follow_up_engine.llm.adapter import LiteLLMAdapter
+from respawned.cli.outbox import enqueue_outbox
+from respawned.core.candidates import Candidate
+from respawned.core.score import load_policy
+from respawned.llm.adapter import LiteLLMAdapter
 
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
 DEFAULT_POLICY_PATH = (
     Path(__file__).parents[1]
     / "src"
-    / "follow_up_engine"
+    / "respawned"
     / "config"
     / "policy.yaml"
 )
@@ -129,7 +129,7 @@ def _insert_candidate(
 
 
 def _draft(connection, *, candidate: Candidate):
-    from follow_up_engine.cli.review import draft_candidate
+    from respawned.cli.review import draft_candidate
 
     return draft_candidate(
         connection,
@@ -141,7 +141,7 @@ def _draft(connection, *, candidate: Candidate):
 
 
 def test_approving_same_draft_twice_enqueues_one_sms(postgres_connection):
-    from follow_up_engine.cli.review import approve_draft
+    from respawned.cli.review import approve_draft
 
     phone = "+1 (312) 555-0101"
     quote_id = "REVIEW-IDEMPOTENT"
@@ -184,7 +184,7 @@ def test_approving_same_draft_twice_enqueues_one_sms(postgres_connection):
 
 
 def test_approving_email_candidate_enqueues_one_email(postgres_connection):
-    from follow_up_engine.cli.review import approve_draft
+    from respawned.cli.review import approve_draft
 
     phone = "+1 (312) 555-0198"
     quote_id = "REVIEW-EMAIL"
@@ -216,7 +216,7 @@ def test_approval_blocks_cooldown_consumed_after_drafting(
     postgres_connection,
     contact_source,
 ):
-    from follow_up_engine.cli.review import ReviewBlockedError, approve_draft
+    from respawned.cli.review import ReviewBlockedError, approve_draft
 
     phone = "+1 (312) 555-0102"
     quote_id = f"REVIEW-COOLDOWN-{contact_source}"
@@ -260,7 +260,7 @@ def test_approval_blocks_cooldown_consumed_after_drafting(
 def test_approval_blocks_when_a_mentioned_quote_is_no_longer_open(
     postgres_connection,
 ):
-    from follow_up_engine.cli.review import ReviewBlockedError, approve_draft
+    from respawned.cli.review import ReviewBlockedError, approve_draft
 
     phone = "+13125550103"
     primary_id = "REVIEW-PRIMARY-OPEN"
@@ -293,7 +293,7 @@ def test_approval_blocks_when_a_mentioned_quote_is_no_longer_open(
 def test_candidate_drafts_are_generated_lazily_in_priority_order(
     postgres_connection,
 ):
-    from follow_up_engine.cli.review import (
+    from respawned.cli.review import (
         iter_candidate_drafts,
         load_latest_candidates,
     )

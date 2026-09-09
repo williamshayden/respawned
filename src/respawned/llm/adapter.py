@@ -7,7 +7,7 @@ from typing import Any
 
 
 DEFAULT_PROXY_URL = "http://litellm:4000"
-DEFAULT_MODEL_ALIAS = "claude-5-sonnet"
+DEFAULT_MODEL_ALIAS = "respawned-default"
 
 CompletionFunction = Callable[..., Any]
 ChatMessage = Mapping[str, str]

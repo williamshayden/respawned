@@ -1,7 +1,7 @@
 import sys
 from types import SimpleNamespace
 
-from follow_up_engine.llm.adapter import LiteLLMAdapter
+from respawned.llm.adapter import LiteLLMAdapter
 
 
 def test_adapter_sends_unprefixed_alias_to_proxy_request():

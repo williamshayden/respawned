@@ -1,6 +1,18 @@
-# Follow-up Engine
+# Respawned
 
-Follow-up Engine is an MVP for prioritizing open service quotes, drafting professional follow-up messages with an LLM, and placing human-approved messages into a mock delivery outbox. It loads quote and event data into PostgreSQL, reduces each quote to its current state, applies a deterministic follow-up policy, and presents the highest-value customers for review.
+Respawned is an MVP for prioritizing open service quotes, drafting professional follow-up messages with an LLM, and placing human-approved messages into a mock delivery outbox. It loads quote and event data into PostgreSQL, reduces each quote to its current state, applies a deterministic follow-up policy, and presents the highest-value customers for review.
+
+## Renaming an existing installation
+
+The Python package and CLI are now `respawned`. Reinstall the project with
+`uv sync --frozen`, update scripts and imports to `respawned`, and update any
+project-specific `FUE_` environment variables to the `RESPAWNED_` prefix.
+Existing database names, users, credentials, and Compose volumes remain valid;
+keep their configured values. The new database names in `.env.example` apply
+only to fresh installations. Candidate identities and stored records are preserved.
+If you rename your checkout directory, preserve the existing Compose project name
+with `docker compose -p <existing-project>` so it continues to use the same volumes.
+The historical agent transcript and release artifact names retain their original spelling.
 
 ## Quickstart
 
@@ -36,28 +48,14 @@ docker compose --profile postgres up -d --wait db
 
 This starts only PostgreSQL and waits for its healthcheck. Loading, reducing, scoring, candidate sync, and outbox export do not use an LLM. The follow-up CLI runs on the host through uv.
 
-### 3. Create a short CLI command
+### 3. Run the CLI
 
-From the repository root, define this alias in Bash or WSL:
-
-```bash
-alias fue='uv run --env-file .env follow-up-engine'
-```
-
-The alias lasts for the current shell. Add the same line to your shell profile if you want it available in future sessions.
-
-For PowerShell, use a function instead:
-
-```powershell
-function fue { uv run --env-file .env follow-up-engine @args }
-```
-
-Without either shortcut, replace `fue` in the examples below with `uv run --env-file .env follow-up-engine`.
+Use `uv run --env-file .env respawned` from the project root to load the local configuration. The examples below include this full command.
 
 ### 4. Load the seed data
 
 ```bash
-fue load
+uv run --env-file .env respawned load
 ```
 
 This creates or updates the schema and loads `seed/quotes.json` and `seed/events.jsonl`. Loading the same source again is safe.
@@ -67,8 +65,8 @@ For the included seed, the loader reports 30 quote records and 88 event input re
 ### 5. Preview and persist candidates
 
 ```bash
-fue sync --dry-run --now 2026-08-20T12:00:00Z
-fue sync --now 2026-08-20T12:00:00Z
+uv run --env-file .env respawned sync --dry-run --now 2026-08-20T12:00:00Z
+uv run --env-file .env respawned sync --now 2026-08-20T12:00:00Z
 ```
 
 Pinning `--now` allows us to reproduce the results that we achieved on a given date compared to the seed data. On a fresh database, the dry run selects ten candidates and reports ten as new without writing a sync run or candidate rows. It may still ensure that the current schema exists. The real sync persists those ten candidates. Running it again over unchanged data does not create duplicates. Omit `--now` in normal operation to score against the current time.
@@ -81,7 +79,7 @@ Review is the only quickstart step that requires the LLM. Add a real `ANTHROPIC_
 
 ```bash
 docker compose --profile litellm up -d --wait litellm
-fue review --now 2026-08-20T12:00:00Z
+uv run --env-file .env respawned review --now 2026-08-20T12:00:00Z
 ```
 
 The review flow displays pending candidates in score order and drafts messages lazily through. For each message, choose:
@@ -96,7 +94,7 @@ Approval is idempotent. Re-approving the same draft cannot create another outbox
 ### 7. Export the mock outbox
 
 ```bash
-fue outbox --path outbox.csv
+uv run --env-file .env respawned outbox --path outbox.csv
 ```
 
 The export contains every outbox row in stable ID order. Rows remain pending because this MVP has no delivery method. The source data also has no customer email-address field, so an email-channel row still carries only the customer's phone identifier and is not yet deliverable as email.
@@ -121,7 +119,7 @@ The test suite includes unit tests and PostgreSQL/Compose integration tests. Int
 
 ## Follow-up policy
 
-The policy can be found and edited in [`src/follow_up_engine/config/policy.yaml`](src/follow_up_engine/config/policy.yaml).
+The policy can be found and edited in [`src/respawned/config/policy.yaml`](src/respawned/config/policy.yaml).
 
 ```text
 score = reason base + amount factor + recency factor

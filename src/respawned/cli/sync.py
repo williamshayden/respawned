@@ -12,10 +12,10 @@ from uuid import UUID, uuid4
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from follow_up_engine.core.candidates import Candidate, select_candidates
-from follow_up_engine.core.reduce import QuoteState, reduce_quotes
-from follow_up_engine.core.score import Policy, load_policy, score_quotes
-from follow_up_engine.db.helpers.pg_connect import create_tables, get_engine
+from respawned.core.candidates import Candidate, select_candidates
+from respawned.core.reduce import QuoteState, reduce_quotes
+from respawned.core.score import Policy, load_policy, score_quotes
+from respawned.db.helpers.pg_connect import create_tables, get_engine
 
 
 DEFAULT_POLICY_PATH = Path(__file__).parents[1] / "config" / "policy.yaml"
@@ -186,7 +186,7 @@ def _parse_now(value: str) -> datetime:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="follow-up-engine sync")
+    parser = argparse.ArgumentParser(prog="respawned sync")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--now", type=_parse_now)

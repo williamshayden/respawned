@@ -5,18 +5,18 @@ from uuid import uuid4
 
 from sqlalchemy import text
 
-from follow_up_engine.cli.review import load_latest_candidates
-from follow_up_engine.cli.sync import compute_candidates, sync_candidates
-from follow_up_engine.core.context import BusinessContext
-from follow_up_engine.core.reduce import QuoteState
-from follow_up_engine.core.score import Policy, ReasonPolicy, load_policy
+from respawned.cli.review import load_latest_candidates
+from respawned.cli.sync import compute_candidates, sync_candidates
+from respawned.core.context import BusinessContext
+from respawned.core.reduce import QuoteState
+from respawned.core.score import Policy, ReasonPolicy, load_policy
 
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
 DEFAULT_POLICY_PATH = (
     Path(__file__).parents[1]
     / "src"
-    / "follow_up_engine"
+    / "respawned"
     / "config"
     / "policy.yaml"
 )

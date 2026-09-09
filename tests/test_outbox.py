@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 
 def test_enqueueing_same_draft_twice_creates_one_outbox_row(postgres_connection):
-    from follow_up_engine.cli.outbox import enqueue_outbox
+    from respawned.cli.outbox import enqueue_outbox
 
     first_id = enqueue_outbox(
         postgres_connection,
@@ -48,7 +48,7 @@ def test_enqueueing_same_draft_twice_creates_one_outbox_row(postgres_connection)
 
 
 def test_enqueueing_different_drafts_creates_distinct_rows(postgres_connection):
-    from follow_up_engine.cli.outbox import enqueue_outbox
+    from respawned.cli.outbox import enqueue_outbox
 
     first_id = enqueue_outbox(
         postgres_connection,
@@ -84,7 +84,7 @@ def test_enqueueing_different_drafts_creates_distinct_rows(postgres_connection):
 
 
 def test_export_outbox_writes_deterministic_csv(postgres_connection, tmp_path):
-    from follow_up_engine.cli.outbox import enqueue_outbox, export_outbox
+    from respawned.cli.outbox import enqueue_outbox, export_outbox
 
     postgres_connection.execute(text("TRUNCATE outbox RESTART IDENTITY"))
     enqueue_outbox(
