@@ -50,7 +50,7 @@ python3 -m http.server 8140 --bind 127.0.0.1 \
   --directory /absolute/path/to/new-static-output
 ```
 
-Check `/`, `/agent-integration/`, in-page anchors, mobile **Contents**, the
+Check `/`, `/agent-integration/`, `/api/`, in-page anchors, mobile **Contents**, the
 collapsed demo, and download links. With reduced motion enabled the demo remains
 on its poster. Check a missing route returns HTTP 404 after deployment. Python's
 preview server does not apply Cloudflare `_headers` or the custom 404 document.
@@ -74,10 +74,11 @@ Link activation follows successful live verification.
 
 - `site/content/index.md` is the canonical website installation and operation
   guide. Keep changes consistent with `README.md`, `docs/WEB_UI.md`, and the API.
-- The agent page is built directly from `docs/AGENT_INTEGRATION.md`; never keep a
-  second hand-edited copy. Its repository-relative links are explicitly mapped
-  to website anchors or a revision-pinned canonical API guide. New relative links
-  fail the build until mapped.
+- The agent page and API reference are built directly from
+  `docs/AGENT_INTEGRATION.md` and `docs/API.md`; never keep second hand-edited
+  copies. Repository-relative links are explicitly mapped to website pages and
+  anchors, or revision-pinned source files. New relative links fail the build
+  until mapped. Both source files are included in `site-manifest.json`.
 - Update demo media and `docs/media/demo-provenance.json` together. The builder
   rejects mismatched files; do not patch generated HTML or media after building.
 - Keep package provenance pinned unless deliberately rebuilding and qualifying a

@@ -1,4 +1,4 @@
-# API, CLI, and policy
+# API reference
 
 Respawned exposes one deterministic application core through the CLI and HTTP
 API. A source adapter imports facts; policy selects candidates; a drafting
