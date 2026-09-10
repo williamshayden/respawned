@@ -133,6 +133,9 @@ class OutboxClient:
                 while not response.isclosed():
                     budget()
                     chunk = response.read1(min(65536, MAX_RESPONSE_BYTES + 1 - len(raw)))
+                    # Timer shutdown can wake the read as EOF instead of an error.
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError
                     if not chunk:
                         break
                     raw.extend(chunk)

@@ -293,6 +293,38 @@ def test_read_timeout_is_not_a_mutation(api):
     assert len(api.requests) == 1
 
 
+@pytest.mark.parametrize("chunk", [b"", b"{}"])
+@pytest.mark.parametrize("mutation", [False, True])
+def test_read_completing_after_deadline_is_a_timeout(monkeypatch, chunk, mutation):
+    state = SimpleNamespace(now=100.0, closed=False, requests=[])
+
+    def read_after_deadline(_limit):
+        state.now += 0.3
+        state.closed = True
+        return chunk
+
+    response = SimpleNamespace(
+        status=200, length=None, getheader=lambda _name, default=None: default,
+        isclosed=lambda: state.closed, read1=read_after_deadline, close=lambda: None,
+    )
+    transport = SimpleNamespace(settimeout=lambda _timeout: None, shutdown=lambda _how: None)
+    connection = SimpleNamespace(
+        sock=transport, connect=lambda: None, close=lambda: None,
+        request=lambda *args, **kwargs: state.requests.append((args, kwargs)),
+        getresponse=lambda: response,
+    )
+    monkeypatch.setattr("respawned.client.time.monotonic", lambda: state.now)
+    monkeypatch.setattr("respawned.client.http.client.HTTPConnection", lambda *args, **kwargs: connection)
+    monkeypatch.setattr("respawned.client.Timer", lambda *_args: SimpleNamespace(start=lambda: None, cancel=lambda: None))
+    client = RespawnedClient("http://127.0.0.1:8000", OPERATOR, timeout=0.2)
+    message = "no retry was made" if mutation else "Could not reach the engine"
+    with pytest.raises(APIError, match=message) as failure:
+        (client.sync if mutation else client.queue)()
+    assert failure.value.status_code == 200
+    assert failure.value.ambiguous is mutation
+    assert len(state.requests) == 1
+
+
 @pytest.mark.parametrize("url", ["http://example.com", "http://192.168.1.2", "https://user:secret@example.com", "https://example.com?token=secret", "https://example.com#fragment", "https://example.com?", "https://example.com#", "https://example.com/\npath", "http://127.0.0.1:bad", "http://127.0.0.1:0", "https://example.com:0", "file:///tmp/app", "https://example.com\\@other.example"])
 def test_invalid_api_urls_fail_before_network(url):
     with pytest.raises(APIError):

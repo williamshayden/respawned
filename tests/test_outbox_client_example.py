@@ -175,6 +175,34 @@ def test_slow_response_cannot_extend_the_read_budget(api):
     assert len(api.requests) == 1
 
 
+@pytest.mark.parametrize("chunk", [b"", b"{}"])
+def test_read_completing_after_deadline_is_a_timeout(monkeypatch, chunk):
+    state = SimpleNamespace(now=100.0, closed=False, requests=[])
+
+    def read_after_deadline(_limit):
+        state.now += 0.3
+        state.closed = True
+        return chunk
+
+    response = SimpleNamespace(
+        status=200, getheader=lambda _name, default=None: default,
+        isclosed=lambda: state.closed, read1=read_after_deadline, close=lambda: None,
+    )
+    transport = SimpleNamespace(settimeout=lambda _timeout: None, shutdown=lambda _how: None)
+    connection = SimpleNamespace(
+        sock=transport, connect=lambda: None, close=lambda: None,
+        request=lambda *args, **kwargs: state.requests.append((args, kwargs)),
+        getresponse=lambda: response,
+    )
+    monkeypatch.setattr(example.time, "monotonic", lambda: state.now)
+    monkeypatch.setattr(example.http.client, "HTTPConnection", lambda *args, **kwargs: connection)
+    monkeypatch.setattr(example, "Timer", lambda *_args: SimpleNamespace(start=lambda: None, cancel=lambda: None))
+    client = example.OutboxClient("http://127.0.0.1:8000", TOKEN, timeout=0.2)
+    with pytest.raises(example.OutboxError, match="No retry was made"):
+        client.pending()
+    assert len(state.requests) == 1
+
+
 def test_cli_runs_without_checkout_imports_and_prints_json(api, tmp_path):
     copied = tmp_path / "outbox_client.py"
     shutil.copyfile(SCRIPT, copied)
