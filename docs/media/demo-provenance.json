@@ -25,8 +25,9 @@
       "fps": 25,
       "decoded_frames": 1214,
       "audio_tracks": 0,
-      "bytes": 2848549,
-      "sha256": "df0d845e26f8e649979218de35e32d2f0602da55bcef744e35c6562bb67a922a"
+      "bytes": 2828529,
+      "sha256": "0b3b8c0574f74ed96fb4fc04b3c09a99bf95b33cbb51a9961f96696b5374b29d",
+      "poster_sha256": "043da2fa2907271149b4ca3b902570bd1a9e08fad0a1091dddd2fa9248f99ffa"
     },
     {
       "file": "respawned-review-loop.mp4",
@@ -41,5 +42,6 @@
       "sha256": "0a8d82bb642352c5d28aa2da76b453bffedb56052e84446ae76f9e406531bf79"
     }
   ],
-  "verification": "Both MP4s fully decode. Sampled frames pass readability and panel-edge checks. The approval cut keeps the selected record and then shows its confirmed unsent outbox reservation. No external delivery occurred. Raw capture files and local credentials are excluded from the repository."
+  "verification": "Both MP4s fully decode. Sampled frames pass readability and panel-edge checks. The approval cut keeps the selected record and then shows its confirmed unsent outbox reservation. No external delivery occurred. Raw capture files and local credentials are excluded from the repository.",
+  "editing_revision": "Removed decorative eyebrow labels, corner chapter tags, and terminal header strips. Rebalanced text spacing. Original recording, timing, example disclosures, and unsent state are preserved."
 }
