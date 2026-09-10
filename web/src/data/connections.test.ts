@@ -1,3 +1,5 @@
+// Keep these request-contract tests on a legacy engine; workflow.test.ts covers discovery.
+vi.mock('./workflow', async importOriginal => ({ ...await importOriginal<typeof import('./workflow')>(), workflowRoot: async (baseUrl = '', signal?: AbortSignal) => { signal?.throwIfAborted(); return `${baseUrl.replace(/\/+$/, '')}/v1/ui` } }))
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LOCAL_SESSION } from './auth'
 import { CONNECTIONS_STORAGE_KEY, engineRequestOptions, LOCAL_ENGINE, normalizeEngineUrl, readSavedConnections, saveConnections, verifyEngineAccess } from './connections'
@@ -15,7 +17,7 @@ describe('engine connection boundaries', () => {
   })
 
   it.each([
-    'http://engine.example', 'http://192.168.1.20:8000', 'file:///tmp/engine',
+    'http://engine.example', 'http://192.168.1.20:8000', 'http://127.0.0.1:0', 'https://engine.example:0', 'file:///tmp/engine',
     'https://operator:secret@engine.example', 'https://engine.example?token=secret',
     'https://engine.example#login=secret', 'engine.example',
   ])('rejects insecure or credential-bearing engine address %s', value => {
@@ -61,7 +63,7 @@ describe('engine connection boundaries', () => {
   })
 
   it('routes setup, import, model, and workspace operations only to the selected engine', async () => {
-    const fetch = vi.fn().mockImplementation(async () => new Response('{}'))
+    const fetch = vi.fn().mockImplementation(async (url: string) => new Response(url.endsWith('/bootstrap') ? '{"review_enabled":true}' : '{}'))
     vi.stubGlobal('fetch', fetch)
     const baseUrl = 'https://remote.example/team'
     await readSetup('remote-only', undefined, baseUrl)

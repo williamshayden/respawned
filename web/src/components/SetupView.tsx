@@ -13,6 +13,8 @@ interface Props {
   onDisconnect: () => Promise<void> | void
   onImported?: () => void
   onOpenOutbox: () => void
+  onOpenReview: () => void
+  focusSources?: boolean
   onBusyChange?: (busy: boolean) => void
 }
 
@@ -31,7 +33,7 @@ function downloadTemplate() {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-export function SetupView({ connected, token, onConnect, onDisconnect, onImported, onOpenOutbox, baseUrl = '', onBusyChange }: Props) {
+export function SetupView({ connected, token, onConnect, onDisconnect, onImported, onOpenOutbox, onOpenReview, focusSources = false, baseUrl = '', onBusyChange }: Props) {
   const [accessToken, setAccessToken] = useState('')
   const [connecting, setConnecting] = useState(false)
   const [accessError, setAccessError] = useState<string | null>(null)
@@ -49,6 +51,8 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
   const [importError, setImportError] = useState<string | null>(null)
   const [importNotice, setImportNotice] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const sourceSection = useRef<HTMLElement>(null)
+  useEffect(() => { if (focusSources) sourceSection.current?.scrollIntoView({ block: 'start' }) }, [focusSources])
   const currentAccess = useRef(token)
   currentAccess.current = token
 
@@ -105,22 +109,23 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
 
   return <div className="setup-view">
     <div className="setup-intro">
+      {connected && <div className="setup-template-actions"><button className="button primary" disabled={savingModel || importing} onClick={onOpenReview}>Open review queue<ArrowUpRight size={16} /></button><button className="button" disabled={savingModel || importing} onClick={() => sourceSection.current?.scrollIntoView({ block: 'start' })}>Go to import</button></div>}
       <button className="button small" disabled={loading || savingModel || importing} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={14} className={loading ? 'spin' : ''} />Refresh status</button></div>
     {statusError && <p className="inline-error" role="alert">{statusError}</p>}
 
     <section className="setup-section" aria-labelledby="setup-access-title">
-      <div className="setup-section-heading"><KeyRound size={21} /><h2 id="setup-access-title">Review access</h2></div>
+      <div className="setup-section-heading"><KeyRound size={21} /><h2 id="setup-access-title">Engine access</h2></div>
       <div className="setup-section-body">
         <div className="setup-heading-row"><p>{baseUrl ? `Engine: ${baseUrl}` : isLocalSession(token) ? 'Local browser session' : 'Open the link from respawned ui, or enter a server access token.'}</p><span className={`setup-state ${connected ? 'is-ready' : ''}`}>{connected ? 'Unlocked' : 'Locked'}</span></div>
-        {connected ? <div className="setup-access-active"><Check size={18} /><p>{isLocalSession(token) ? 'Your session survives reloads and expires after 12 hours or when the server stops.' : 'Your token stays in this tab’s memory and clears on reload.'}</p><button className="button small" onClick={onDisconnect}>Lock access</button></div> : <>{!baseUrl && <details className="setup-launch-help"><summary>Connect from the CLI</summary><p>Run <code>respawned ui</code> to open an authenticated session. Use <code>respawned ui --no-open</code> to print a one-use link instead. Choose <code>--port 8001</code> if port 8000 is occupied.</p></details>}{baseUrl && <p className="setup-note">Enter the review token configured on this remote engine. It stays in this tab’s memory.</p>}<form className="setup-access-form" onSubmit={async event => {
+        {connected ? <div className="setup-access-active"><Check size={18} /><p>{isLocalSession(token) ? 'Your session survives reloads and expires after 12 hours or when the server stops.' : 'Your token stays in this tab’s memory and clears on reload.'}</p><button className="button small" onClick={onDisconnect}>Lock access</button></div> : <>{!baseUrl && <details className="setup-launch-help"><summary>Connect from the CLI</summary><p>Run <code>respawned ui</code> to open an authenticated session. Use <code>respawned ui --no-open</code> to print a one-use link instead. Choose <code>--port 8001</code> if port 8000 is occupied.</p></details>}{baseUrl && <p className="setup-note">Enter the engine access token configured on this remote engine. It stays in this tab’s memory.</p>}<form className="setup-access-form" onSubmit={async event => {
           event.preventDefault()
           setConnecting(true)
           setAccessError(null)
           try { await onConnect(accessToken.trim()); setAccessToken('') }
-          catch (error) { setAccessError(message(error, 'Could not unlock review access.')) }
+          catch (error) { setAccessError(message(error, 'Could not unlock engine access.')) }
           finally { setConnecting(false) }
         }}>
-          <label htmlFor="setup-review-token">Review access token</label>
+          <label htmlFor="setup-review-token">Engine access token</label>
           <div className="setup-input-action"><input id="setup-review-token" type="password" autoComplete="off" spellCheck={false} value={accessToken} onChange={event => setAccessToken(event.target.value)} placeholder="Enter the token from your server" required disabled={connecting} />
             <button type="submit" className="button primary" disabled={connecting || !accessToken.trim()}>{connecting && <LoaderCircle size={16} className="spin" />}{baseUrl ? 'Connect engine' : 'Connect local engine'}</button></div>
           {accessError && <p className="inline-error" role="alert">{accessError}</p>}
@@ -135,11 +140,66 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
       </div>
     </section>
 
+    <section className="setup-section" aria-labelledby="setup-source-title" ref={sourceSection}>
+      <div className="setup-section-heading"><Database size={21} /><h2 id="setup-source-title">Records & sources</h2></div>
+      <div className="setup-section-body">
+        <div className="setup-heading-row"><p>Import records and activity from your existing tools.</p><span className={`setup-state ${databaseReady ? 'is-ready' : ''}`}>{!connected ? 'Unlock to import' : databaseReady ? 'Database ready' : loading ? 'Checking' : 'Database unavailable'}</span></div>
+        {status && <p className="setup-note">{status.database.message}</p>}
+        <form onSubmit={async event => {
+          event.preventDefault()
+          if (!preview.payload) return
+          const startedWith = token
+          setImporting(true)
+          setImportError(null)
+          setImportNotice(null)
+          try {
+            const result = await importRecords(token, preview.payload, baseUrl)
+            if (currentAccess.current !== startedWith) return
+            setImportText('')
+            setImportNotice(`Imported ${result.opportunities_upserted} record${result.opportunities_upserted === 1 ? '' : 's'} and ${result.activities_inserted} new activit${result.activities_inserted === 1 ? 'y' : 'ies'}. Open the review queue and evaluate next actions.`)
+            onImported?.()
+          } catch (error) { if (currentAccess.current === startedWith) setImportError(message(error, 'Could not import the records.')) }
+          finally { if (currentAccess.current === startedWith) setImporting(false) }
+        }}>
+          <label className="setup-file-label">Choose a JSON file<input type="file" accept=".json,application/json" disabled={!connected || !databaseReady || importing} onChange={async event => {
+            const file = event.target.files?.[0]
+            if (!file) return
+            const startedWith = token
+            setImportError(null)
+            setImportNotice(null)
+            try {
+              if (file.size > 2_000_000) throw new Error('Choose a JSON file smaller than 2 MB. Split larger imports into batches.')
+              const text = await file.text()
+              if (currentAccess.current === startedWith) setImportText(text)
+            } catch (error) { if (currentAccess.current === startedWith) setImportError(message(error, 'Could not read this file.')) }
+            event.target.value = ''
+          }} /></label>
+          <label className="setup-json-label" htmlFor="setup-import-json">Or paste your import JSON</label>
+          <textarea id="setup-import-json" className="setup-json-input" value={importText} onChange={event => { setImportText(event.target.value); setImportError(null); setImportNotice(null) }} placeholder={'{ "opportunities": [...], "activities": [...] }'} disabled={!connected || !databaseReady || importing} spellCheck={false} rows={5} />
+          {preview.payload && <p className="setup-preview" role="status">Ready to validate: {preview.payload.opportunities.length} record{preview.payload.opportunities.length === 1 ? '' : 's'} · {preview.payload.activities.length} {preview.payload.activities.length === 1 ? 'activity' : 'activities'}</p>}
+          {preview.error && <p className="inline-error">{preview.error}</p>}
+          {importError && <p className="inline-error" role="alert">{importError}</p>}
+          {importNotice && <div><p className="setup-success" role="status"><Check size={15} />{importNotice}</p><button type="button" className="button" disabled={importing} onClick={onOpenReview}>Review imported records<ArrowUpRight size={16} /></button></div>}
+          <p className="setup-note">Matching record IDs replace the full saved snapshot, including clearing omitted optional fields. Activity IDs are immutable: resend the same fact, or use a new ID for a new event.</p>
+          <div className="setup-form-actions"><p>Importing does not generate drafts or send messages.</p><button className="button primary" type="submit" disabled={!connected || !databaseReady || importing || !preview.payload}>{importing ? <LoaderCircle size={16} className="spin" /> : <Upload size={16} />}Import records</button></div>
+        </form>
+        <details className="setup-details"><summary>Import format & API integration</summary><p>The API calls tracked records <code>opportunities</code>, regardless of your workflow. Give each record a stable ID and a <code>kind</code> such as <code>generic</code> or your own lowercase identifier. Use real source timestamps. Only add a contact route when you know the recipient.</p>
+          <div className="setup-template-actions"><button type="button" className="button small" onClick={downloadTemplate}><Download size={14} />Download template</button><button type="button" className="button small" onClick={async () => {
+            try { await navigator.clipboard.writeText(IMPORT_TEMPLATE); setCopied(true) }
+            catch { setCopied(false); setImportError('Copy was unavailable. Download the template or select its text below.') }
+          }}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? 'Copied' : 'Copy template'}</button></div>
+          <pre><code>{IMPORT_TEMPLATE}</code></pre>
+          <p>Replace the template values before importing. To integrate a source tool, send the same JSON to <code>POST {status?.sources.import_url ?? '/v1/workflow/import'}</code> with <code>Authorization: Bearer &lt;engine access token&gt;</code>. Import confirmed human replies as activities with <code>direction: "inbound"</code> and <code>classification: "human"</code>. Automated acknowledgments should use <code>classification: "automated"</code>.</p>
+          <p>There is no automatic mailbox or CRM sync in this version. “Evaluate queue” evaluates the records already imported; it does not fetch from external tools.</p>
+        </details>
+      </div>
+    </section>
+
     <section className="setup-section" aria-labelledby="setup-model-title">
       <div className="setup-section-heading"><Server size={21} /><h2 id="setup-model-title">Model backend</h2></div>
       <div className="setup-section-body">
         <div className="setup-heading-row"><p>Used to generate drafts.</p><span className={`setup-state ${status?.model.ready ? 'is-ready' : ''}`}>{!connected ? 'Unlock to configure' : status?.model.ready ? 'Configured' : loading ? 'Loading settings' : 'Setup needed'}</span></div>
-        {!connected && <p className="setup-note">Unlock review access to view and save the server’s model settings.</p>}
+        {!connected && <p className="setup-note">Unlock engine access to view and save the server’s model settings.</p>}
         {status?.model.error && <p className="inline-error">{status.model.error}. Enter valid settings below to replace it.</p>}
         {connected && model && <form onSubmit={async event => {
           event.preventDefault()
@@ -173,61 +233,6 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
       </div>
     </section>
 
-    <section className="setup-section" aria-labelledby="setup-source-title">
-      <div className="setup-section-heading"><Database size={21} /><h2 id="setup-source-title">Records & sources</h2></div>
-      <div className="setup-section-body">
-        <div className="setup-heading-row"><p>Import records and activity from your existing tools.</p><span className={`setup-state ${databaseReady ? 'is-ready' : ''}`}>{!connected ? 'Unlock to import' : databaseReady ? 'Database ready' : loading ? 'Checking' : 'Database unavailable'}</span></div>
-        {status && <p className="setup-note">{status.database.message}</p>}
-        <form onSubmit={async event => {
-          event.preventDefault()
-          if (!preview.payload) return
-          const startedWith = token
-          setImporting(true)
-          setImportError(null)
-          setImportNotice(null)
-          try {
-            const result = await importRecords(token, preview.payload, baseUrl)
-            if (currentAccess.current !== startedWith) return
-            setImportText('')
-            setImportNotice(`Imported ${result.opportunities_upserted} record${result.opportunities_upserted === 1 ? '' : 's'} and ${result.activities_inserted} new activit${result.activities_inserted === 1 ? 'y' : 'ies'}. Refresh the review queue to evaluate next actions.`)
-            onImported?.()
-          } catch (error) { if (currentAccess.current === startedWith) setImportError(message(error, 'Could not import the records.')) }
-          finally { if (currentAccess.current === startedWith) setImporting(false) }
-        }}>
-          <label className="setup-file-label">Choose a JSON file<input type="file" accept=".json,application/json" disabled={!connected || !databaseReady || importing} onChange={async event => {
-            const file = event.target.files?.[0]
-            if (!file) return
-            const startedWith = token
-            setImportError(null)
-            setImportNotice(null)
-            try {
-              if (file.size > 2_000_000) throw new Error('Choose a JSON file smaller than 2 MB. Split larger imports into batches.')
-              const text = await file.text()
-              if (currentAccess.current === startedWith) setImportText(text)
-            } catch (error) { if (currentAccess.current === startedWith) setImportError(message(error, 'Could not read this file.')) }
-            event.target.value = ''
-          }} /></label>
-          <label className="setup-json-label" htmlFor="setup-import-json">Or paste your import JSON</label>
-          <textarea id="setup-import-json" className="setup-json-input" value={importText} onChange={event => { setImportText(event.target.value); setImportError(null); setImportNotice(null) }} placeholder={'{ "opportunities": [...], "activities": [...] }'} disabled={!connected || !databaseReady || importing} spellCheck={false} rows={5} />
-          {preview.payload && <p className="setup-preview" role="status">Ready to validate: {preview.payload.opportunities.length} record{preview.payload.opportunities.length === 1 ? '' : 's'} · {preview.payload.activities.length} {preview.payload.activities.length === 1 ? 'activity' : 'activities'}</p>}
-          {preview.error && <p className="inline-error">{preview.error}</p>}
-          {importError && <p className="inline-error" role="alert">{importError}</p>}
-          {importNotice && <p className="setup-success" role="status"><Check size={15} />{importNotice}</p>}
-          <p className="setup-note">Matching record IDs replace the full saved snapshot, including clearing omitted optional fields. Activity IDs are immutable: resend the same fact, or use a new ID for a new event.</p>
-          <div className="setup-form-actions"><p>Importing does not generate drafts or send messages.</p><button className="button primary" type="submit" disabled={!connected || !databaseReady || importing || !preview.payload}>{importing ? <LoaderCircle size={16} className="spin" /> : <Upload size={16} />}Import records</button></div>
-        </form>
-        <details className="setup-details"><summary>Import format & API integration</summary><p>The API calls tracked records <code>opportunities</code>, regardless of your workflow. Give each record a stable ID and a <code>kind</code> such as <code>generic</code> or your own lowercase identifier. Use real source timestamps. Only add a contact route when you know the recipient.</p>
-          <div className="setup-template-actions"><button type="button" className="button small" onClick={downloadTemplate}><Download size={14} />Download template</button><button type="button" className="button small" onClick={async () => {
-            try { await navigator.clipboard.writeText(IMPORT_TEMPLATE); setCopied(true) }
-            catch { setCopied(false); setImportError('Copy was unavailable. Download the template or select its text below.') }
-          }}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? 'Copied' : 'Copy template'}</button></div>
-          <pre><code>{IMPORT_TEMPLATE}</code></pre>
-          <p>Replace the template values before importing. To integrate a source tool, send the same JSON to <code>POST /v1/ui/import</code> with <code>Authorization: Bearer &lt;review access token&gt;</code>. Import confirmed human replies as activities with <code>direction: "inbound"</code> and <code>classification: "human"</code>. Automated acknowledgments should use <code>classification: "automated"</code>.</p>
-          <p>There is no automatic mailbox or CRM sync in this version. “Refresh queue” evaluates the records already imported; it does not fetch from external tools.</p>
-        </details>
-      </div>
-    </section>
-
     <section className="setup-section" aria-labelledby="setup-outbox-title">
       <div className="setup-section-heading"><Mail size={21} /><h2 id="setup-outbox-title">Outbox & delivery</h2></div>
       <div className="setup-section-body">
@@ -241,7 +246,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
           <div className="setup-heading-row"><p>Approving a draft reserves an unsent message in the outbox. Delivery is manual in this version.</p><span className="setup-state">Export only</span></div>
           <ol className="setup-delivery-steps"><li>Review and approve the exact message text.</li><li>Open the outbox and export the approved messages.</li><li>Send through your own mail or messaging tool, then import the actual outbound event.</li></ol>
           <p className="setup-note">No email account, SMS provider, or sending worker is connected. Exporting does not mark a message sent; the UI keeps its recorded outbox status.</p>
-        </> : <p className="setup-note">{connected ? 'Load server status to view the available outbox integrations.' : 'Unlock review access to view this server’s outbox integrations.'}</p>}
+        </> : <p className="setup-note">{connected ? 'Load server status to view the available outbox integrations.' : 'Unlock engine access to view this server’s outbox integrations.'}</p>}
         <button className="button" disabled={!connected} onClick={onOpenOutbox}>Open outbox<ArrowUpRight size={17} /></button>
       </div>
     </section>

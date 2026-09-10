@@ -7,7 +7,7 @@ const fixturePath = fileURLToPath(new URL('./fixtures/ui-import.json', import.me
 const token = 'ui-simulation-review-token'
 
 async function unlock(page: Page) {
-  await page.getByLabel('Review access token', { exact: true }).fill(token)
+  await page.getByLabel('Engine access token', { exact: true }).fill(token)
   await page.getByRole('button', { name: 'Connect local engine', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Engine connected', exact: true, includeHidden: true })).toBeAttached()
 }

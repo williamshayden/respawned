@@ -88,7 +88,7 @@ export function useReview(client: ReviewClient | null, selectedRecordId: string 
       detailId.current = id
       setRecords(previous => [...new Map([...previous, record].map(item => [item.id, item])).values()])
     }, undefined, false),
-    reload: () => operate('Refreshing', async () => { await client?.sync() }, 'Queue refreshed.'),
+    reload: () => operate('Evaluating queue', async () => { await client?.sync() }, 'Queue evaluated.'),
     retry: () => operate('Reloading', async () => undefined),
     more: () => operate('Loading', () => load(nextOffset.current), undefined, false),
     operate,

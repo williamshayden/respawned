@@ -63,6 +63,8 @@ def _test_environment() -> dict[str, str]:
             "APP_PORT": _free_port(),
             "BIND_HOST": "127.0.0.1",
             "RESPAWNED_PROCESS_TOKEN": "",
+            "RESPAWNED_REVIEW_TOKEN": "compose-test-operator",
+            "RESPAWNED_OUTBOX_TOKEN": "",
             "DB_IMAGE": "postgres:16-alpine",
             "DB_DATA_MOUNT": "/var/lib/postgresql/data",
             "DB_NAME": "respawned_test",
@@ -130,7 +132,9 @@ def app_stack(compose_environment: dict[str, str]) -> ComposeStack:
 @pytest.fixture
 def lifecycle_stack() -> ComposeStack:
     """A separate owned stack whose restart cannot disrupt other DB fixtures."""
-    with running_app_stack(_test_environment()) as stack:
+    environment = _test_environment()
+    environment["RESPAWNED_REVIEW_TOKEN"] = "lifecycle-test-operator"
+    with running_app_stack(environment) as stack:
         yield stack
 
 

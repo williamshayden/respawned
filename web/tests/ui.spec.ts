@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { connect, mockEngine, navigate } from './mock-engine'
+import { createFixtures } from '../src/data/fixtures'
 
 const selectedPanel = (page: Page) => page.getByRole('region', { name: 'Selected record' })
 const row = (page: Page, text: string) => page.locator('.record-row').filter({ hasText: text })
@@ -159,7 +160,7 @@ test('a live request failure stays live and never replaces records with the demo
   await page.route('**/v1/ui/outbox?*', (route) => route.fulfill({ status: 200, json: { items: [], has_more: false } }))
   await page.route('**/v1/ui/inbox?*', (route) => route.fulfill({ status: 200, json: { items: [], total: 0, has_more: false, as_of: '2026-09-09T14:00:00Z', source_freshness: 'unknown', outreach_eligibility: 'not_evaluated' } }))
   await page.reload()
-  await page.getByLabel('Review access token', { exact: true }).fill('fictional-test-operator-token')
+  await page.getByLabel('Engine access token', { exact: true }).fill('fictional-test-operator-token')
   await page.getByRole('button', { name: 'Connect local engine', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Live records are temporarily unavailable.')
   await expect(page.getByRole('button', { name: 'Engine connected', exact: true })).toBeVisible()
@@ -188,4 +189,42 @@ test.describe('mobile review', () => {
     await navigate(page, 'Policy')
     await expect(page.getByRole('heading', { name: 'Effective policy' })).toBeVisible()
   })
+})
+
+test('source messages can be read before approval with keyboard access and preserved text', async ({ page }, testInfo) => {
+  const source = 'Hi Jordan,\n\n  Please send the revised portfolio.\n<img src=x onerror=alert(1)>\nhttps://source.example/' + 'x'.repeat(160)
+  const records = createFixtures().filter(record => record.kind === 'job_application')
+  const target = records.find(record => record.id === 'job-northstar-backend')!
+  target.activities[0] = { ...target.activities[0], type: 'note_added', summary: 'Interview completed.' }
+  target.activities[1] = { ...target.activities[1], type: 'contact_replied', summary: source, source_url: 'https://source.example/message/42' }
+  target.activities[2] = { ...target.activities[2], summary: null }
+  await page.route('**/v1/ui/records?*', route => route.fulfill({ json: { items: records, total: records.length, has_more: false, as_of: '2026-09-10T12:00:00Z' } }))
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  const activity = selectedPanel(page).locator('.timeline li').filter({ hasText: 'Recruiter replied' })
+  const disclosure = activity.locator('details')
+  const summary = activity.getByText('View message', { exact: true })
+  await expect(disclosure).not.toHaveAttribute('open')
+  await expect(activity.locator('p')).not.toBeVisible()
+  await expect(selectedPanel(page).locator('.activity-message')).toHaveCount(2)
+  await expect(selectedPanel(page).getByText('View activity', { exact: true })).toBeVisible()
+  await summary.focus()
+  await page.keyboard.press('Enter')
+  await expect(disclosure).toHaveAttribute('open', '')
+  await expect(activity.locator('p')).toBeVisible()
+  expect(await activity.locator('p').textContent()).toBe(source)
+  await expect(activity.locator('img')).toHaveCount(0)
+  await expect(activity.getByRole('link', { name: 'Source for Recruiter replied' })).toHaveAttribute('href', 'https://source.example/message/42')
+  await activity.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('source-message-desktop.png') })
+  await row(page, 'Maya Chen').click()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await activity.scrollIntoViewIfNeeded()
+  await expect(activity.locator('p')).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  expect(await activity.locator('p').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+  expect((await activity.locator('p').boundingBox())!.width).toBeGreaterThan(250)
+  await page.screenshot({ path: testInfo.outputPath('source-message-mobile.png') })
+  await summary.focus()
+  await page.keyboard.press('Enter')
+  await expect(disclosure).not.toHaveAttribute('open')
 })

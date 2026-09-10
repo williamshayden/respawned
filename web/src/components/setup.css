@@ -1,5 +1,6 @@
 .setup-view { flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--page-gutter) var(--section-gap); }
-.setup-intro { display: flex; justify-content: flex-end; padding: var(--section-gap) 0; }
+.setup-intro { display: flex; align-items: center; justify-content: flex-end; gap: 14px; flex-wrap: wrap; padding: var(--section-gap) 0; }
+.setup-intro > .setup-template-actions { margin: 0 auto 0 0; }
 .setup-section { display: grid; grid-template-columns: minmax(170px, 23%) minmax(0, 1fr); gap: var(--section-gap); padding: var(--section-gap) 0; border-top: 1px solid var(--border); }
 .setup-section-heading { display: flex; align-items: flex-start; gap: 12px; }
 .setup-section-heading > svg { color: var(--accent); margin-top: 1px; }

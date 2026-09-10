@@ -1,25 +1,27 @@
-"""Load bundled or explicitly selected fixtures through canonical ingestion."""
-
+"""Import the bundled sample fixtures through the engine API."""
+from datetime import datetime
+from decimal import Decimal
+import json
 from pathlib import Path
 
 from respawned.adapters import load_legacy_seed
-from respawned.core.ingest import IngestResult, ingest_records
-from respawned.db.helpers.pg_connect import create_tables, get_engine
+from respawned.client import APIError, RespawnedClient
 
 
-def load_demo(seed_dir: Path) -> IngestResult:
-    batch = load_legacy_seed(
-        seed_dir / "quotes.json",
-        seed_dir / "events.jsonl",
-    )
-    engine = get_engine()
+def load_demo(seed_dir: Path, client: RespawnedClient) -> dict:
     try:
-        create_tables(engine)
-        with engine.begin() as connection:
-            return ingest_records(
-                connection,
-                opportunities=batch.opportunities,
-                activities=batch.activities,
-            )
-    finally:
-        engine.dispose()
+        batch = load_legacy_seed(seed_dir / "quotes.json", seed_dir / "events.jsonl")
+    except ValueError as exc:
+        raise APIError(str(exc)) from exc
+
+    def encode(value):
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, Decimal):
+            return str(value)
+        raise TypeError("Unsupported fixture value")
+
+    payload = json.loads(json.dumps({
+        "opportunities": batch.opportunities, "activities": batch.activities,
+    }, default=encode))
+    return client.import_records(payload)

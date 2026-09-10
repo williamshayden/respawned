@@ -263,6 +263,13 @@ def _current_review_state(
     return CurrentReviewState(states, primary, ids, contact_name)
 
 
+def _require_matching_supplied_body(draft: PersistedDraft, body: str | None) -> None:
+    if body is not None and draft.body != body:
+        raise ReviewBlockedError(
+            "A different draft already exists. Read the current draft and edit it with its review_token."
+        )
+
+
 def draft_candidate(
     connection: Connection,
     *,
@@ -270,8 +277,13 @@ def draft_candidate(
     now: datetime,
     policy: Policy,
     adapter: DraftingAdapter,
+    body: str | None = None,
 ) -> PersistedDraft | None:
-    """Lazily persist safe copy for one current candidate."""
+    """Persist validated supplied copy or lazily generate it for a current candidate.
+
+    Supplied text follows the edit validator and remains exact apart from outer
+    whitespace. Only model-generated copy receives the configured sign-off.
+    """
     now = aware_utc(now, "now")
     existing = _load_candidate_draft(connection, candidate.id)
     if existing is not None and existing.status != "pending":
@@ -287,7 +299,9 @@ def draft_candidate(
         now=now,
         policy=policy,
     )
+    supplied_body = _validate_body(body, current.primary, policy) if body is not None else None
     if existing is not None:
+        _require_matching_supplied_body(existing, supplied_body)
         return existing
 
     reason = policy.reasons.get(candidate.reason)
@@ -296,30 +310,33 @@ def draft_candidate(
             f"candidate reason {candidate.reason!r} is not configured"
         )
     primary = current.primary
-    try:
-        body = draft_follow_up(
-            DraftPayload(
-                contact_name=current.contact_name,
-                owner_name=primary.owner_name,
-                tone=reason.tone,
-                other_open_opportunity_count=len(current.opportunity_ids) - 1,
-                max_characters=policy.drafting.max_characters,
-                sign_off=policy.drafting.sign_off,
-                require_owner_name=policy.drafting.require_owner_name,
-                kind=primary.kind,
-                title=primary.title,
-                company=primary.context.company,
-                role=primary.context.role,
-                stage=primary.context.stage,
-                summary=primary.context.summary,
-            ),
-            opportunity_status=primary.status or "",
-            adapter=adapter,
-        )
-    except DraftValidationError as exc:
-        raise ReviewBlockedError(f"draft failed validation: {exc}") from exc
-    except LLMAdapterError as exc:
-        raise ReviewBlockedError(f"draft generation failed: {exc}") from exc
+    if supplied_body is not None:
+        body = supplied_body
+    else:
+        try:
+            body = draft_follow_up(
+                DraftPayload(
+                    contact_name=current.contact_name,
+                    owner_name=primary.owner_name,
+                    tone=reason.tone,
+                    other_open_opportunity_count=len(current.opportunity_ids) - 1,
+                    max_characters=policy.drafting.max_characters,
+                    sign_off=policy.drafting.sign_off,
+                    require_owner_name=policy.drafting.require_owner_name,
+                    kind=primary.kind,
+                    title=primary.title,
+                    company=primary.context.company,
+                    role=primary.context.role,
+                    stage=primary.context.stage,
+                    summary=primary.context.summary,
+                ),
+                opportunity_status=primary.status or "",
+                adapter=adapter,
+            )
+        except DraftValidationError as exc:
+            raise ReviewBlockedError(f"draft failed validation: {exc}") from exc
+        except LLMAdapterError as exc:
+            raise ReviewBlockedError(f"draft generation failed: {exc}") from exc
     connection.execute(
         text(
             """
@@ -348,6 +365,8 @@ def draft_candidate(
         },
     )
     persisted = _load_candidate_draft(connection, candidate.id)
+    if persisted is not None:
+        _require_matching_supplied_body(persisted, supplied_body)
     return (
         persisted if persisted is not None and persisted.status == "pending" else None
     )

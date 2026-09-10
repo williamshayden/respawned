@@ -106,14 +106,15 @@ def engine():
 
 
 @pytest.fixture
-def client(engine):
+def client(engine, monkeypatch):
+    monkeypatch.setenv("RESPAWNED_REVIEW_TOKEN", "ingest-test-operator")
     def override_connection():
         with engine.begin() as connection:
             yield connection
 
     app.dependency_overrides[get_connection] = override_connection
     try:
-        with TestClient(app) as test_client:
+        with TestClient(app, headers={"Authorization": "Bearer ingest-test-operator"}) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()

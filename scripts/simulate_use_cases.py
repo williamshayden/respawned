@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from io import StringIO
@@ -20,15 +21,17 @@ import traceback
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from pydantic import TypeAdapter
 from rich.console import Console
 from sqlalchemy import create_engine, text
 
-from respawned.api.app import app, get_connection
-from respawned.cli.common import DEFAULT_POLICY_PATH
-from respawned.cli.outbox import export_outbox
+from respawned.api import ui
+from respawned.api.app import app, get_connection, get_workflow_clock, get_workflow_policy
+from respawned.client import APIError, RespawnedClient
+from respawned.config import DEFAULT_POLICY_PATH
+from respawned.core.candidates import Candidate
 from respawned.cli.review import run_review
 from respawned.core.policy import load_policy
-from respawned.core.sync import sync_candidates
 from respawned.db.helpers.pg_connect import create_tables
 from respawned.llm.adapter import LiteLLMAdapter
 
@@ -62,9 +65,44 @@ def activity(identity, kind="contact_replied", *, hours=1, suffix=None):
     }
 
 
+@contextmanager
+def simulation_authorization():
+    """Own one temporary operator credential without changing caller configuration."""
+    previous = os.environ.get("RESPAWNED_REVIEW_TOKEN")
+    token = uuid4().hex
+    os.environ["RESPAWNED_REVIEW_TOKEN"] = token
+    try:
+        yield {"Authorization": f"Bearer {token}"}
+    finally:
+        if previous is None:
+            os.environ.pop("RESPAWNED_REVIEW_TOKEN", None)
+        else:
+            os.environ["RESPAWNED_REVIEW_TOKEN"] = previous
+
+
+class InProcessWorkflowClient(RespawnedClient):
+    """Exercise SDK routes and CLI review against TestClient, without TCP claims."""
+
+    def __init__(self, http):
+        super().__init__("http://127.0.0.1")
+        self.http = http
+
+    def _request(self, method, path, payload=None, *, scope="workflow", csv=False):
+        response = self.http.request(method, path, **({"json": payload} if payload is not None else {}))
+        if not response.is_success:
+            raise APIError(str(response.json().get("detail", "Simulation request failed")),
+                           response.status_code, method not in {"GET", "HEAD"} and response.status_code >= 500)
+        return response.text if csv else response.json()
+
+
 class Journey:
     def __init__(self, engine, client, directory):
         self.engine, self.client, self.directory = engine, client, directory
+        self.api = InProcessWorkflowClient(client)
+        self.now, self.adapter = NOW, None
+        app.dependency_overrides[get_workflow_clock] = lambda: lambda: self.now
+        app.dependency_overrides[get_workflow_policy] = lambda: POLICY
+        app.dependency_overrides[ui.get_draft_adapter_factory] = lambda: lambda: self.adapter
         self.steps = []
         self.requests = []
         self.prompts = []
@@ -92,11 +130,12 @@ class Journey:
             ).mappings()]
 
     def sync(self, *, now=NOW):
-        with self.engine.begin() as connection:
-            result = sync_candidates(connection, now=now, policy=POLICY)
-        self.steps.append({"description": "Refresh follow-up queue", "passed": True,
-                           "candidates": [asdict(item) for item in result.candidates]})
-        return result.candidates
+        self.now = now
+        self.api.sync()
+        candidates = TypeAdapter(list[Candidate]).validate_python(self.api.queue()["items"])
+        self.steps.append({"description": "Refresh follow-up queue through HTTP", "passed": True,
+                           "candidates": [asdict(item) for item in candidates]})
+        return candidates
 
     def review(self, actions, *, body="Hello, thanks for getting in touch. How can Morgan help?",
                edit=None, before_action=None, now=NOW):
@@ -121,15 +160,13 @@ class Journey:
             return action
 
         try:
-            summary = run_review(
-                self.engine, now=now, policy=POLICY,
-                adapter=LiteLLMAdapter(
-                    proxy_url="http://unused.invalid", master_key="simulation-only",
-                    model_alias="scripted", completion_fn=complete,
-                ),
-                console=console, action_prompt=decide,
-                message_prompt=lambda *_: edit,
+            self.now = now
+            self.adapter = LiteLLMAdapter(
+                proxy_url="http://unused.invalid", master_key="simulation-only",
+                model_alias="scripted", completion_fn=complete,
             )
+            summary = run_review(self.api, console=console, action_prompt=decide,
+                                 message_prompt=lambda *_: edit)
             self.check("All scripted review actions were consumed", next(actions, None) is None)
             self.steps.append({"description": "Review result", "passed": True, **asdict(summary)})
             return summary
@@ -167,8 +204,7 @@ def customer_reply(j):
     j.check("Reopening and editing the draft makes no second model call", len(j.prompts) == 1)
     j.check("Only the exact edited copy is reserved, still unsent",
             len(outbox) == 1 and outbox[0]["body"] == edited and outbox[0]["status"] == "pending")
-    with j.engine.begin() as connection:
-        export_outbox(connection, j.directory / "outbox.csv")
+    (j.directory / "outbox.csv").write_text(j.api.export_outbox(format="csv"), encoding="utf-8", newline="")
     with (j.directory / "outbox.csv").open(encoding="utf-8", newline="") as handle:
         exported = list(csv.DictReader(handle))
     j.check("CSV preserves the reviewed recipient and copy",
@@ -282,11 +318,10 @@ def tracking_boundary(j):
                     "created_at": NOW.isoformat(),
                     "context": {"company": "Acme", "role": "Backend engineer", "stage": "Applied"}}
     j.ingest([receipt_only])
-    with j.engine.begin() as connection:
-        contactless = sync_candidates(connection, now=NOW + timedelta(days=8),
-                                      policy=POLICY, dry_run=True)
+    j.now = NOW + timedelta(days=8)
+    contactless = j.api.sync(dry_run=True)
     j.check("Contactless applications remain tracked without inventing a delivery route",
-            len(j.rows("opportunities")) == 1 and not contactless.candidates)
+            len(j.rows("opportunities")) == 1 and contactless["candidate_count"] == 0)
     j.ingest([receipt_only | {"contact_key": "simulation:known-recruiter"}], status=422)
     j.check("A partial contact identity does not overwrite the valid tracked application",
             j.rows("opportunities")[0]["contact_key"] is None)
@@ -364,7 +399,7 @@ def main():
                     yield connection
 
             app.dependency_overrides[get_connection] = connection_dependency
-            with TestClient(app) as client:
+            with simulation_authorization() as headers, TestClient(app, headers=headers) as client:
                 journey = Journey(engine, client, directory)
                 simulate(journey)
                 result["passed"] = True
@@ -389,7 +424,7 @@ def main():
 
     report = {"anchor_time": NOW.isoformat(), "policy": str(DEFAULT_POLICY_PATH),
               "duration_seconds": round(time.monotonic() - started, 3),
-              "execution": "Real PostgreSQL commits; in-process HTTP requests; real CLI review handler with scripted actions; deterministic model responses; no delivery",
+              "execution": "Real PostgreSQL commits; authenticated in-process HTTP workflow requests; API-backed CLI review with scripted actions; deterministic model responses; no delivery",
               "scenarios": results}
     (args.output / "results.json").write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
     lines = ["# Respawned scenario simulation", "", report["execution"] + ".", "",

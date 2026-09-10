@@ -48,7 +48,7 @@ export async function navigate(page: Page, name: string) {
 }
 
 export async function connect(page: Page, scope = 'all') {
-  await page.getByLabel('Review access token', { exact: true }).fill('browser-test-operator-token')
+  await page.getByLabel('Engine access token', { exact: true }).fill('browser-test-operator-token')
   await page.getByRole('button', { name: 'Connect local engine', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Engine connected', exact: true, includeHidden: true })).toBeAttached()
   await navigate(page, 'Review queue')

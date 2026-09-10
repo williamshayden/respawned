@@ -1,226 +1,183 @@
-"""Command router for Respawned."""
-
+"""CLI clients for the engine API, plus local engine lifecycle commands."""
 from __future__ import annotations
 
 import argparse
-import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from importlib import import_module
 from importlib.metadata import version
+import os
 from pathlib import Path
 from typing import Any
 
+from respawned.cli.http import client_from_args, configure_connection, print_json, run
 
-CommandHandler = Callable[[argparse.Namespace], Any]
-CommandConfigurer = Callable[[argparse.ArgumentParser], None]
-DEFAULT_SEED_DIR = Path(__file__).resolve().parent / "demo_data"
+DEFAULT_SEED_DIR = Path(__file__).with_name("demo_data")
+CLIENT_COMMANDS = {"import", "demo", "sync", "draft", "review", "inbox", "outbox", "process"}
 
 
 @dataclass(frozen=True)
 class CommandSpec:
-    """A command's parser metadata, kept separate from its lazy handler."""
-
     name: str
     help: str
-    configure: CommandConfigurer | None = None
-
-
-def _configure_demo(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--seed-dir",
-        type=Path,
-        default=DEFAULT_SEED_DIR,
-        help="Directory containing quotes.json and events.jsonl (default: bundled demo)",
-    )
-
-
-def _configure_serve(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=os.getenv("APP_PORT", "8000"))
-    parser.add_argument("--api-only", action="store_true", help="Serve the workflow API without the bundled browser UI")
-
-
-def _configure_outbox(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--path",
-        type=Path,
-        required=True,
-        help="CSV output path",
-    )
-
-
-def _configure_ui(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--port", type=int, default=os.getenv("APP_PORT", "8000"))
-    parser.add_argument("--no-open", action="store_true", help="Print the one-use local launch link without opening a browser")
-
-
-def _configure_sync(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--limit", type=int)
-    parser.add_argument("--now")
-    parser.add_argument("--policy", type=Path)
-
-
-def _configure_review(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--now")
-    parser.add_argument("--policy", type=Path)
-
-
-def _configure_inbox(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--now", help="Activity cutoff with UTC offset; source freshness remains unknown")
-    parser.add_argument("--limit", type=int, help="Maximum contact routes, 1 to 200 (default: 50)")
-    parser.add_argument("--json", action="store_true", dest="json_output", help="Print structured evidence for agent clients")
-    parser.add_argument("--policy", type=Path)
 
 
 COMMANDS = (
-    CommandSpec("init", "Initialize or update the application schema"),
-    CommandSpec("demo", "Load the bundled legacy demo data", _configure_demo),
-    CommandSpec("serve", "Run the bundled browser UI and local workflow API", _configure_serve),
-    CommandSpec("ui", "Open the local browser UI without copying an access token", _configure_ui),
-    CommandSpec("sync", "Refresh the prioritized follow-up candidates", _configure_sync),
-    CommandSpec("review", "Review the prioritized follow-up candidates", _configure_review),
-    CommandSpec("inbox", "Inspect unanswered replies independently of outreach cooldown", _configure_inbox),
-    CommandSpec("outbox", "Export the delivery outbox to CSV", _configure_outbox),
+    CommandSpec("init", "Initialize this engine's database"),
+    CommandSpec("serve", "Start an engine"),
+    CommandSpec("ui", "Start a local engine and open its UI"),
+    CommandSpec("import", "Import records through the engine API"),
+    CommandSpec("demo", "Import bundled sample records"),
+    CommandSpec("sync", "Refresh or preview the engine's queue"),
+    CommandSpec("draft", "Submit draft text or request model-generated copy"),
+    CommandSpec("review", "Refresh the queue and review drafts interactively"),
+    CommandSpec("inbox", "Read unanswered replies"),
+    CommandSpec("outbox", "Read approved messages or export outbox history"),
+    CommandSpec("process", "Process a batch under the engine's review policy"),
 )
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="respawned",
-        description="Source-neutral follow-up orchestration",
-    )
-    parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {version('respawned')}"
-    )
-    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+    parser = argparse.ArgumentParser(prog="respawned", description="Follow-up workflows through one engine API")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version('respawned')}")
+    configure_connection(parser)
+    commands = parser.add_subparsers(dest="command", metavar="COMMAND")
     for command in COMMANDS:
-        command_parser = subparsers.add_parser(
-            command.name,
-            help=command.help,
-            description=command.help,
-        )
-        if command.configure is not None:
-            command.configure(command_parser)
+        child = commands.add_parser(command.name, help=command.help, description=command.help)
+        if command.name in CLIENT_COMMANDS:
+            configure_connection(child, defaults=False)
+        if command.name == "serve":
+            child.add_argument("--host", default="127.0.0.1")
+            child.add_argument("--port", type=int, default=os.getenv("APP_PORT", "8000"))
+            child.add_argument("--api-only", action="store_true", help="Omit the bundled UI")
+        elif command.name == "ui":
+            child.add_argument("--port", type=int, default=os.getenv("APP_PORT", "8000"))
+            child.add_argument("--no-open", action="store_true", help="Print the browser link without opening it")
+        elif command.name == "demo":
+            child.add_argument("--seed-dir", type=Path, default=DEFAULT_SEED_DIR)
+        elif command.name == "import":
+            child.add_argument("--file", required=True, help="JSON batch file, or - for standard input")
+        elif command.name == "draft":
+            child.add_argument("record_id", help="Stable record ID")
+            child.add_argument("--body-file", help="UTF-8 draft text file, or - for standard input")
+        elif command.name in {"sync", "review", "inbox", "process"}:
+            child.add_argument("--limit", type=int, default=None)
+            if command.name == "sync":
+                child.add_argument("--dry-run", action="store_true", help="Preview without saving a queue")
+            if command.name == "inbox":
+                child.add_argument("--json", action="store_true", dest="json_output")
+            if command.name != "process":
+                child.add_argument("--now", help=argparse.SUPPRESS)
+                child.add_argument("--policy", help=argparse.SUPPRESS)
+        elif command.name == "outbox":
+            from respawned.cli.outbox import configure_outbox
+            configure_outbox(child)
     return parser
 
 
-def _init(_args: argparse.Namespace) -> None:
+def _init(_args) -> int:
     from respawned.db.helpers.pg_connect import create_tables, get_engine
-
     engine = get_engine()
     try:
         create_tables(engine)
     finally:
         engine.dispose()
-    print("Initialized the Respawned schema.")
+    print("Initialized the Respawned database.")
+    return 0
 
 
-def _demo(args: argparse.Namespace) -> None:
-    from respawned.cli.demo import load_demo
-
-    result = load_demo(args.seed_dir)
-    print(
-        f"Loaded {result.opportunities_upserted} demo opportunities and "
-        f"{result.activities_inserted} new activities."
-    )
-
-
-def _serve(args: argparse.Namespace) -> None:
-    import uvicorn
-
+def _serve(args) -> int:
+    from respawned.cli.browser import launch_ui
+    if not 1 <= args.port <= 65535:
+        raise ValueError("Port must be between 1 and 65535")
     previous_assets = os.environ.get("RESPAWNED_UI_DIST")
     if args.api_only:
         os.environ["RESPAWNED_UI_DIST"] = "off"
     try:
-        uvicorn.run("respawned.api.app:app", host=args.host, port=args.port)
+        if args.host in {"127.0.0.1", "localhost"} and not os.environ.get("RESPAWNED_REVIEW_TOKEN", "").strip():
+            launch_ui(args.port, open_browser=False, show_ui_link=not args.api_only)
+        else:
+            if not os.environ.get("RESPAWNED_REVIEW_TOKEN", "").strip():
+                raise ValueError("Set RESPAWNED_REVIEW_TOKEN before exposing an engine beyond loopback")
+            import uvicorn
+            uvicorn.run("respawned.api.app:app", host=args.host, port=args.port)
     finally:
         if args.api_only:
             if previous_assets is None:
                 os.environ.pop("RESPAWNED_UI_DIST", None)
             else:
                 os.environ["RESPAWNED_UI_DIST"] = previous_assets
+    return 0
 
 
-def _outbox(args: argparse.Namespace) -> None:
-    from respawned.cli.outbox import main as outbox_main
-
-    outbox_main(["--path", os.fspath(args.path)])
-
-
-def _ui(args: argparse.Namespace) -> None:
+def _ui(args) -> int:
     from respawned.cli.browser import launch_ui
-
     launch_ui(args.port, open_browser=not args.no_open)
+    return 0
 
 
-def _sync(args: argparse.Namespace) -> int:
-    from respawned.cli.sync import main as sync_main
-
-    forwarded: list[str] = []
-    if args.dry_run:
-        forwarded.append("--dry-run")
-    if args.limit is not None:
-        forwarded.extend(("--limit", str(args.limit)))
-    if args.now is not None:
-        forwarded.extend(("--now", args.now))
-    if args.policy is not None:
-        forwarded.extend(("--policy", os.fspath(args.policy)))
-    return sync_main(forwarded)
+def _http_args(args) -> list[str]:
+    forwarded = ["--timeout", str(args.timeout)]
+    if args.api_url is not None:
+        forwarded += ["--api-url", args.api_url]
+    return forwarded
 
 
-def _inbox(args: argparse.Namespace) -> int:
-    from respawned.cli.inbox import main as inbox_main
+def _client_command(args) -> int:
+    if args.command == "demo":
+        from respawned.cli.demo import load_demo
+        return run(lambda: print_json(load_demo(args.seed_dir, client_from_args(args))))
+    module_name = "ingest" if args.command == "import" else args.command
+    module = import_module("respawned.cli." + module_name)
+    forwarded = _http_args(args)
+    if args.command == "import":
+        forwarded += ["--file", args.file]
+    elif args.command == "draft":
+        forwarded += [args.record_id]
+        if args.body_file is not None:
+            forwarded += ["--body-file", args.body_file]
+    elif args.command == "outbox":
+        if args.path is not None:
+            forwarded += ["--path", os.fspath(args.path)]
+        if args.json_output:
+            forwarded += ["--json"]
+        if args.pending:
+            forwarded += ["--pending"]
+        if args.limit is not None:
+            forwarded += ["--limit", str(args.limit)]
+    else:
+        if args.limit is not None:
+            forwarded += ["--limit", str(args.limit)]
+        if args.command == "sync" and args.dry_run:
+            forwarded += ["--dry-run"]
+        if args.command == "inbox" and args.json_output:
+            forwarded += ["--json"]
+    return module.main(forwarded)
 
-    forwarded: list[str] = []
-    if args.now is not None:
-        forwarded.extend(("--now", args.now))
-    if args.limit is not None:
-        forwarded.extend(("--limit", str(args.limit)))
-    if args.json_output:
-        forwarded.append("--json")
-    if args.policy is not None:
-        forwarded.extend(("--policy", os.fspath(args.policy)))
-    return inbox_main(forwarded)
 
-
-def _review(args: argparse.Namespace) -> int:
-    from respawned.cli.review import main as review_main
-
-    forwarded: list[str] = []
-    if args.now is not None:
-        forwarded.extend(("--now", args.now))
-    if args.policy is not None:
-        forwarded.extend(("--policy", os.fspath(args.policy)))
-    return review_main(forwarded)
-
-
-DEFAULT_HANDLERS: Mapping[str, CommandHandler] = {
-    "init": _init,
-    "demo": _demo,
-    "serve": _serve,
-    "ui": _ui,
-    "sync": _sync,
-    "review": _review,
-    "inbox": _inbox,
-    "outbox": _outbox,
+DEFAULT_HANDLERS: Mapping[str, Callable[[argparse.Namespace], Any]] = {
+    "init": _init, "serve": _serve, "ui": _ui,
+    **{name: _client_command for name in CLIENT_COMMANDS},
 }
 
 
-def main(
-    argv: Sequence[str] | None = None,
-    *,
-    handlers: Mapping[str, CommandHandler] | None = None,
-) -> Any:
-    """Parse ``argv`` and dispatch one explicit command."""
+def main(argv: Sequence[str] | None = None, *, handlers=None) -> Any:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help()
         return 0
-    command = args.command
-    active_handlers = handlers if handlers is not None else DEFAULT_HANDLERS
-    return active_handlers[command](args)
+    if getattr(args, "now", None) is not None or getattr(args, "policy", None) is not None:
+        parser.error("The engine owns time and policy. Set RESPAWNED_POLICY_PATH on the server; use the simulation harness for a fixed clock.")
+    if args.command not in CLIENT_COMMANDS and args.api_url is not None:
+        parser.error("--api-url applies to API client commands, not engine lifecycle commands")
+    active = handlers if handlers is not None else DEFAULT_HANDLERS
+    try:
+        return active[args.command](args)
+    except (OSError, ValueError) as exc:
+        import sys
+        print(f"respawned: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

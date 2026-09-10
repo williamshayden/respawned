@@ -23,7 +23,10 @@ def local_client(monkeypatch):
     app.state.local_session = manager
     app.middleware("http")(local_browser_origin_guard)
     app.include_router(create_session_router())
+    app.include_router(create_session_router(prefix="/v1/workflow/session"))
 
+    @app.api_route("/v1/workflow/probe", methods=["GET", "POST", "PUT", "DELETE"], dependencies=[Depends(require_review_authorization)])
+    @app.api_route("/v1/outbox/probe", methods=["GET"], dependencies=[Depends(require_review_authorization)])
     @app.api_route("/v1/ui/probe", methods=["GET", "POST", "PUT", "DELETE"], dependencies=[Depends(require_review_authorization)])
     def protected():
         return {"ok": True}
@@ -53,7 +56,7 @@ def test_one_use_launch_cookie_reload_and_logout(local_client):
     assert state.client.post("/v1/ui/session", json={"secret": secret}, headers=HEADERS).status_code == 401
     for method in ("POST", "PUT", "DELETE"):
         assert state.client.request(method, "/v1/ui/probe", headers=HEADERS).status_code == 200
-    previous_cookie = state.client.cookies.get(state.manager.cookie_name)
+    previous_cookie = state.client.cookies.get(state.manager.cookie_name, path="/v1/ui")
     assert state.client.delete("/v1/ui/session", headers=HEADERS).status_code == 204
     assert state.client.cookies.get(state.manager.cookie_name) is None
     assert state.client.get("/v1/ui/probe", headers={"Cookie": f"{state.manager.cookie_name}={previous_cookie}"}).status_code == 401
@@ -151,3 +154,40 @@ def test_launcher_binds_before_releasing_a_capability(monkeypatch, capsys):
             launch_ui(occupied.getsockname()[1])
     assert opened == []
     assert "#login=" not in capsys.readouterr().out
+
+
+def test_browser_session_has_only_workflow_and_compatibility_cookie_paths(local_client):
+    state = local_client
+    response = state.client.post("/v1/workflow/session", json={"secret": state.manager.launch_secret}, headers=HEADERS)
+    assert response.status_code == 200
+    cookies = [cookie for cookie in state.client.cookies.jar if cookie.name == state.manager.cookie_name]
+    assert {cookie.path for cookie in cookies} == {"/v1/workflow", "/v1/ui"}
+    assert all(cookie.value != state.manager.cli_token for cookie in cookies)
+    assert state.client.get("/v1/workflow/probe").status_code == 200
+    assert state.client.get("/v1/ui/probe").status_code == 200
+    assert state.client.get("/v1/outbox/probe").status_code == 401
+    assert state.client.post("/v1/workflow/probe").status_code == 403
+    assert state.client.post("/v1/workflow/probe", headers=HEADERS).status_code == 200
+    assert state.client.delete("/v1/workflow/session", headers=HEADERS).status_code == 204
+    assert not [cookie for cookie in state.client.cookies.jar if cookie.name == state.manager.cookie_name]
+    assert state.client.get("/v1/ui/probe").status_code == 401
+
+
+def test_local_cli_capability_is_independent_of_browser_login_and_logout(local_client):
+    state = local_client
+    token = state.manager.cli_token
+    assert token and token != state.manager.launch_secret
+    headers = {"Authorization": f"Bearer {token}"}
+    for method in ("GET", "POST", "PUT", "DELETE"):
+        assert state.client.request(method, "/v1/workflow/probe", headers=headers).status_code == 200
+    assert state.client.get("/v1/workflow/probe", headers={**headers, "Host": "attacker.example"}).status_code == 403
+    assert state.client.post("/v1/workflow/probe", headers={**headers, "Origin": "https://attacker.example"}).status_code == 403
+    assert state.client.get("/v1/workflow/probe", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert login(state).status_code == 200
+    assert state.client.get("/v1/workflow/probe", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert state.client.delete("/v1/ui/session", headers=HEADERS).status_code == 204
+    assert state.client.post("/v1/workflow/probe", headers=headers).status_code == 200
+    assert state.manager.cli_token == token
+    state.manager.close()
+    assert state.manager.cli_token == state.manager.launch_secret == ""
+    assert state.client.post("/v1/workflow/probe", headers=headers).status_code == 401

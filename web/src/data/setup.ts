@@ -1,5 +1,6 @@
+import { readEngineBootstrap, workflowRoot } from './workflow'
 import { accessHeaders, type ReviewAccess } from './auth'
-import { engineNetworkError, engineRequestOptions } from './connections'
+import { engineNetworkError, engineRequestOptions } from './transport'
 
 export interface ModelSettings {
   backend?: 'openai_compatible' | 'codex_cli'
@@ -106,7 +107,9 @@ async function request<T>(path: string, token: ReviewAccess, method = 'GET', bod
   const deadline = AbortSignal.timeout(20_000)
   const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline
   try {
-    response = await fetch(`${baseUrl}${path}`, { ...engineRequestOptions(token, baseUrl), method, headers, signal: requestSignal, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+    const transport = engineRequestOptions(token, baseUrl)
+    const root = await workflowRoot(baseUrl, requestSignal)
+    response = await fetch(`${root}${path}`, { ...transport, method, headers, signal: requestSignal, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
   } catch (error) {
     if (signal?.aborted) throw error
     if (deadline.aborted) throw new Error(method === 'GET'
@@ -119,12 +122,12 @@ async function request<T>(path: string, token: ReviewAccess, method = 'GET', bod
   try { payload = await response.json() }
   catch { throw new Error('The server returned an unreadable response. Check the server and try again.') }
   if (!response.ok) throw new Error(responseError(payload, response.status === 401 || response.status === 403
-    ? 'Review access was not accepted. Reconnect with the token configured on this server.'
+    ? 'Engine access was not accepted. Reconnect with the token configured on this server.'
     : 'The request could not be completed. Please try again.'))
   return payload as T
 }
 
-export const readBootstrap = (signal?: AbortSignal, baseUrl = '') => request<{ review_enabled: boolean }>('/v1/setup/bootstrap', '', 'GET', undefined, signal, baseUrl)
-export const readSetup = (token: ReviewAccess, signal?: AbortSignal, baseUrl = '') => request<SetupStatus>('/v1/ui/setup', token, 'GET', undefined, signal, baseUrl)
-export const saveModel = (token: ReviewAccess, settings: ModelSettings, baseUrl = '') => request<ModelStatus>('/v1/ui/setup/model', token, 'PUT', settings, undefined, baseUrl)
-export const importRecords = (token: ReviewAccess, payload: ImportPayload, baseUrl = '') => request<ImportResult>('/v1/ui/import', token, 'POST', payload, undefined, baseUrl)
+export const readBootstrap = (signal?: AbortSignal, baseUrl = '') => readEngineBootstrap(baseUrl, signal)
+export const readSetup = (token: ReviewAccess, signal?: AbortSignal, baseUrl = '') => request<SetupStatus>('/setup', token, 'GET', undefined, signal, baseUrl)
+export const saveModel = (token: ReviewAccess, settings: ModelSettings, baseUrl = '') => request<ModelStatus>('/setup/model', token, 'PUT', settings, undefined, baseUrl)
+export const importRecords = (token: ReviewAccess, payload: ImportPayload, baseUrl = '') => request<ImportResult>('/import', token, 'POST', payload, undefined, baseUrl)

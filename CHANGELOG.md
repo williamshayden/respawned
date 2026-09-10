@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.0.0
+
+- Browser, CLI, and Python SDK use the same authenticated workflow API.
+- Canonical import, queue, draft, review, settings, and workspace routes under
+  `/v1/workflow`; `/v1/ui` remains a compatibility alias.
+- API-backed CLI import, supplied draft text, processing, and JSON outbox reads.
+  Local launchers provide private CLI access; remote clients use an engine URL
+  and credential.
+- Agents can supply validated draft text without configuring an engine model.
+  Interactive CLI review always asks for human decisions.
+- Standalone outbox client, agent prompt, and shorter setup and integration guides.
+- Setup leads into import and review. Queue evaluation is separate from reading
+  the current view.
+
+### Migration
+
+The 2.0 CLI requires a 2.0 engine. Workflow commands no longer read PostgreSQL
+credentials or accept `--now` and `--policy`; engine setup owns those concerns.
+Legacy `/v1/ingest`, `/v1/inbox`, `/v1/drafts`, and `/v1/outbox` now require
+operator authentication. Outbox connector routes and receipt semantics are
+unchanged. Back up, upgrade, run `respawned init` on the engine host, and restart.
+See the [migration reference](docs/API.md#upgrading-to-20).
+
 ## 1.1.0
 
 - Connector API for pending approved messages, individual outbox items, and confirmed send receipts.

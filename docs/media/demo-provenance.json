@@ -1,34 +1,70 @@
 {
-  "source_revision": "7e44fb42de8db356c585ab072297edad2a68109f",
+  "application_revision": "1f33f8f17762ad6fde3e528261cc9d6aa4630d85",
   "source_recording_date": "2026-09-10",
+  "capture_source": "Recorded from the 2.0 working tree before final packaging. Published UI assets match the recorded UI; subsequent client fixes cover UTF-8 output, timeout classification, and equivalent local origins.",
   "sample_records": true,
-  "model_response": "Deterministic local OpenAI-compatible stub; no external model call",
-  "ui_footage": "Actual bundled application connected to an isolated PostgreSQL schema",
-  "agent_segment": "Illustrative API and CLI commands for connecting an existing agent; not a live agent execution",
-  "cli_presentation": {
-    "kind": "Typeset presentation of actual command and captured stdout",
-    "command": "respawned outbox --path exports/outbox.csv",
-    "stdout": "Exported 1 outbox rows to exports/outbox.csv\n",
-    "matches_browser_csv_byte_for_byte": true,
-    "outbox_rows": 1,
-    "status": "pending",
-    "sent_at": null
+  "model_response": "Live Codex CLI: four bounded agent turns and one actual engine drafting call.",
+  "ui_footage": "Actual application and API on an isolated PostgreSQL schema, operated by a scripted reviewer.",
+  "agent_segment": "Typeset excerpts from the actual Codex-driven import and queue-evaluation HTTP responses.",
+  "agent": {
+    "backend": "codex_cli",
+    "turns": 4,
+    "opportunities_imported": 1,
+    "activities_imported": 2,
+    "candidates": 1,
+    "approval_tool_available": false,
+    "sending_tool_available": false
   },
-  "editing": "Selected UI panels are cropped at their boundaries and framed with explanatory text. Timing and transitions are editorial choices, not model or network latency measurements. The portfolio loop dissolves to its first frame; the application does not undo the saved draft.",
+  "cli_presentation": {
+    "kind": "Typeset excerpt of actual CLI JSON output",
+    "command": "respawned outbox --pending --json",
+    "stdout": "{\n  \"items\": [\n    {\n      \"id\": 1,\n      \"draft_id\": \"02e08fce-eafd-42e7-9e35-cc841cfc14da\",\n      \"contact_key\": \"demo:contact:maya-chen\",\n      \"contact_address\": \"maya@northstar.example\",\n      \"contact_name\": \"Maya Chen\",\n      \"channel\": \"email\",\n      \"opportunity_ids\": [\n        \"demo:application:northstar-backend\"\n      ],\n      \"body\": \"Hi Maya, I enjoyed meeting the platform team. Do you have an update on next steps for the Backend Engineer role? I’m still interested and happy to share anything else the team needs.\\n\\nJordan\",\n      \"status\": \"pending\",\n      \"authorization_mode\": \"human\",\n      \"created_at\": \"2026-09-10T21:48:18.439870Z\",\n      \"sent_at\": null\n    }\n  ],\n  \"has_more\": false\n}\n",
+    "exact_reviewed_body": "Hi Maya, I enjoyed meeting the platform team. Do you have an update on next steps for the Backend Engineer role? I’m still interested and happy to share anything else the team needs.\n\nJordan",
+    "matches_approved_snapshot": true
+  },
+  "delivery": {
+    "target": "Local TEST HTTP endpoint that writes one durable JSON file",
+    "external_provider_contacted": false,
+    "sender": "test:local-demo",
+    "receipt_api": "/v1/outbox/1/receipt",
+    "outbox_id": 1,
+    "status": "sent",
+    "pending_after": {
+      "items": [],
+      "has_more": false
+    },
+    "idempotency": {
+      "test_endpoint_replay": true,
+      "receipt_replay": true,
+      "durable_delivery_files": 1
+    }
+  },
+  "editing": "Recorded UI sections are cropped and retimed. CLI and API response excerpts are typeset cards. Timings are editorial choices, not measurements of model or network latency. The closing transition does not undo the saved message or receipt.",
   "media": [
     {
       "file": "respawned-demo.mp4",
       "poster": "respawned-demo-poster.png",
       "width": 1920,
       "height": 1080,
-      "duration_seconds": 48.56,
+      "duration_seconds": 45.64,
       "fps": 25,
-      "decoded_frames": 1214,
+      "decoded_frames": 1141,
       "audio_tracks": 0,
-      "bytes": 2828529,
-      "sha256": "0b3b8c0574f74ed96fb4fc04b3c09a99bf95b33cbb51a9961f96696b5374b29d",
-      "poster_sha256": "043da2fa2907271149b4ca3b902570bd1a9e08fad0a1091dddd2fa9248f99ffa"
-    },
+      "bytes": 3363367,
+      "sha256": "f9178715d478bc5d06e853aeb43983f1c2f569315738f31da8b825338284fba6",
+      "poster_sha256": "e09be41419f4c7a89e3aaa7800558141b82123540d7a90f9ba73db223e0d5ec9"
+    }
+  ],
+  "evidence_sha256": {
+    "agent_trace": "044d1fab3c9496fb99f9bfca37249d8a07d753a7e0557ba3080e265a487a5de8",
+    "draft_answer": "b4610a6ddfc569a6771b0e8db4252fb55cada02f667e3afda9d0b3f7d6e42c1b",
+    "capture": "5850a5e47cedc65ed8199e868f5f9e20085dbd31ca87bf2d8a0f0a96d40bb661",
+    "raw_ui_video": "e80f07b5d48c0f18ea774fb7298ec35d2b597301b33ecd0e03b5f6d1a3ea7ffd",
+    "delivery_trace": "14d7d8ac72aa4a37b48695e66b63c9259cb2b0b8f26a61c23baad285669727ef",
+    "cli_stdout": "1316b7ea9f5f51743ba2fedc1aa8d5adf593fb82668641fb9692bf78a02808d2"
+  },
+  "verification": "The complete video decodes. Representative frames, source text, exact message parity, API results, and both idempotent replays were checked. Raw model events, prompts, and local credentials are excluded from the repository.",
+  "historical_media": [
     {
       "file": "respawned-review-loop.mp4",
       "poster": "respawned-review-poster.png",
@@ -39,9 +75,10 @@
       "decoded_frames": 356,
       "audio_tracks": 0,
       "bytes": 524806,
-      "sha256": "0a8d82bb642352c5d28aa2da76b453bffedb56052e84446ae76f9e406531bf79"
+      "sha256": "0a8d82bb642352c5d28aa2da76b453bffedb56052e84446ae76f9e406531bf79",
+      "source_revision": "7e44fb42de8db356c585ab072297edad2a68109f",
+      "model_response": "Deterministic local stub",
+      "delivery": "Unsent; no provider contacted"
     }
-  ],
-  "verification": "Both MP4s fully decode. Sampled frames pass readability and panel-edge checks. The approval cut keeps the selected record and then shows its confirmed unsent outbox reservation. No external delivery occurred. Raw capture files and local credentials are excluded from the repository.",
-  "editing_revision": "Removed decorative eyebrow labels, corner chapter tags, and terminal header strips. Rebalanced text spacing. Original recording, timing, example disclosures, and unsent state are preserved."
+  ]
 }

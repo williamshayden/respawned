@@ -3,7 +3,6 @@ import { AlertCircle, Check, LoaderCircle, Menu, RefreshCw, UserRound, X } from 
 import { createHttpClient } from './data/client'
 import { endLocalSession, isLocalSession, LOCAL_SESSION, restoreLocalSession } from './data/auth'
 import { useConnections } from './data/connections'
-import type { RecordRef } from './data/types'
 import { useWorkspaces } from './data/workspaces'
 import { actionable, contextLine, type Page } from './presentation'
 import { useReview } from './useReview'
@@ -27,6 +26,7 @@ export default function App() {
   const review = useReview(client, selectedId)
   const workspaces = useWorkspaces(token, baseUrl)
   const [page, setPage] = useState<Page>('Setup')
+  const [setupSources, setSetupSources] = useState(false)
   const [query, setQuery] = useState('')
   const [channel, setChannel] = useState('all')
   const [view, setView] = useState('ready')
@@ -48,15 +48,10 @@ export default function App() {
   }, [])
 
   const workspace = workspaces.items.find(item => item.id === scope)
-  const kinds = workspace?.kinds ?? []
-  const scopedRecords = review.records.filter(record => !kinds.length || kinds.includes(record.kind))
-  const inScope = (item: { opportunity_ids: string[]; record_refs?: RecordRef[] }) => {
-    if (!kinds.length) return true
-    const refs = item.record_refs ?? item.opportunity_ids.flatMap(id => review.records.find(record => record.id === id) ?? [])
-    return refs.some(record => kinds.includes(record.kind)) || refs.length < item.opportunity_ids.length
-  }
-  const scopedOutbox = review.outbox.filter(inScope)
-  const scopedInbox = (review.inbox?.items ?? []).filter(inScope)
+  // Workspace filtering and contact grouping belong to the API.
+  const scopedRecords = review.records
+  const scopedOutbox = review.outbox
+  const scopedInbox = review.inbox?.items ?? []
   const visibleRecords = scopedRecords.filter(record => (view === 'all' || actionable(record)) &&
     (channel === 'all' || record.contact?.channel === channel) &&
     [record.title, record.contact?.name, record.contact?.address, contextLine(record), record.reason.label].filter(Boolean).join(' ').toLowerCase().includes(query.toLowerCase()))
@@ -67,7 +62,9 @@ export default function App() {
   const navigate = (destination: Page) => {
     if (destination !== page && (contextBusy || connectionBusy)) { review.setError('Wait for the current setup or connection change to finish before leaving this page.'); return }
     setPage(destination); setSidebarOpen(false); setShowDetail(false)
+    if (destination !== 'Setup') setSetupSources(false)
   }
+  const openImport = () => { navigate('Setup'); setSetupSources(true) }
   const select = (id: string) => { review.rememberSelection(id); setSelectedId(id); setPage('Review queue'); setShowDetail(true) }
   const removeEdit = (id: string) => setEdits(previous => { const next = { ...previous }; delete next[id]; return next })
   const openConnection = () => {
@@ -135,8 +132,9 @@ export default function App() {
     <main className="main-workspace">
       <header className="page-header"><div className="page-title"><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={23} /></button>
         <div><h1>{page}</h1>{!['Overview', 'Connections'].includes(page) && <p>{engines.active.name}{!['Setup', 'Workspaces', 'Policy'].includes(page) && ` · ${workspace?.name ?? 'All work'}`}</p>}</div></div>
-        <div className="header-actions">{!['Setup', 'Workspaces', 'Connections', 'Overview'].includes(page) && <button className="button refresh-button" onClick={review.reload} disabled={!client || !!review.busy || review.loading}>
-          <RefreshCw size={19} className={review.busy === 'Refreshing' ? 'spin' : ''} />Refresh queue</button>}
+        <div className="header-actions">{!['Setup', 'Workspaces', 'Connections', 'Overview'].includes(page) && <button className="button refresh-button" onClick={review.retry} disabled={!client || !!review.busy || review.loading}>
+          <RefreshCw size={19} className={review.busy === 'Reloading' ? 'spin' : ''} />Refresh</button>}
+          {page === 'Review queue' && <button className="button" onClick={review.reload} disabled={!client || !!review.busy || review.loading} title="Evaluate all imported records on this engine and update review candidates.">Evaluate queue</button>}
           {!['Overview', 'Connections'].includes(page) && <span className="review-mode"><UserRound size={21} />{review.config ? review.config.policy_mode === 'automatic' ? 'Automatic policy' : 'Human review' : 'Review policy'}</span>}</div>
       </header>
       {(review.error || review.message) && <div className={`feedback ${review.error ? 'is-error' : ''}`} role={review.error ? 'alert' : 'status'}>
@@ -149,14 +147,14 @@ export default function App() {
           onAdd={(name, url, value) => connectionOperation(() => engines.add(name, url, value))}
           onUnlock={(id, value) => connectionOperation(() => engines.unlock(id, value))}
           onLock={lockConnection} onRemove={removeConnection} onOpen={id => changeEngine(id)} /> :
-        page === 'Setup' ? <SetupView key={engines.activeId} baseUrl={baseUrl} token={token} connected={!!token} onBusyChange={setContextBusy} onConnect={connect} onDisconnect={disconnect} onOpenOutbox={() => navigate('Outbox')} onImported={() => { void review.retry(); void workspaces.reload() }} /> :
+        page === 'Setup' ? <SetupView key={engines.activeId} baseUrl={baseUrl} token={token} connected={!!token} onBusyChange={setContextBusy} onConnect={connect} onDisconnect={disconnect} onOpenOutbox={() => navigate('Outbox')} onOpenReview={() => navigate('Review queue')} focusSources={setupSources} onImported={() => { void review.retry(); void workspaces.reload() }} /> :
         page === 'Workspaces' ? <WorkspaceManager key={`${engines.activeId}:${!!token}`} baseUrl={baseUrl} token={token} onBusyChange={setContextBusy} workspaces={workspaces.items} kinds={workspaces.available_kinds} loading={workspaces.loading} error={workspaces.error}
           onSetup={() => navigate('Setup')} onOpen={id => { changeWorkspace(id); navigate('Review queue') }} onSaved={async id => { await workspaces.reload(); setScope(id ?? 'all'); review.rememberSelection(null); setSelectedId(null); setShowDetail(false); setWorkspaceRevision(value => value + 1) }} /> :
-        !client ? <div className="empty-state"><h2>Connect to start tracking</h2><p>Set up review access, import your records, and configure a model when you are ready to draft.</p><button className="button primary" onClick={() => navigate('Setup')}>Open setup</button></div> :
+        !client ? <div className="empty-state"><h2>Connect to start tracking</h2><p>Set up engine access, import your records, and configure a model when you are ready to draft.</p><button className="button primary" onClick={() => navigate('Setup')}>Open setup</button></div> :
         review.loading ? <div className="loading-workspace" role="status"><LoaderCircle size={25} className="spin" /><p>Loading your workspace…</p></div> : page === 'Review queue' ?
         <div className="review-layout">
           <QueueList records={visibleRecords} selected={selected?.id ?? null} onSelect={select} query={query} onQuery={setQuery} channel={channel} onChannel={setChannel}
-            view={view} onView={setView} sort={sort} onSort={setSort} total={review.total} hasMore={review.hasMore} onMore={review.more} busy={!!review.busy} />
+            view={view} onView={setView} sort={sort} onSort={setSort} onImport={openImport} onClearFilters={() => { setQuery(''); setChannel('all') }} total={review.total} hasMore={review.hasMore} onMore={review.more} busy={!!review.busy} />
           <ReviewPanel record={selected} records={review.records} index={visibleRecords.findIndex(record => record.id === selected?.id)} total={visibleRecords.length} config={review.config} edit={edit} busy={review.busy}
             onBack={() => setShowDetail(false)} onEdit={body => {
               if (!selected?.draft) return

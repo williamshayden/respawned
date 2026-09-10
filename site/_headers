@@ -19,3 +19,9 @@
 
 /SHA256SUMS
   Content-Type: text/plain; charset=utf-8
+
+/examples/outbox_client.py
+  Content-Type: text/plain; charset=utf-8
+
+/agent-prompt.txt
+  Content-Type: text/plain; charset=utf-8

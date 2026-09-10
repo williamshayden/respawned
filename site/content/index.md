@@ -1,218 +1,175 @@
 # Documentation
 
-Respawned organizes follow-up work across job applications, sales, and other record types. Review and approve drafts in the browser or CLI, then collect approved messages from the outbox as JSON or CSV. Monetary values are optional.
+Track follow-ups, review drafts, and record confirmed sends from your own tools. Respawned supports job applications, sales, and other record types through one workflow.
 
-The browser, CLI, and HTTP API use the same Python application and PostgreSQL database. The browser UI is included in the Python package and Docker image. Node.js is only needed for frontend development.
+The browser, CLI, and Python SDK call the same API. The engine owns policy, validation, review, and stored state. Your agent can supply draft text or request a configured model backend.
 
-See [Agent integration](./agent-integration/) for a complete workflow and the [API reference](/api/) for endpoints, authentication, and request formats.
-
-V1 is intended for a trusted operator on loopback or a trusted network. It does not connect a mailbox, schedule source updates, or deliver messages. Some legacy API routes are unauthenticated; workspaces do not provide account or tenant isolation.
+[Agent integration](/agent-integration/) · [Agent prompt](/agent-prompt.txt) · [API reference](/api/)
 
 ## Install and start locally
 
-The installer requires `curl`, a POSIX shell, and Python 3.12+ with `venv` and `ensurepip`. It accepts Linux, macOS, or WSL; the application is qualified on Linux, including WSL2. PostgreSQL remains a separate requirement.
+The installer needs `curl`, a POSIX shell, and Python 3.12+ with `venv` and `ensurepip`. It supports Linux, macOS, and WSL; release qualification runs on Linux. PostgreSQL is a separate server requirement.
 
-[View installer](/install.sh) · [Download package (Python wheel)](/downloads/respawned-1.1.0-py3-none-any.whl) · [Checksums](/SHA256SUMS)
-
-Install Respawned:
+[View installer](/install.sh) · [Download package](/downloads/respawned-2.0.0-py3-none-any.whl) · [Checksums](/SHA256SUMS)
 
 ```bash
 curl -fsS https://respawned.williamshayden.com/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The installer verifies the pinned wheel's SHA-256 digest, installs it in `~/.local/share/respawned/1.1.0`, and adds a launcher at `~/.local/bin/respawned`. The package includes the CLI, HTTP API, and built browser UI. No Node.js, npm, or repository clone is needed.
+The installer verifies the package checksum, installs it in `~/.local/share/respawned/2.0.0`, and adds `~/.local/bin/respawned`. The package includes the CLI, API, SDK, and built browser UI. No repository clone or Node.js is needed.
 
-A [source archive](/downloads/respawned-1.1.0.tar.gz) and [package provenance](/release.json) are also available. The package provenance identifies the verified application build. Documentation and media can receive updates independently; their source revision is recorded in the [site manifest](/site-manifest.json).
-
-To download and inspect the script before running it:
+To inspect the installer first:
 
 ```bash
-curl -fsS \
-  https://respawned.williamshayden.com/install.sh -o install.sh
+curl -fsS https://respawned.williamshayden.com/install.sh -o install.sh
 # Read install.sh, then run it.
 sh install.sh
 ```
 
-Use `sh install.sh --prefix /absolute/path` for another installation prefix. Add the selected prefix's `bin` directory to `PATH` if needed. With the default prefix, use:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
+Use `sh install.sh --prefix /absolute/path` for another prefix. A [source archive](/downloads/respawned-2.0.0.tar.gz), [package provenance](/release.json), and [site manifest](/site-manifest.json) are also available.
 
 ### Configure PostgreSQL
 
-Provide a PostgreSQL database and a role allowed to create and update its application tables. Set the following values in the shell that runs Respawned, replacing the example database credentials:
+On the engine host, create a PostgreSQL database and role, then set its connection values:
 
 ```bash
 export DB_HOST=127.0.0.1
 export DB_PORT=5432
 export DB_NAME=respawned
 export DB_USER=respawned
-export DB_PASSWORD='replace-with-your-database-password'
-```
-
-Use the same environment for the server and CLI. The CLI does not automatically load a `.env` file, and shell exports do not carry into a new terminal. Store persistent settings using your shell or service configuration. Back up an existing database before upgrading; do not replace its storage or PostgreSQL major version as part of an application install.
-
-After installing the package and configuring the database:
-
-```bash
+export DB_PASSWORD='your-database-password'
 respawned init
 respawned ui
 ```
 
-`init` initializes or updates the schema. The app opens at `http://127.0.0.1:8000` with local review access connected. No manual review token or model credentials are needed to start, import records, or inspect work. Startup creates no sample records.
+The app opens at `http://127.0.0.1:8000` with browser access connected. The launcher creates private CLI access for other terminals on this machine. Database settings belong to the engine; workflow clients do not need them.
 
-Use `respawned ui --port 8001` if the default port is occupied, or `respawned ui --no-open` to print a one-use browser link. Stop the app with Ctrl+C; this does not stop or delete PostgreSQL.
+Engine commands do not automatically read `.env`. Keep `DB_*` values and model credentials in the engine's shell or service configuration. For a custom policy, set `RESPAWNED_POLICY_PATH` to a file outside the installation directory. Client-only environments use the engine URL, an access credential or local discovery, and an optional request timeout. Startup creates no sample records and needs no model credentials.
+
+PostgreSQL holds records, activities, drafts, outbox reservations and receipts, workspace definitions, and saved model settings. The installation directory holds program files and dependencies. Preserve the engine environment and any custom policy file separately from database backups.
+
+Use `respawned ui --port 8001` for another port or `--no-open` to print the browser link. Set `RESPAWNED_API_URL` to that loopback URL in CLI terminals using a custom port. Leave the engine running while using clients. Stop it with Ctrl+C; PostgreSQL remains separate.
+
+## CLI and agents
+
+Have your agent produce canonical `records.json` and plain draft text in `draft.txt`. With the local engine running, use another terminal:
+
+```bash
+respawned import --file records.json
+respawned draft ats:application-123 --body-file draft.txt
+respawned review
+respawned outbox --pending --json
+```
+
+Import saves facts. Draft submission checks eligibility and validates text. A person reviews the pending draft before it appears in the approved outbox.
+
+Omit `--body-file` to request the engine's model. `review` evaluates a bounded queue and always asks for human decisions. `sync --dry-run` previews eligibility; `process --limit 10` explicitly processes a batch under server policy.
+
+For a remote engine, set `RESPAWNED_API_URL` and `RESPAWNED_REVIEW_TOKEN`. The [agent guide](/agent-integration/) covers CLI, SDK, and HTTP use. [Download its prompt](/agent-prompt.txt) to give an agent the workflow and boundaries.
 
 ## Import source records
 
-Open **Setup → Records & sources**. Choose a JSON file or paste a payload, review the item counts, then select **Import records**. The UI accepts up to 1,000 combined opportunities and activities, within 2 MB.
+Open **Setup → Records & sources**. Choose a JSON file or paste a payload, check the item counts, and select **Import records**. Use **Review imported records** to continue to the queue.
 
-This example tracks an application before a human recipient is known. Replace the sample IDs, timestamps, and facts with source data:
+The [record contract](/api/#ingest-records) defines `opportunities` and `activities`. Import accepts up to 1,000 combined items within 2 MB. It stores facts without generating drafts or sending messages.
 
-```json
-{
-  "opportunities": [
-    {
-      "id": "ats:application-123",
-      "kind": "job_application",
-      "title": "Backend Engineer at Example",
-      "status": "open",
-      "created_at": "2026-09-01T15:00:00Z",
-      "context": {
-        "company": "Example",
-        "role": "Backend Engineer",
-        "stage": "Applied",
-        "summary": "Application received; no human contact is known."
-      }
-    }
-  ],
-  "activities": [
-    {
-      "id": "mail:receipt-456",
-      "opportunity_id": "ats:application-123",
-      "type": "application_receipt",
-      "occurred_at": "2026-09-01T15:01:00Z",
-      "channel": "email",
-      "direction": "inbound",
-      "classification": "automated",
-      "summary": "Automated application confirmation."
-    }
-  ]
-}
-```
+Use stable source IDs. Records are complete snapshots, so omitted optional fields are cleared. Activities are immutable; identical replay is accepted, while conflicting content rolls back the batch.
 
-A contactless record appears in **All tracked** but cannot become a drafting candidate. After confirming a recipient, import a complete replacement record containing a stable `contact_key` and at least one of `contact_email` or `contact_phone`. Do not treat a no-reply receipt address as a human recipient.
-
-Record IDs remain stable across imports. Opportunities are complete snapshots: omitting an optional field clears it. Activities are immutable: replaying identical IDs and contents is safe; changing an existing activity or referencing a missing record returns a conflict and rolls back the batch. Timestamps require a UTC offset. Extra fields are rejected.
-
-For an adapter on a trusted local network, save the payload as `records.json` and use:
-
-```bash
-curl --fail-with-body http://127.0.0.1:8000/v1/ingest \
-  -H 'Content-Type: application/json' --data-binary @records.json
-```
-
-The protected browser equivalent is `POST /v1/ui/import`. There is no canonical JSON ingest CLI command. A connector owns source credentials, mapping, pagination, and scheduling. Serialize record updates because the engine has no source-revision check. Import does not fetch further data, generate copy, or establish source freshness.
+A record without a confirmed human recipient remains visible in **All tracked** but cannot become an outreach candidate. Keep automated receipt addresses separate from human contacts.
 
 ## Create and monitor workspaces
 
-1. Open **Workspaces → New workspace**. Enter a name, optional description, and record types.
-2. Choose **Include all** for every current and future kind, or select specific kinds. **Add a record type** prepares a view before records of that kind exist.
-3. Select **Save workspace**, then open it to review its records.
+Choose **Workspaces → New workspace**, enter a name and record types, then save. **Include all** covers every current and future type. **Add a record type** prepares a view before importing it.
 
-Use matching lowercase `kind` identifiers in imports, such as `job_application`, `partnership`, or `project`. Identifiers start with a letter and contain up to 64 letters, digits, or underscores. No domain workspaces are predefined.
+Use matching lowercase `kind` identifiers such as `job_application`, `partnership`, or `project`. Workspaces share engine policy, contacts, model settings, credentials, and outbox. Removing a workspace removes its view, not its data.
 
-Workspaces are saved views of one engine's data. They share contacts, model settings, policy, and outbox; contact-wide cooldowns still apply across views. Removing a workspace removes its definition, not the underlying records or drafts.
-
-**Ready for review** shows eligible action items. **All tracked** also includes waiting, closed, and contactless records. **Overview → Choose workspaces** selects several views to monitor, including views from different engine connections.
-
-Overview checks each engine every 30 seconds while visible. You can pause it or refresh manually. Failed checks retain clearly marked stale counts rather than displaying zero. These checks only read state; they do not sync candidates, import source updates, or generate drafts. Counts can overlap between views, so do not add them as unique totals. A connected engine's source freshness is still unknown.
+**Overview → Choose workspaces** selects several views to monitor, including views on other engines. Checks run every 30 seconds while visible and can be paused. Failures retain marked stale counts. Counts can overlap between views.
 
 ## Configure a drafting backend
 
-Under **Setup → Model backend**, configure an OpenAI-compatible API endpoint, model name or proxy alias, timeout, and server credential variable. The endpoint must be reachable from the server, with `/v1` included when required by that service.
+An engine model is needed only when you ask it to write new copy. Agents can submit their own text, and saved drafts remain reviewable without a model.
 
-Set the secret in `RESPAWNED_MODEL_API_KEY` or `LITELLM_MASTER_KEY` on the server and restart it, then select that variable in Setup. The browser stores the variable name, not the secret. For an unauthenticated local endpoint, the selected variable still needs a nonempty local placeholder. LiteLLM is an optional proxy, not a requirement.
+Under **Setup → Model backend**, choose an OpenAI-compatible API or the optional Codex CLI adapter. Saved settings apply to requests from the browser, CLI, and API.
 
-Saved non-secret settings apply to browser drafting, CLI review, and API processing on that engine. **Configured** confirms settings only: saving does not test a provider, executable, login, or inference. Explicitly generating a draft invokes the backend. Reading records and reviewing an existing draft need no working model.
+For an API backend, enter its URL, model name, timeout, and credential environment variable. Set the secret in `RESPAWNED_MODEL_API_KEY` or `LITELLM_MASTER_KEY` on the server and restart. The browser stores the variable name, not the secret. LiteLLM is optional.
 
-No particular provider or CLI login is required. An existing experimental CLI adapter is optional; it is not part of the standard setup path. The engine validates generated and edited copy regardless of backend.
+For Codex, install and authenticate the runtime on the engine host, select `codex_cli`, and generate a draft to invoke it. Saving settings does not run login or availability probes. The engine validates accepted text and keeps all review checks.
 
-## Review and export
+Set the server policy's sender/sign-off before generating copy. Configuration saves do not call the backend.
 
-Open a record in **Review queue** and inspect its reason, facts, and history. When eligible, generate a draft, edit and save it if needed, then choose **Approve to outbox**. The server rechecks the displayed version, recipient, current record state, and contact-wide cooldown before reserving the message. Reopen the current draft if another tab changed it.
+## Review and outbox
 
-The default policy requires human review. Policy controls eligibility, ranking, cooldowns, copy limits, and sender/sign-off; the UI displays policy but does not edit it. Configure the sender before drafting. Explicit automatic processing can be enabled by server policy, but it still does not send messages.
+Open a record in **Review queue** and inspect its reason, facts, and history. Generate a draft or review supplied text, edit and save as needed, then choose **Approve to outbox**.
 
-The same workflow is available from the CLI, using the app's database environment:
+**Evaluate queue** applies policy to stored facts. **Refresh** reloads the view. Neither fetches source updates; evaluation does not draft or send.
 
-```bash
-respawned sync --dry-run
-respawned sync --limit 10
-respawned review
-respawned inbox --json
-respawned outbox --path exports/outbox.csv
-```
+The server rechecks the displayed version, recipient, current records, and contact-wide cooldown before approval. Reopen the draft if another client changed it. The default policy requires human review.
 
-`sync` reevaluates imported facts and publishes candidates without drafting. `review` generates missing drafts on demand and offers approve, reject, edit, and skip. `inbox` reads unanswered human replies independently of outreach cooldown. Workspace and model settings use API operations without dedicated CLI subcommands; the UI calls those same services directly.
+For spreadsheet export, download CSV in **Outbox** or run `respawned outbox --path outbox.csv`. JSON preserves exact text; CSV protects formula-like cells. Export does not change status.
 
-**Outbox** downloads CSV. The authenticated HTTP export also supports JSON. CLI and browser exports use the same formatter; CSV escapes formula-like cells for spreadsheet safety, while JSON preserves original strings. Export is read-only and may be repeated.
+A sending service can fetch approved messages from `GET /v1/outbox/pending` and submit confirmed results to `POST /v1/outbox/{id}/receipt`. Outbox status and related outbound history update together.
 
-**Connect a sending tool:** in 1.1.0, an agent or connector can fetch approved messages from `GET /v1/outbox/pending` and record confirmed sends through `POST /v1/outbox/{id}/receipt`. The outbox status and related outbound history update together. [Outbox integration](/api/#outbox-integration) covers credentials, fields, and retries.
+[Outbox API reference](/api/#outbox-integration) · [Download Python client](/examples/outbox_client.py)
 
-Approval and export do not send messages. Your tool handles delivery through its provider; Respawned records the confirmed result. Configure a dedicated `RESPAWNED_OUTBOX_TOKEN` on the server and connector. The token does not grant drafting or approval authority.
+The standalone client needs Python 3.12+ and no third-party packages. It reads `RESPAWNED_API_URL` and `RESPAWNED_OUTBOX_TOKEN` from the environment. Your integration owns sending, provider idempotency, and durable coordination.
 
 ## Access and draft version tokens
 
 | Mechanism | Purpose |
 | --- | --- |
-| Local `respawned ui` session | Opens the local browser with review access; no manual password needed |
-| `RESPAWNED_REVIEW_TOKEN` | Shared operator password for ordinary server mode, remote engines, and protected review API requests |
-| Draft `review_token` | Automatic version fingerprint submitted with edits and approvals; not a password |
-| `RESPAWNED_PROCESS_TOKEN` | Separate credential for policy-controlled `POST /v1/process`; does not grant human review authority |
+| Local browser session and private CLI access | Created by the local launcher; no token copying |
+| `RESPAWNED_REVIEW_TOKEN` | Operator access for remote UI, CLI, SDK, and HTTP clients |
+| `RESPAWNED_PROCESS_TOKEN` | Optional processing-only credential for an agent |
+| `RESPAWNED_OUTBOX_TOKEN` | Approved-message reads and confirmed-send receipts |
+| Draft `review_token` | Version fingerprint for edits and review; not a password |
 
-The launcher's one-use link expires after five minutes. It is exchanged for an HttpOnly, SameSite=Strict browser cookie lasting up to 12 hours, until **Lock access** or server shutdown. Restart `respawned ui` for a fresh link.
+The one-use local browser link lasts five minutes. Its session lasts up to 12 hours, until **Lock access**, or until server shutdown. Private CLI access is separate and ends when its server stops.
 
-For `respawned serve`, Docker, or remote access, generate an operator password:
+For remote access, configure `RESPAWNED_REVIEW_TOKEN` on the engine and restart. Enter it under **Setup → Engine access** or provide it in the client environment. Manual browser credentials clear on reload.
 
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-Set it as `RESPAWNED_REVIEW_TOKEN` in the server environment and restart. Enter it in **Setup → Review access**, or send it as `Authorization: Bearer <token>` from an API client. URL-safe random text is convenient; no special password format is required. Manual browser tokens remain in tab memory and clear on reload. Changing the environment value revokes that Bearer credential after restart.
+Operator credentials can process batches. A separate processing token is needed only when the caller should have that narrower permission. Outbox credentials do not grant drafting, processing, or approval.
 
 ## Connect another engine
 
-Run the other engine in ordinary server mode with its own database environment and review token. For example, behind a trusted proxy or loopback tunnel:
-
-```bash
-respawned serve --host 127.0.0.1 --port 8001
-```
-
-On that engine, set `RESPAWNED_UI_ORIGINS` to the exact origin hosting the browser app, then restart. For a browser app running locally on the default port:
+Run the other engine with its own database and operator token, behind HTTPS or a loopback tunnel. Configure `RESPAWNED_UI_ORIGINS` on that engine to allow the browser application's exact origin:
 
 ```dotenv
 RESPAWNED_UI_ORIGINS=http://127.0.0.1:8000
 ```
 
-Multiple origins are comma-separated, with no paths, trailing slashes, or wildcards. `localhost` and `127.0.0.1` differ. **Connections → Prepare a remote engine** shows the actual browser origin. This documentation site's origin is not the application origin.
+**Connections → Prepare a remote engine** shows the correct origin. Comma-separate multiple origins; omit paths, trailing slashes, and wildcards.
 
-In **Connections**, enter the engine's name, API root URL, and its review token, then select **Connect engine**. Use **Overview → Choose workspaces** to watch its views, or **Open engine** to work there. Names, URLs, and watch choices persist in this browser; manual tokens do not.
+In **Connections**, enter the engine name, API root URL, and access token, then choose **Connect engine**. Select its views in Overview or use **Open engine**. Manual tokens stay in tab memory; names, URLs, and watch choices persist.
 
-Remote URLs require HTTPS; HTTP is accepted only for loopback addresses. The browser sends only the selected engine's Bearer token, omits remote cookies, and rejects redirects. Local launcher sessions cannot be forwarded to another engine.
-
-The origin allowlist enables browser access; it does not secure unauthenticated routes or add tenant isolation. Protect the whole engine with a trusted network or authenticated reverse proxy. The built-in access model is insufficient for public multi-user hosting.
+Remote URLs require HTTPS; loopback HTTP is allowed. Browser requests carry only the selected engine's credential. The origin allowlist permits the browser connection; it does not replace authentication.
 
 ## API reference and troubleshooting
 
-The [API reference](/api/) covers endpoints, authentication, request formats, and retry behavior. The running server also exposes interactive schemas at `http://127.0.0.1:8000/docs` and machine-readable schemas at `/openapi.json`. Use `respawned serve --api-only` to serve the API without the bundled interface. `/healthz` checks process liveness; `/readyz` checks the database, schema, and policy. Neither proves model availability or fresh source data.
+The [API reference](/api/) covers routes, payloads, errors, and retries. The running engine serves schemas at `/docs` and `/openapi.json`. Use `respawned serve --api-only` for an engine without the bundled interface.
 
-| Symptom | Next check |
+`/healthz` checks process liveness. `/readyz` checks database, schema, and policy; it does not test a model.
+
+| Symptom | Check |
 | --- | --- |
-| Setup opens but the database is unavailable | Verify the server's `DB_*` environment and PostgreSQL readiness; the CLI does not automatically read `.env`. |
-| No records are ready | Check **All tracked**, recipient availability, status, policy, and recent contact/outbox cooldown. Refreshing the queue does not fetch external updates. |
-| Model is configured but drafting fails | Check the server endpoint, model access, credential variable, and timeout. Existing drafts remain reviewable. |
-| A save or import times out | The write may have completed. Reconnect and inspect saved state before retrying; the browser does not automatically repeat writes. |
-| Remote connection fails | Check the URL, HTTPS certificate, network path, engine review token, and exact `RESPAWNED_UI_ORIGINS` value. |
-| Local review access expires | Restart `respawned ui` and use the new launch link. |
+| Database unavailable | Engine-host `DB_*` values and PostgreSQL readiness |
+| CLI cannot connect | Engine process, API URL, and local or remote access |
+| Nothing ready for review | **All tracked**, confirmed recipient, status, policy, and cooldown |
+| Draft generation fails | Backend, model access, server credential, and timeout |
+| Write timed out | Read saved state before repeating the action |
+| Remote UI fails | HTTPS URL, engine credential, and exact allowed origin |
+
+## Upgrading to 2.0
+
+1. Stop the engine before upgrading; use Ctrl+C for a foreground `ui` or `serve` process. Keep PostgreSQL running for backup.
+2. Back up the existing database and preserve the engine environment and any custom policy file.
+3. Download the current [website installer](/install.sh) again and run it with the same prefix, following [Install and start locally](#install-and-start-locally). A previously downloaded installer remains pinned to its original release. If you installed the wheel directly, update the [2.0.0 wheel](/downloads/respawned-2.0.0-py3-none-any.whl) in that same Python environment.
+4. On the engine host, check `respawned --version`, run `respawned init` with the existing database settings, and restart with the usual `ui` or `serve` command. Reload the browser and reconnect clients.
+
+Use the 2.0.0 CLI and Python SDK with the 2.0.0 engine; this is the qualified combination. Update separately installed client environments to the same release. The matching browser UI is bundled with the engine.
+
+Workflow CLI commands now use the API. Remove database settings from client-only environments, and configure remote clients with the engine URL and credential. `--now` and `--policy` are server/simulation concerns, not workflow-client options.
+
+All data routes now require authentication. New clients use `/v1/workflow`; existing `/v1/ui` aliases remain available. See the [migration reference](/api/#upgrading-to-20).
+
+The installer retains earlier version environments and has no uninstall command. To remove an installer-managed copy, stop the engine and remove its `bin/respawned` symlink and `share/respawned` program directory under the chosen prefix, after confirming they belong to this installation. Preserve PostgreSQL, its backups, and external configuration when removing program files.

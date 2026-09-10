@@ -1,4 +1,4 @@
-name: V1 checks
+name: Checks
 
 on:
   push:

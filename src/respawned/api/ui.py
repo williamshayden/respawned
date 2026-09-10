@@ -1,7 +1,7 @@
 """Explicitly authenticated human review; every write commits before response."""
 
-from collections.abc import Callable
-from dataclasses import asdict
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass
 from datetime import datetime
 import hmac
 import os
@@ -15,7 +15,7 @@ from sqlalchemy.engine import Connection
 from respawned.api.ui_models import (
     UIConfig, UIDraft, UIEditRequest, UIInboxResult, UIOutboxList, UIOverview,
     UIRecord, UIRecordList, UIReviewRequest,
-    UISyncRequest, UISyncResult,
+    UISyncRequest, UISyncResult, ReviewQueueResponse, WorkflowDraft, WorkflowDraftRequest,
 )
 from respawned.core.inbox import list_reply_inbox
 from respawned.core.overview import workspace_overview
@@ -23,14 +23,14 @@ from respawned.core.policy import Policy
 from respawned.core.outbox import list_outbox_rows
 from respawned.core.review import (
     ReviewBlockedError, approve_draft, draft_candidate,
-    reject_draft, update_draft_message,
+    reject_draft, update_draft_message, load_latest_candidates, rank_candidates,
 )
 from respawned.core.sync import sync_candidates
 from respawned.core.ui_queries import (
     draft_view, inbox_review_targets, list_ui_records, load_ui_draft, record_references,
 )
 from respawned.core.workspaces import load_workspace_kinds
-from respawned.llm.adapter import DraftingAdapter
+from respawned.llm.adapter import ChatMessage, DraftingAdapter
 
 
 def require_review_authorization(
@@ -40,6 +40,8 @@ def require_review_authorization(
     from respawned.api.session import local_session
 
     manager = local_session(request)
+    if authorization and manager is not None and manager.authenticated_cli(request, authorization):
+        return
     if not authorization and manager is not None and manager.authenticated(request):
         return
     expected = os.environ.get("RESPAWNED_REVIEW_TOKEN", "").strip()
@@ -76,16 +78,25 @@ def _require_draft(connection: Connection, draft_id: UUID):
     return draft
 
 
-def _draft_response(connection: Connection, draft_id: UUID) -> UIDraft:
+def _draft_response(connection: Connection, draft_id: UUID) -> WorkflowDraft:
     draft = _require_draft(connection, draft_id)
     outbox_id = connection.execute(text("SELECT id FROM outbox WHERE draft_id = :id"),
                                    {"id": draft_id}).scalar_one_or_none()
-    return UIDraft(**draft_view(draft, outbox_id=outbox_id))
+    return WorkflowDraft(**{**asdict(draft), **draft_view(draft, outbox_id=outbox_id)})
 
 
-def create_ui_router(connection_dependency, policy_dependency, clock_dependency) -> APIRouter:
-    """Reuse app dependencies without a circular module import."""
-    router = APIRouter(prefix="/v1/ui", dependencies=[Depends(require_review_authorization)])
+@dataclass(frozen=True)
+class _LazyDraftingAdapter:
+    factory: Callable[[], DraftingAdapter]
+
+    def complete(self, messages: Sequence[ChatMessage]) -> str:
+        return self.factory().complete(messages)
+
+
+def create_ui_router(connection_dependency, policy_dependency, clock_dependency,
+                     *, prefix: str = "/v1/ui") -> APIRouter:
+    """Build shared workflow handlers; the app supplies their canonical prefix."""
+    router = APIRouter(prefix=prefix, dependencies=[Depends(require_review_authorization)])
     ConnectionDep = Annotated[Connection, Depends(connection_dependency, scope="function")]
     PolicyDep = Annotated[Policy, Depends(policy_dependency)]
     ClockDep = Annotated[Callable[[], datetime], Depends(clock_dependency)]
@@ -171,18 +182,58 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency)
     def sync(payload: UISyncRequest, connection: ConnectionDep, policy: PolicyDep,
              clock: ClockDep) -> UISyncResult:
         try:
-            result = sync_candidates(connection, now=clock(), policy=policy, limit=payload.limit)
+            result = sync_candidates(connection, now=clock(), policy=policy,
+                                     limit=payload.limit, dry_run=payload.dry_run)
         except ValueError as exc:
             raise HTTPException(503, "Workflow policy or tracked state is invalid") from exc
-        assert result.run_id is not None
         return UISyncResult(candidate_count=len(result.candidates),
-                            inserted_count=result.inserted_count, run_id=result.run_id)
+                            inserted_count=result.inserted_count, run_id=result.run_id,
+                            dry_run=result.dry_run)
+
+
+    @router.get("/queue", response_model=ReviewQueueResponse)
+    def review_queue(connection: ConnectionDep) -> ReviewQueueResponse:
+        """Read the latest synchronized review queue without drafting or syncing.
+
+        Capture this snapshot before reviewing its entries. Each draft and
+        approval still rechecks current state in the shared review service.
+        """
+        return ReviewQueueResponse(items=rank_candidates(load_latest_candidates(connection)))
+
+
+    @router.get("/drafts/{draft_id}", response_model=WorkflowDraft)
+    def read_draft(draft_id: UUID, connection: ConnectionDep) -> WorkflowDraft:
+        """Recover the persisted recipient, copy and version for explicit review."""
+        return _draft_response(connection, draft_id)
+
+
+    @router.post("/candidates/{candidate_id}/draft", response_model=WorkflowDraft)
+    def draft_queue_candidate(
+        candidate_id: UUID, connection: ConnectionDep, policy: PolicyDep, clock: ClockDep,
+        adapter_factory: Annotated[Callable[[], DraftingAdapter], Depends(get_draft_adapter_factory)],
+        payload: WorkflowDraftRequest | None = None,
+    ) -> WorkflowDraft:
+        """Draft one member of the current queue, preserving shared review checks."""
+        candidate = next((item for item in load_latest_candidates(connection)
+                          if item.id == candidate_id), None)
+        if candidate is None:
+            raise HTTPException(409, "Candidate is no longer in the review queue. Refresh the queue before continuing.")
+        try:
+            draft = draft_candidate(connection, candidate=candidate, now=clock(), policy=policy,
+                                    adapter=_LazyDraftingAdapter(adapter_factory),
+                                    body=payload.body if payload is not None else None)
+        except ReviewBlockedError as exc:
+            raise _review_error(exc) from exc
+        if draft is None:
+            raise HTTPException(409, "Candidate has already been reviewed")
+        return _draft_response(connection, draft.id)
 
 
     @router.post("/records/{record_id:path}/draft", response_model=UIDraft)
     def create_draft(
         record_id: str, connection: ConnectionDep, policy: PolicyDep, clock: ClockDep,
         adapter_factory: Annotated[Callable[[], DraftingAdapter], Depends(get_draft_adapter_factory)],
+        payload: WorkflowDraftRequest | None = None,
     ) -> UIDraft:
         if not connection.execute(text("SELECT 1 FROM opportunities WHERE id = :id"),
                                   {"id": record_id}).scalar_one_or_none():
@@ -198,11 +249,12 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency)
             raise HTTPException(409, "This record is not currently eligible for a draft. Review its current state and contact eligibility.")
         existing_id = connection.execute(text("SELECT id FROM drafts WHERE candidate_id = :id"),
                                          {"id": candidate.id}).scalar_one_or_none()
-        if existing_id is not None:
+        if existing_id is not None and (payload is None or payload.body is None):
             return _draft_response(connection, existing_id)
         try:
             draft = draft_candidate(connection, candidate=candidate, now=now,
-                                    policy=policy, adapter=adapter_factory())
+                                    policy=policy, adapter=_LazyDraftingAdapter(adapter_factory),
+                                    body=payload.body if payload is not None else None)
         except ReviewBlockedError as exc:
             raise _review_error(exc) from exc
         if draft is None:

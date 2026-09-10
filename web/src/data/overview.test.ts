@@ -1,3 +1,5 @@
+// Keep these request-contract tests on a legacy engine; workflow.test.ts covers discovery.
+vi.mock('./workflow', async importOriginal => ({ ...await importOriginal<typeof import('./workflow')>(), workflowRoot: async (baseUrl = '', signal?: AbortSignal) => { signal?.throwIfAborted(); return `${baseUrl.replace(/\/+$/, '')}/v1/ui` } }))
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LOCAL_SESSION } from './auth'
 import { isWatched, readOverview, readWatchPreferences, watchKey, type Overview } from './overview'
@@ -47,7 +49,7 @@ describe('engine overview boundary', () => {
   it('allows callers to cancel outdated requests', async () => {
     const controller = new AbortController()
     const error = new DOMException('Aborted', 'AbortError')
-    controller.abort()
+    controller.abort(error)
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(error))
     await expect(readOverview('', 'secret', controller.signal)).rejects.toBe(error)
   })

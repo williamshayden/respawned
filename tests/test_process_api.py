@@ -3,12 +3,10 @@
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from io import StringIO
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 import pytest
-from rich.console import Console
 from sqlalchemy import text
 
 from respawned.api.app import (
@@ -16,10 +14,8 @@ from respawned.api.app import (
     get_workflow_clock, get_workflow_policy,
 )
 from respawned.cli.common import DEFAULT_POLICY_PATH
-from respawned.cli.review import run_review
 from respawned.core.ingest import ingest_records
 from respawned.core.policy import ReviewPolicy, load_policy
-from respawned.core.sync import sync_candidates
 from respawned.core.workflow import process_candidates
 from respawned.llm.adapter import LiteLLMAdapter
 
@@ -61,6 +57,7 @@ def test_processing_disabled_or_unauthorized_is_inert(
     for dependency in (get_api_engine, get_workflow_adapter, get_workflow_policy):
         app.dependency_overrides[dependency] = lambda: pytest.fail("resolved workflow dependency")
     monkeypatch.delenv("RESPAWNED_PROCESS_TOKEN", raising=False)
+    monkeypatch.delenv("RESPAWNED_REVIEW_TOKEN", raising=False)
     with TestClient(app) as client:
         assert client.post("/v1/process", json={}).status_code == 404
         monkeypatch.setenv("RESPAWNED_PROCESS_TOKEN", TOKEN)
@@ -97,7 +94,9 @@ def workflow_api(postgres_connection, monkeypatch, isolated_dependencies):
     app.dependency_overrides[get_workflow_adapter] = lambda: state.adapter
     app.dependency_overrides[get_workflow_clock] = lambda: state.clock
     monkeypatch.setenv("RESPAWNED_PROCESS_TOKEN", TOKEN)
-    with TestClient(app, raise_server_exceptions=False) as client:
+    monkeypatch.setenv("RESPAWNED_REVIEW_TOKEN", "workflow-test-operator")
+    with TestClient(app, raise_server_exceptions=False,
+                    headers={"Authorization": "Bearer workflow-test-operator"}) as client:
         state.client = client
         yield state
 
@@ -226,23 +225,50 @@ def test_outbox_pagination_is_read_only(workflow_api):
         assert state.client.get(f"{path}?offset=-1").status_code == 422
 
 
-def test_cli_automatic_mode_never_asks_for_or_claims_human_approval(workflow_api, postgres_connection):
+def test_explicit_workflow_review_stays_human_with_automatic_processing_policy(workflow_api, postgres_connection):
     state = workflow_api
-    policy = replace(state.policy, review=ReviewPolicy("automatic"))
+    state.policy = replace(state.policy, review=ReviewPolicy("automatic"))
     ingest_records(postgres_connection, **_records())
-    sync_candidates(postgres_connection, now=NOW, policy=policy)
-    console = Console(file=StringIO(), record=True, force_terminal=False)
-    summary = run_review(
-        state.engine, now=NOW, policy=policy, adapter=state.adapter, console=console,
-        action_prompt=lambda *args, **kwargs: pytest.fail("prompted human reviewer"),
-    )
-    assert summary.automatically_authorized == 1 and summary.approved == 0
-    assert "Automatically authorized" in console.export_text()
+    draft_response = state.client.post("/v1/workflow/records/one/draft", json={
+        "body": "Hi Avery, thanks for your reply. When would you like to speak?",
+    })
+    assert draft_response.status_code == 200, draft_response.text
+    draft = draft_response.json()
+    approved = state.client.post(f"/v1/workflow/drafts/{draft['id']}/approve", json={
+        "review_token": draft["review_token"],
+    })
+    assert approved.status_code == 200, approved.text
     row = postgres_connection.execute(text("SELECT authorization_mode FROM outbox")).scalar_one()
-    assert row == "automatic"
+    assert row == "human" and state.calls == []
 
 
 @pytest.mark.parametrize("limit", [0, 51, True, 1.5])
 def test_process_service_rejects_unbounded_work_before_dependencies(limit):
     with pytest.raises(ValueError, match="between 1 and 50"):
         process_candidates(None, policy=None, adapter=None, limit=limit)
+
+
+def test_operator_can_process_without_a_separate_process_secret(workflow_api, monkeypatch):
+    state = workflow_api
+    monkeypatch.delenv("RESPAWNED_PROCESS_TOKEN")
+    response = state.client.post("/v1/process", json={})
+    assert response.status_code == 200, response.text
+    transactions = state.transaction_count
+    monkeypatch.setenv("RESPAWNED_OUTBOX_TOKEN", "delivery-only")
+    denied = state.client.post("/v1/process", json={}, headers={"Authorization": "Bearer delivery-only"})
+    assert denied.status_code == 401
+    assert state.transaction_count == transactions and state.calls == []
+
+
+def test_local_cli_capability_can_process_without_browser_cookie(workflow_api, monkeypatch):
+    from respawned.api.session import LocalSession
+
+    state = workflow_api
+    manager = LocalSession(8123)
+    monkeypatch.setattr(app.state, "local_session", manager, raising=False)
+    monkeypatch.delenv("RESPAWNED_PROCESS_TOKEN")
+    monkeypatch.delenv("RESPAWNED_REVIEW_TOKEN")
+    with TestClient(app, base_url=manager.origin) as client:
+        response = client.post("/v1/process", json={}, headers={"Authorization": f"Bearer {manager.cli_token}"})
+        assert response.status_code == 200, response.text
+        assert state.calls == []

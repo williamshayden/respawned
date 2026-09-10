@@ -1,3 +1,5 @@
+// Keep these request-contract tests on a legacy engine; workflow.test.ts covers discovery.
+vi.mock('./workflow', async importOriginal => ({ ...await importOriginal<typeof import('./workflow')>(), workflowRoot: async (baseUrl = '', signal?: AbortSignal) => { signal?.throwIfAborted(); return `${baseUrl.replace(/\/+$/, '')}/v1/ui` } }))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 beforeEach(() => vi.resetModules())
@@ -21,7 +23,7 @@ describe('local CLI access', () => {
     expect(await first).toBe(true)
     expect(await second).toBe(true)
     expect(fetch).toHaveBeenCalledExactlyOnceWith('/v1/ui/session', {
-      method: 'POST', credentials: 'same-origin',
+      method: 'POST', credentials: 'same-origin', redirect: 'error', signal: expect.any(AbortSignal),
       headers: { 'Content-Type': 'application/json', 'X-Respawned-Request': '1' },
       body: '{"secret":"one-use-launch-secret"}',
     })
@@ -35,7 +37,7 @@ describe('local CLI access', () => {
     vi.stubGlobal('fetch', fetch)
     const auth = await import('./auth')
     expect(await auth.restoreLocalSession()).toBe(true)
-    expect(fetch).toHaveBeenCalledExactlyOnceWith('/v1/ui/session', { credentials: 'same-origin' })
+    expect(fetch).toHaveBeenCalledExactlyOnceWith('/v1/ui/session', { credentials: 'same-origin', redirect: 'error', signal: expect.any(AbortSignal) })
   })
 
   it('reports an expired launch link and revokes the cookie on lock', async () => {
@@ -47,7 +49,7 @@ describe('local CLI access', () => {
     await expect(auth.restoreLocalSession()).rejects.toThrow('Launch link expired')
     await auth.endLocalSession()
     expect(fetch).toHaveBeenLastCalledWith('/v1/ui/session', {
-      method: 'DELETE', credentials: 'same-origin', headers: { 'X-Respawned-Request': '1' },
+      method: 'DELETE', credentials: 'same-origin', redirect: 'error', signal: expect.any(AbortSignal), headers: { 'X-Respawned-Request': '1' },
     })
   })
 })

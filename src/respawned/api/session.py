@@ -1,4 +1,4 @@
-"""Explicit CLI-launched browser sessions; ordinary API serving stays bearer-only."""
+"""Local server capabilities for CLI clients and explicitly launched browsers."""
 
 from collections.abc import Callable
 import hmac
@@ -9,13 +9,15 @@ import time
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from respawned.api.paths import BROWSER_COOKIE_PATHS
+
 COOKIE = "respawned_local_session"
 BOOTSTRAP_SECONDS = 300
 SESSION_SECONDS = 12 * 60 * 60
 
 
 class LocalSession:
-    """One launch capability and one revocable, process-local browser session."""
+    """Independent process-local CLI access and revocable browser sessions."""
 
     def __init__(self, port: int, *, clock: Callable[[], float] = time.monotonic):
         if not 1 <= port <= 65535:
@@ -26,6 +28,7 @@ class LocalSession:
         self.authority = "127.0.0.1" + (f":{port}" if port != 80 else "")
         self.origin = f"http://{self.authority}"
         self.clock = clock
+        self.cli_token = secrets.token_urlsafe(32)
         self.launch_secret = secrets.token_urlsafe(32)
         self.launch_expires = clock() + BOOTSTRAP_SECONDS
         self.session: str | None = None
@@ -45,6 +48,14 @@ class LocalSession:
             raise HTTPException(403, "Cross-origin browser access is not allowed")
         if mutation and (origin != self.origin or request.headers.get("x-respawned-request") != "1"):
             raise HTTPException(403, "A same-origin browser request is required")
+
+    def authenticated_cli(self, request: Request, authorization: str) -> bool:
+        """An explicit process capability never depends on a browser login."""
+        self.check_origin(request)
+        scheme, _, supplied = authorization.partition(" ")
+        return bool(self.cli_token and scheme.lower() == "bearer" and hmac.compare_digest(
+            supplied.encode("utf-8"), self.cli_token.encode("utf-8"),
+        ))
 
     def authenticated(self, request: Request) -> bool:
         self.check_origin(request, mutation=request.method not in {"GET", "HEAD", "OPTIONS"})
@@ -68,6 +79,14 @@ class LocalSession:
             self.session = None
             self.session_expires = 0.0
 
+    def close(self) -> None:
+        """Discard every capability when the owning server stops."""
+        with self.lock:
+            self.cli_token = ""
+            self.launch_secret = ""
+            self.session = None
+            self.session_expires = 0.0
+
 
 def local_session(request: Request) -> LocalSession | None:
     return getattr(request.app.state, "local_session", None)
@@ -77,8 +96,8 @@ class LaunchRequest(BaseModel):
     secret: str = Field(min_length=1, max_length=128)
 
 
-def create_session_router() -> APIRouter:
-    router = APIRouter(prefix="/v1/ui/session")
+def create_session_router(*, prefix: str = "/v1/ui/session") -> APIRouter:
+    router = APIRouter(prefix=prefix)
 
     @router.get("")
     def status(request: Request, response: Response) -> dict:
@@ -95,7 +114,9 @@ def create_session_router() -> APIRouter:
         session = manager.exchange(payload.secret)
         # Loopback HTTP cannot use Secure cookies. HttpOnly, host-only scope,
         # Strict SameSite, exact Origin and the custom header protect this mode.
-        response.set_cookie(manager.cookie_name, session, httponly=True, samesite="strict", path="/v1/ui", max_age=SESSION_SECONDS)
+        for cookie_path in BROWSER_COOKIE_PATHS:
+            response.set_cookie(manager.cookie_name, session, httponly=True, samesite="strict",
+                                path=cookie_path, max_age=SESSION_SECONDS)
         response.headers["Cache-Control"] = "no-store"
         return {"authenticated": True, "local_launcher": True}
 
@@ -105,7 +126,8 @@ def create_session_router() -> APIRouter:
         if manager is None or not manager.authenticated(request):
             raise HTTPException(401, "No active local browser session")
         manager.clear()
-        response.delete_cookie(manager.cookie_name, path="/v1/ui", httponly=True, samesite="strict")
+        for cookie_path in BROWSER_COOKIE_PATHS:
+            response.delete_cookie(manager.cookie_name, path=cookie_path, httponly=True, samesite="strict")
         response.headers["Cache-Control"] = "no-store"
 
     return router

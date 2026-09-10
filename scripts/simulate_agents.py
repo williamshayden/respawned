@@ -23,12 +23,11 @@ from sqlalchemy import create_engine
 
 from respawned.api.app import app, get_connection
 from respawned.core.contracts import OpportunityIn
-from respawned.core.review import draft_candidate
 from respawned.db.helpers.pg_connect import create_tables
 from respawned.llm.adapter import LiteLLMAdapter
 from respawned.llm.codex import CodexRunner as Codex, DraftOutput
 
-from simulate_use_cases import Journey, NOW, POLICY, opportunity
+from simulate_use_cases import Journey, NOW, POLICY, opportunity, simulation_authorization
 
 
 class Action(BaseModel):
@@ -172,7 +171,7 @@ def database(url):
                 yield connection
 
         app.dependency_overrides[get_connection] = get_simulation_connection
-        with TestClient(app) as client:
+        with simulation_authorization() as headers, TestClient(app, headers=headers) as client:
             yield engine, client
     finally:
         app.dependency_overrides.clear()
@@ -289,13 +288,12 @@ def drafting_probe(codex, url, directory):
                                   json.dumps(request["messages"]), DraftOutput, directory / "draft")
                 return {"choices": [{"message": {"content": draft.body}}]}
 
-            with engine.begin() as connection:
-                draft = draft_candidate(connection, candidate=candidate, now=NOW, policy=POLICY,
-                                        adapter=LiteLLMAdapter(proxy_url="codex://simulation", master_key="unused",
-                                                              model_alias="codex-cli-default", completion_fn=complete))
+            journey.adapter = LiteLLMAdapter(proxy_url="codex://simulation", master_key="unused",
+                                              model_alias="codex-cli-default", completion_fn=complete)
+            draft = journey.api.draft_candidate(str(candidate.id))
             journey.check("Codex-generated copy passes engine validation and remains pending",
-                          draft is not None and draft.status == "pending" and not journey.rows("outbox"))
-            result.update(passed=True, body=draft.body, supplied_context=journey.prompts,
+                          draft["status"] == "pending" and not journey.rows("outbox"))
+            result.update(passed=True, body=draft["body"], supplied_context=journey.prompts,
                           limitation="The engine does not supply the customer's migration question or any source text; this probe establishes valid copy, not contextual answer quality.")
         except Exception as exc:
             result["error"] = f"{type(exc).__name__}: {exc}"

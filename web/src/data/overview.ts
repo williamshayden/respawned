@@ -1,3 +1,4 @@
+import { workflowRoot } from './workflow'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { accessHeaders, type ReviewAccess } from './auth'
 import { engineNetworkError, engineRequestOptions, type EngineConnection } from './connections'
@@ -46,8 +47,10 @@ export async function readOverview(baseUrl: string, access: ReviewAccess, signal
   if (!access) throw new OverviewError('access', 'Unlock this engine to monitor its workspaces.')
   let response: Response
   try {
-    response = await fetch(`${baseUrl}/v1/ui/overview`, {
-      ...engineRequestOptions(access, baseUrl), headers: { Accept: 'application/json', ...accessHeaders(access) }, signal,
+    const transport = engineRequestOptions(access, baseUrl)
+    const root = await workflowRoot(baseUrl, signal)
+    response = await fetch(`${root}/overview`, {
+      ...transport, headers: { Accept: 'application/json', ...accessHeaders(access) }, signal,
     })
   } catch (error) {
     if (signal?.aborted) throw error
