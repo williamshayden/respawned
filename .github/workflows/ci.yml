@@ -62,3 +62,7 @@ jobs:
         run: uv run --frozen pytest -q
       - name: Verify wheel and source distribution outside the checkout
         run: uv run --frozen python scripts/verify_distribution.py --output dist/qualification
+      - name: Prepare website download packages
+        run: uv run --frozen python scripts/build_downloads.py --output dist/website
+      - name: Verify the website installer in an isolated prefix
+        run: uv run --frozen python scripts/downloads/verify_installer.py --artifacts dist/website
