@@ -12,7 +12,7 @@ V1 is intended for a trusted operator on loopback or a trusted network. It does 
 
 The installer requires `curl`, a POSIX shell, and Python 3.12+ with `venv` and `ensurepip`. It accepts Linux, macOS, or WSL; the application is qualified on Linux, including WSL2. PostgreSQL remains a separate requirement.
 
-[View installer](/install.sh) · [Download package (Python wheel)](/downloads/respawned-1.0.0-py3-none-any.whl) · [Checksums](/SHA256SUMS)
+[View installer](/install.sh) · [Download package (Python wheel)](/downloads/respawned-1.1.0-py3-none-any.whl) · [Checksums](/SHA256SUMS)
 
 Install Respawned:
 
@@ -20,9 +20,9 @@ Install Respawned:
 curl -fsS https://respawned.williamshayden.com/install.sh | sh
 ```
 
-The installer verifies the pinned wheel's SHA-256 digest, installs it in `~/.local/share/respawned/1.0.0`, and adds a launcher at `~/.local/bin/respawned`. The package includes the CLI, HTTP API, and built browser UI. No Node.js, npm, or repository clone is needed.
+The installer verifies the pinned wheel's SHA-256 digest, installs it in `~/.local/share/respawned/1.1.0`, and adds a launcher at `~/.local/bin/respawned`. The package includes the CLI, HTTP API, and built browser UI. No Node.js, npm, or repository clone is needed.
 
-A [source archive](/downloads/respawned-1.0.0.tar.gz) and [package provenance](/release.json) are also available. The package provenance identifies the verified application build. Documentation and media can receive updates independently; their source revision is recorded in the [site manifest](/site-manifest.json).
+A [source archive](/downloads/respawned-1.1.0.tar.gz) and [package provenance](/release.json) are also available. The package provenance identifies the verified application build. Documentation and media can receive updates independently; their source revision is recorded in the [site manifest](/site-manifest.json).
 
 To download and inspect the script before running it:
 
@@ -159,7 +159,9 @@ respawned outbox --path exports/outbox.csv
 
 **Outbox** downloads CSV. The authenticated HTTP export also supports JSON. CLI and browser exports use the same formatter; CSV escapes formula-like cells for spreadsheet safety, while JSON preserves original strings. Export is read-only and may be repeated.
 
-**Approval and export do not deliver or mark a message sent.** After actual manual delivery, import a `message_sent` activity with `direction: outbound` and the real source timestamp. This updates reply and cooldown state. It cannot identify which reservation was delivered, so the outbox row remains unsent until a future integration records a correlated delivery result. V1 has no delivery worker.
+**Connect a sending tool:** in 1.1.0, an agent or connector can fetch approved messages from `GET /v1/outbox/pending` and record confirmed sends through `POST /v1/outbox/{id}/receipt`. The outbox status and related outbound history update together. [Outbox integration](/api/#outbox-integration) covers credentials, fields, and retries.
+
+Approval and export do not send messages. Your tool handles delivery through its provider; Respawned records the confirmed result. Configure a dedicated `RESPAWNED_OUTBOX_TOKEN` on the server and connector. The token does not grant drafting or approval authority.
 
 ## Access and draft version tokens
 

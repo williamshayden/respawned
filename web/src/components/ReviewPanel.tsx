@@ -33,7 +33,7 @@ export function ReviewPanel(props: Props) {
   return <section className="review-pane" aria-label="Selected record">
     <div className="review-scroll" ref={scroll}>
       <button className="text-button mobile-back" onClick={props.onBack}><ArrowLeft size={17} />Back to records</button>
-      <div className="review-eyebrow"><span>Follow-up review</span><span>{props.index > -1 ? `${props.index + 1} of ${props.total}` : 'Tracked record'}</span></div>
+      <div className="review-position">{props.index > -1 ? `${props.index + 1} of ${props.total}` : 'Tracked record'}</div>
       {safeSource(record.source_url) && <a className="record-source" href={safeSource(record.source_url)} target="_blank" rel="noreferrer">View source<ExternalLink size={13} /></a>}
       <div className="contact-heading"><h2>{displayName(record)}</h2>
         <span className={`pill ${record.status === 'open' ? 'teal' : ''}`} title="Record stage">{record.stage || (record.status === 'open' ? 'Open' : 'Closed')}</span>

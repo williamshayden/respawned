@@ -4,7 +4,7 @@ import type { ModelStatus, SetupStatus } from '../src/data/setup'
 const access = 'setup-test-review-access'
 const initialModel: ModelStatus = { backend: 'openai_compatible', source: 'environment', base_url: 'http://litellm:4000', model_alias: 'respawned-default', timeout_seconds: 60, api_key_env: 'LITELLM_MASTER_KEY', key_configured: false, ready: false, verified: false, error: null }
 
-async function environment(page: Page, databaseReady = true) {
+async function environment(page: Page, databaseReady = true, outbox: SetupStatus['outbox'] = { mode: 'export_only', automatic_delivery: false, export_url: '/v1/ui/outbox/export' }) {
   let model = structuredClone(initialModel)
   const writes: { path: string; body: unknown }[] = []
   const unexpected: string[] = []
@@ -22,7 +22,7 @@ async function environment(page: Page, databaseReady = true) {
         database: { status: databaseReady ? 'ready' : 'unavailable', message: databaseReady ? 'PostgreSQL is available' : 'Check the server DB_HOST, DB_PORT, DB_NAME, DB_USER, and DB_PASSWORD settings' },
         review: { enabled: true, authentication: 'bearer', token_env: 'RESPAWNED_REVIEW_TOKEN' },
         model,
-        outbox: { mode: 'export_only', automatic_delivery: false, export_url: '/v1/ui/outbox/export' },
+        outbox,
         sources: { mode: 'api_import', import_url: '/v1/ui/import' },
       }
       return route.fulfill({ json: body })
@@ -44,7 +44,7 @@ async function environment(page: Page, databaseReady = true) {
     unexpected.push(`${method} ${path}`)
     return route.fulfill({ status: 404, json: { detail: 'Unexpected setup request' } })
   })
-  return { writes, unexpected }
+  return { writes, unexpected, setOutbox: (next: SetupStatus['outbox']) => { outbox = next } }
 }
 
 async function connect(page: Page) {
@@ -128,7 +128,7 @@ test('saves optional CLI adapter settings without claiming runtime or credential
   await page.goto('/')
   await connect(page)
   const modelSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Model backend', exact: true }) })
-  await expect(modelSection.getByText('Configure the model used to generate drafts.', { exact: true })).toBeVisible()
+  await expect(modelSection.getByText('Used to generate drafts.', { exact: true })).toBeVisible()
   await expect(modelSection.getByText('RESPAWNED_CODEX_BIN', { exact: true })).toHaveCount(0)
   await page.getByRole('combobox', { name: 'Backend', exact: true }).selectOption('codex_cli')
   await expect(page.getByLabel('API base URL')).toHaveCount(0)
@@ -157,4 +157,46 @@ test('saves optional CLI adapter settings without claiming runtime or credential
   await expect(page.getByLabel('API base URL')).toHaveCount(0)
   expect(writes).toEqual([expectedWrite])
   expect(unexpected).toEqual([])
+})
+
+test('shows the engine outbox capability without collecting credentials or performing delivery', async ({ page }, testInfo) => {
+  const outbox: SetupStatus['outbox'] = {
+    mode: 'api_and_export', automatic_delivery: false, export_url: '/v1/ui/outbox/export',
+    pending_url: '/v1/outbox/pending', receipt_url: '/v1/outbox/{id}/receipt',
+    token_env: 'RESPAWNED_OUTBOX_TOKEN', token_configured: false,
+  }
+  const { writes, unexpected, setOutbox } = await environment(page, true, outbox)
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', entry => { if (entry.type() === 'error') errors.push(entry.text()) })
+  await page.goto('/')
+  const section = page.getByRole('region', { name: 'Outbox & delivery', exact: true })
+  await expect(section.getByText('Export only', { exact: true })).toHaveCount(0)
+  await expect(section.getByRole('link', { name: 'Outbox API documentation', exact: true })).toHaveCount(0)
+  await connect(page)
+  await expect(section.getByText('GET /v1/outbox/pending', { exact: true })).toBeVisible()
+  await expect(section.getByText('POST /v1/outbox/{id}/receipt', { exact: true })).toBeVisible()
+  await expect(section.getByText(/The outbox token is not configured on this server/)).toBeVisible()
+  await expect(section.locator('input, textarea')).toHaveCount(0)
+  await expect(section.getByRole('link', { name: 'Outbox API documentation', exact: true })).toHaveAttribute('href', 'https://respawned.williamshayden.com/api/#outbox-integration')
+  await section.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('outbox-integration-desktop.png') })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await section.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('outbox-integration-mobile.png') })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+
+  setOutbox({ ...outbox, token_configured: true })
+  await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+  await expect(section.getByText(/The outbox token is configured on this server/)).toBeVisible()
+  setOutbox({ mode: 'export_only', automatic_delivery: false, export_url: '/v1/ui/outbox/export' })
+  await page.getByRole('button', { name: 'Refresh status', exact: true }).click()
+  await expect(section.getByText('Export only', { exact: true })).toBeVisible()
+  await expect(section.getByText(/GET \/v1\/outbox\/pending|POST \/v1\/outbox/)).toHaveCount(0)
+  await expect(section.getByRole('link', { name: 'Outbox API documentation', exact: true })).toHaveCount(0)
+  await section.getByRole('button', { name: 'Open outbox', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Nothing in the outbox yet', exact: true })).toBeVisible()
+  expect(writes).toEqual([])
+  expect(unexpected).toEqual([])
+  expect(errors).toEqual([])
 })

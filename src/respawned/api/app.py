@@ -135,7 +135,7 @@ async def lifespan(_app: FastAPI):
             engine.dispose()
 
 
-app = FastAPI(title="Respawned", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Respawned", version="1.1.0", lifespan=lifespan)
 
 # Validate before Uvicorn starts. A middleware-construction exception is otherwise
 # mistaken for unsupported ASGI lifespan under Uvicorn's default auto detection,
@@ -155,7 +155,7 @@ async def local_browser_origin_guard(request: Request, call_next):
         except HTTPException as exc:
             return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     response = await call_next(request)
-    if request.url.path.startswith("/v1/ui/"):
+    if request.url.path.startswith(("/v1/ui/", "/v1/outbox")):
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -188,9 +188,9 @@ def readiness(
     connection.exec_driver_sql("""
         SELECT opportunities.id, activities.id, sync_runs.id, sync_runs.scope, candidates.id,
                drafts.id, outbox.authorization_mode, opportunity_states.opportunity_id,
-               workspaces.id, application_settings.key
+               workspaces.id, application_settings.key, outbox_receipts.outbox_id
         FROM opportunities, activities, sync_runs, candidates, drafts, outbox,
-             opportunity_states, workspaces, application_settings
+             opportunity_states, workspaces, application_settings, outbox_receipts
         LIMIT 0
     """)
     return ReadinessResponse()
@@ -299,6 +299,7 @@ def outbox(
 def _register_review_interface() -> None:
     # Delay importing the router until its shared dependencies are defined.
     from respawned.api.setup import create_setup_router
+    from respawned.api.outbox import create_outbox_router
     from respawned.api.session import create_session_router
     from respawned.api.ui import create_ui_router
     from respawned.api.workspaces import create_workspace_router
@@ -309,6 +310,8 @@ def _register_review_interface() -> None:
     ))
     app.include_router(create_workspace_router(get_connection))
     app.include_router(create_setup_router(get_connection))
+    # Register static /export and /pending routes before the numeric detail route.
+    app.include_router(create_outbox_router(get_connection, get_workflow_clock))
 
 
 _register_review_interface()

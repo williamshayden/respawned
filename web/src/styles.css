@@ -93,8 +93,7 @@ select { appearance: none; width: 100%; background: #fff; border: 1px solid #dde
 .queue-footer button { display: block; margin: 10px auto; }
 .review-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .review-scroll { padding: 23px 28px 20px; overflow-y: auto; flex: 1; min-height: 0; }
-.review-eyebrow { display: flex; justify-content: space-between; color: var(--muted); margin-bottom: 17px; font-size: 12px; }
-.review-eyebrow > span:first-child { text-transform: uppercase; font-size: 11px; font-weight: 550; }
+.review-position { text-align: right; color: var(--muted); margin-bottom: 17px; font-size: 12px; }
 .record-source { float: right; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; margin-top: -4px; }
 .contact-heading { display: flex; gap: 20px; align-items: center; margin-bottom: 8px; }
 .contact-heading h2 { font-size: 34px; line-height: 1.2; letter-spacing: -1.2px; overflow-wrap: anywhere; }
@@ -286,7 +285,7 @@ select { appearance: none; width: 100%; background: #fff; border: 1px solid #dde
   .record-action { font-size: 11px; }
   .record-reason { font-size: 12px; }
   .review-scroll { padding: 20px 22px; }
-  .review-eyebrow { margin-bottom: 15px; }
+  .review-position { margin-bottom: 15px; }
   .contact-heading h2 { font-size: 30px; }
   .context-fields dd { font-size: 19px; }
   .contact-route { font-size: 13px; }

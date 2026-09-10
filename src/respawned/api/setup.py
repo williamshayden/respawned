@@ -103,7 +103,12 @@ def create_setup_router(connection_dependency) -> APIRouter:
             "database": database,
             "review": {"enabled": True, "authentication": "local_session" if local_session(request) is not None else "bearer", "token_env": "RESPAWNED_REVIEW_TOKEN"},
             "model": model_status(settings).model_dump(),
-            "outbox": {"mode": "export_only", "automatic_delivery": False, "export_url": "/v1/ui/outbox/export"},
+            "outbox": {
+                "mode": "api_and_export", "automatic_delivery": False,
+                "export_url": "/v1/ui/outbox/export", "pending_url": "/v1/outbox/pending",
+                "receipt_url": "/v1/outbox/{id}/receipt", "token_env": "RESPAWNED_OUTBOX_TOKEN",
+                "token_configured": bool(os.environ.get("RESPAWNED_OUTBOX_TOKEN", "").strip()),
+            },
             "sources": {"mode": "api_import", "import_url": "/v1/ui/import"},
         }
 

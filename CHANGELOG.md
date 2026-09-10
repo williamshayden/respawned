@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.0
+
+- Connector API for pending approved messages, individual outbox items, and confirmed send receipts.
+- Dedicated outbox credentials without drafting or review authority; repeated identical receipts are safe.
+- Atomic receipt, outbox status, and outbound history updates, including messages covering several records.
+- Setup explains API integration and retains export instructions for older engines.
+- Public API reference, simpler installation docs, a portfolio return link, and removal of redundant demo and review labels.
+
+
 ## 1.0.0 — release candidate
 
 Initial Respawned release candidate. Import source records, track follow-up work,
