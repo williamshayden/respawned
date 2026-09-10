@@ -54,6 +54,47 @@ class LocalConnectionTests(unittest.TestCase):
                 with self.subTest(url=url):
                     self.assertIsNone(read_local_token(url))
 
+    def test_default_port_forms_share_one_canonical_origin(self):
+        origin = "http://127.0.0.1"
+        forms = (origin, origin + "/", origin + ":80", origin + ":80/")
+        for published_url in forms:
+            with self.subTest(published_url=published_url):
+                with publish_local_token(published_url, "default-port-capability") as path:
+                    self.assertEqual(path.name, "80.json")
+                    self.assertEqual(json.loads(path.read_text())["url"], origin)
+                    for requested_url in forms:
+                        with self.subTest(requested_url=requested_url):
+                            self.assertEqual(read_local_token(requested_url), "default-port-capability")
+                self.assertFalse(path.exists())
+
+    def test_existing_default_port_origin_can_be_read_and_republished(self):
+        origin = "http://127.0.0.1"
+        with publish_local_token(origin, "first-capability") as path:
+            payload = json.loads(path.read_text())
+            payload["url"] = origin + ":80/"
+            path.write_text(json.dumps(payload))
+            self.assertEqual(read_local_token(origin), "first-capability")
+            with publish_local_token(origin + "/", "replacement-capability") as replacement:
+                self.assertEqual(replacement, path)
+                self.assertEqual(json.loads(path.read_text())["url"], origin)
+                self.assertEqual(read_local_token(origin + ":80"), "replacement-capability")
+        self.assertFalse(path.exists())
+
+    def test_default_port_normalization_does_not_allow_other_targets(self):
+        with publish_local_token("http://127.0.0.1", "default-port-capability") as path:
+            before = path.read_bytes()
+            for url in (
+                "https://127.0.0.1:80", "http://localhost:80", "http://127.0.0.2:80",
+                "http://127.0.0.1/proxy", "http://127.0.0.1:80/proxy", "http://127.0.0.1//",
+                "http://127.0.0.1?next=external", "http://127.0.0.1#fragment", "http://user@127.0.0.1",
+            ):
+                with self.subTest(url=url):
+                    self.assertIsNone(read_local_token(url))
+                    with self.assertRaises(ValueError):
+                        with publish_local_token(url, "must-not-be-written"):
+                            self.fail("Another target was accepted")
+                    self.assertEqual(path.read_bytes(), before)
+
     def test_cleanup_does_not_remove_another_instance(self):
         with publish_local_token(self.url, "disposable-test-capability") as path:
             payload = json.loads(path.read_text())

@@ -127,15 +127,31 @@ def _check_owned(path: Path, *, directory: bool = False) -> None:
             raise ValueError("Local connection storage must be private to this user")
 
 
-def _connection_path(api_url: str) -> Path | None:
-    parsed = urlsplit(api_url)
+def _local_origin(api_url: object) -> str | None:
+    """Canonicalize only root HTTP URLs for the exact local engine address."""
+    if (not isinstance(api_url, str)
+            or any(ord(char) < 33 or ord(char) > 126 for char in api_url)
+            or any(char in api_url for char in "?#\\")):
+        return None
+    try:
+        parsed = urlsplit(api_url)
+        port = parsed.port if parsed.port is not None else 80
+    except ValueError:
+        return None
     if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1"
             or parsed.path not in {"", "/"} or parsed.query or parsed.fragment
             or parsed.username is not None or parsed.password is not None):
         return None
-    port = parsed.port if parsed.port is not None else 80
     if not 1 <= port <= 65535:
         return None
+    return "http://127.0.0.1" + (f":{port}" if port != 80 else "")
+
+
+def _connection_path(api_url: str) -> Path | None:
+    origin = _local_origin(api_url)
+    if origin is None:
+        return None
+    port = urlsplit(origin).port or 80
     return _state_directory() / f"{port}.json"
 
 
@@ -151,7 +167,7 @@ def read_local_token(api_url: str) -> str | None:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("Invalid local connection file")
-    if (payload.get("format") != FORMAT or payload.get("url") != api_url.rstrip("/")
+    if (payload.get("format") != FORMAT or _local_origin(payload.get("url")) != _local_origin(api_url)
             or not isinstance(payload.get("token"), str) or not payload["token"]):
         raise ValueError("Invalid local connection file")
     return payload["token"]
@@ -163,6 +179,7 @@ def publish_local_token(api_url: str, token: str):
     path = _connection_path(api_url)
     if path is None:
         raise ValueError("Automatic CLI access is restricted to exact loopback engines")
+    origin = _local_origin(api_url)
     parent = path.parent
     parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     info = parent.lstat()
@@ -176,10 +193,10 @@ def publish_local_token(api_url: str, token: str):
         existing = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(existing, dict):
             raise ValueError("Refusing to overwrite unrelated local connection data")
-        if existing.get("format") != FORMAT or existing.get("url") != api_url.rstrip("/"):
+        if existing.get("format") != FORMAT or _local_origin(existing.get("url")) != origin:
             raise ValueError("Refusing to overwrite unrelated local connection data")
     instance = secrets.token_hex(16)
-    payload = {"format": FORMAT, "url": api_url.rstrip("/"), "token": token,
+    payload = {"format": FORMAT, "url": origin, "token": token,
                "instance": instance, "pid": os.getpid()}
     descriptor, temporary = tempfile.mkstemp(prefix=".connection-", dir=parent)
     try:
