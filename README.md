@@ -1,6 +1,6 @@
 # Respawned
 
-Respawned organizes follow-up work, drafts messages, and keeps an unsent outbox.
+Respawned organizes follow-up work, drafts messages, and tracks approved messages in an outbox.
 It uses one interface for job applications, sales, and other record types. Track
 work before a recipient is known, create your own workspaces, and monitor several
 local or remote engines from the same UI.
@@ -14,6 +14,8 @@ image. Node.js is needed only for frontend development.
 Respawned does not connect a mailbox, schedule source updates, or send messages.
 Some legacy API routes are unauthenticated, so use loopback or a trusted network.
 Workspaces are views within an engine, not separate accounts.
+External tools can fetch approved messages through the [outbox API](docs/API.md#outbox-integration),
+send through their own provider, and record confirmed results in Respawned.
 
 ## Install and start
 
@@ -27,7 +29,7 @@ It supports Linux, macOS, or WSL; the verified installation environment is
 Ubuntu/WSL with Python 3.12.3. PostgreSQL is a separate prerequisite.
 
 [View installer](https://respawned.williamshayden.com/install.sh) ·
-[Download package (Python wheel)](https://respawned.williamshayden.com/downloads/respawned-1.0.0-py3-none-any.whl) ·
+[Download package (Python wheel)](https://respawned.williamshayden.com/downloads/respawned-1.1.0-py3-none-any.whl) ·
 [Checksums](https://respawned.williamshayden.com/SHA256SUMS)
 
 Download the installer to inspect it before running it:
@@ -48,7 +50,7 @@ curl -fsS https://respawned.williamshayden.com/install.sh | sh
 ```
 
 The installer verifies the pinned wheel's SHA-256 digest, creates a private
-environment at `~/.local/share/respawned/1.0.0`, and adds
+environment at `~/.local/share/respawned/1.1.0`, and adds
 `~/.local/bin/respawned`. It refuses to overwrite unrelated commands or directories
 and does not edit shell startup files. Use `sh install-respawned.sh --prefix
 /absolute/path` for another location. The package includes the CLI, HTTP API,
@@ -147,13 +149,13 @@ The wheel can also be installed in an
 existing Python 3.12+ virtual environment:
 
 ```sh
-python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-1.0.0-py3-none-any.whl'
+python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-1.1.0-py3-none-any.whl'
 ```
 
 The source archive is
-`https://respawned.williamshayden.com/downloads/respawned-1.0.0.tar.gz`.
+`https://respawned.williamshayden.com/downloads/respawned-1.1.0.tar.gz`.
 Both formats include the prebuilt UI. A supplied local wheel also works with
-`python -m pip install /path/to/respawned-1.0.0-py3-none-any.whl`. Set the database
+`python -m pip install /path/to/respawned-1.1.0-py3-none-any.whl`. Set the database
 environment above before running `respawned init` and `respawned ui`.
 The checksum manifest is at
 `https://respawned.williamshayden.com/SHA256SUMS`; the preferred installer verifies

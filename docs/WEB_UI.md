@@ -31,6 +31,8 @@ the persisted message and current record again before accepting edits or review.
 | Monitor workspaces | `GET /v1/ui/overview` on each engine | `core.overview` reads canonical reduction, dry-run eligibility, reply groups, drafts, and outbox without writes |
 | Read and export reservations | `/v1/ui/outbox`, `/v1/ui/outbox/export`, `/v1/outbox/export` | `core.outbox`; `respawned outbox` |
 
+External sending tools use `core.delivery` through the [outbox integration API](API.md#outbox-integration); receipt results are reflected by the same outbox readers.
+
 The API owns eligibility, contact grouping, cooldowns, default queue priority,
 validation, and authorization provenance. The browser preserves the server's
 priority order. Explicit browser approval is human authorization even when the
@@ -294,13 +296,11 @@ CSV formatter. CSV prefixes cells that could be interpreted as spreadsheet
 formulas; use JSON to preserve the exact original strings. Authenticated clients
 can use `GET /v1/outbox/export?format=json|csv`; the UI alias is
 `/v1/ui/outbox/export`. An optional `workspace_id` filters full approved snapshots.
-Neither export sends a message or marks it sent. Once a message has actually
-been sent, ingest its `message_sent` activity with `direction: outbound` and the
-real source timestamp. The built-in V1 outbox has no provider connection or
-automatic delivery worker; Setup presents that current workflow explicitly.
-An outbound event updates reply/cooldown state but does not identify which outbox
-row was delivered. Until a provider integration records an explicit correlated
-delivery result, that row remains an unsent reservation.
+Exporting does not send a message or mark it sent.
+
+In 1.1.0, **Setup → Outbox & delivery** also explains how to connect a sending tool. Set `RESPAWNED_OUTBOX_TOKEN` on the server and in the connector. The connector reads approved messages through `GET /v1/outbox/pending`, sends through its own service, and submits confirmed results to `POST /v1/outbox/{id}/receipt`. The same outbox item then appears sent in the browser, CLI export, and API, with outbound history recorded for each related record.
+
+The UI displays token configuration status but never accepts or stores the connector credential. Older connected engines retain their export instructions. The [API reference](API.md#outbox-integration) documents requests, provider correlation, and retries. There is no built-in provider connection or delivery worker.
 
 ## Troubleshooting
 

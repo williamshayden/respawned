@@ -21,13 +21,22 @@ SITE = ROOT / "site"
 ORIGIN = "https://respawned.williamshayden.com"
 REPO = "https://github.com/williamshayden/respawned"
 PACKAGE_COMMIT = "8d0512d4ff0d367b04ec028198195dc18f697c2a"
-PUBLIC_FILES = (
-    "install.sh",
-    "downloads/respawned-1.0.0-py3-none-any.whl",
-    "downloads/respawned-1.0.0.tar.gz",
-)
+PACKAGE_VERSION = "1.1.0"
 ASSETS = ("docs.css", "docs.js", "favicon.svg")
 SITE_SOURCES = ("build.py", "README.md", "requirements.txt", "_headers", "content/index.md")
+
+
+def distribution_files(version: str) -> tuple[str, str, str]:
+    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
+        raise ValueError("Expected a release version with three numeric components")
+    return (
+        "install.sh",
+        f"downloads/respawned-{version}-py3-none-any.whl",
+        f"downloads/respawned-{version}.tar.gz",
+    )
+
+
+PUBLIC_FILES = distribution_files(PACKAGE_VERSION)
 
 
 def digest(path: Path) -> str:
@@ -45,14 +54,20 @@ def regular_file(root: Path, name: str) -> Path:
     return candidate
 
 
-def validate_distribution(dist: Path, package_source: str) -> dict:
+def validate_distribution(dist: Path, package_source: str, expected_version: str | None = PACKAGE_VERSION) -> dict:
+    if not re.fullmatch(r"[0-9a-f]{40}", package_source):
+        raise ValueError("Expected an explicit full package source commit")
     release = json.loads(regular_file(dist, "release.json").read_text())
-    if (release.get("name"), release.get("version"), release.get("source_commit")) != ("respawned", "1.0.0", package_source):
-        raise ValueError("Distribution is not the qualified Respawned 1.0.0 source revision")
+    version = release.get("version")
+    if not isinstance(version, str) or (expected_version is not None and version != expected_version):
+        raise ValueError(f"Distribution is not the required Respawned {expected_version or 'release'} version")
+    public_files = distribution_files(version)
+    if (release.get("name"), release.get("source_commit")) != ("respawned", package_source):
+        raise ValueError("Distribution does not match the required Respawned source revision")
     if release.get("source_clean") is not True or release.get("validation", {}).get("installer_execution_verified") is not True:
         raise ValueError("Distribution must record a clean source and verified installer execution")
     artifacts = release.get("artifacts", [])
-    if len(artifacts) != len(PUBLIC_FILES) or {item["path"] for item in artifacts} != set(PUBLIC_FILES):
+    if len(artifacts) != len(public_files) or {item["path"] for item in artifacts} != set(public_files):
         raise ValueError("Release manifest must contain exactly the qualified installer, wheel, and sdist")
     sums = {}
     for line in regular_file(dist, "SHA256SUMS").read_text().splitlines():
@@ -60,16 +75,17 @@ def validate_distribution(dist: Path, package_source: str) -> dict:
         if not match or match[2] in sums:
             raise ValueError("Invalid or duplicate SHA256SUMS entry")
         sums[match[2]] = match[1]
-    if set(sums) != set(PUBLIC_FILES):
+    if set(sums) != set(public_files):
         raise ValueError("SHA256SUMS does not match the release file allowlist")
     for item in artifacts:
         path = regular_file(dist, item["path"])
         if digest(path) != item["sha256"] or digest(path) != sums[item["path"]] or path.stat().st_size != item["size_bytes"]:
             raise ValueError(f"Distribution size or hash mismatch: {item['path']}")
-    wheel_hash = sums[PUBLIC_FILES[1]]
+    wheel_hash = sums[public_files[1]]
     installer = (dist / "install.sh").read_text()
-    if wheel_hash not in installer or ORIGIN not in installer:
-        raise ValueError("Installer does not pin this distribution's wheel and public origin")
+    expected_pins = (wheel_hash, ORIGIN, Path(public_files[1]).name, f'VERSION = "{version}"')
+    if any(pin not in installer for pin in expected_pins):
+        raise ValueError("Installer does not pin this distribution's version, wheel, and public origin")
     return release
 
 
@@ -147,16 +163,45 @@ def shell(title: str, body: str, path: str, sections: list[tuple[str, str]], rev
 </body></html>'''
 
 
-def build(distribution: Path, output: Path, package_source: str = PACKAGE_COMMIT, allow_dirty_preview: bool = False) -> None:
+def build(
+    distribution: Path,
+    output: Path,
+    package_source: str = PACKAGE_COMMIT,
+    allow_dirty_preview: bool = False,
+    *,
+    archive_distribution: Path | None = None,
+    archive_source: str | None = None,
+) -> None:
     distribution = distribution.resolve()
     output = output.absolute()
     if output.exists():
         raise ValueError("Output must be a new directory; existing artifacts are never overwritten")
     if output.resolve().is_relative_to(distribution) or distribution.is_relative_to(output.resolve()):
         raise ValueError("Output must be separate from the qualified distribution")
-    if not re.fullmatch(r"[0-9a-f]{40}", package_source):
-        raise ValueError("Expected an explicit full package source commit")
     release = validate_distribution(distribution, package_source)
+    if (archive_distribution is None) != (archive_source is None):
+        raise ValueError("--archive-distribution and --archive-source must be supplied together")
+    archived_distributions = []
+    archive_files = ()
+    if archive_distribution is not None:
+        archive_distribution = archive_distribution.resolve()
+        if output.resolve().is_relative_to(archive_distribution) or archive_distribution.is_relative_to(output.resolve()):
+            raise ValueError("Output must be separate from the archived distribution")
+        archive = validate_distribution(archive_distribution, archive_source, expected_version=None)
+        archive_files = distribution_files(archive["version"])[1:]
+        if archive["version"] == release["version"] or set(archive_files) & set(PUBLIC_FILES):
+            raise ValueError("Archived distribution duplicates the current version or artifact target")
+        if tuple(map(int, archive["version"].split("."))) >= tuple(map(int, PACKAGE_VERSION.split("."))):
+            raise ValueError("Archived distribution must be older than the current release")
+        archived_distributions.append({
+            "version": archive["version"],
+            "source_commit": archive["source_commit"],
+            "qualified_distribution_release_sha256": digest(archive_distribution / "release.json"),
+            "artifacts": [
+                {key: item[key] for key in ("path", "sha256", "size_bytes")}
+                for item in archive["artifacts"] if item["path"] in archive_files
+            ],
+        })
     revision = git("rev-parse", "HEAD")
     source_files = [regular_file(SITE, name) for name in SITE_SOURCES]
     source_files += [regular_file(SITE / "assets", name) for name in ASSETS]
@@ -207,6 +252,11 @@ def build(distribution: Path, output: Path, package_source: str = PACKAGE_COMMIT
         target = output / name
         target.parent.mkdir(exist_ok=True, parents=True)
         shutil.copyfile(distribution / name, target)
+    for name in archive_files:
+        target = output / name
+        if target.exists():
+            raise ValueError(f"Archived artifact would replace an existing output: {name}")
+        shutil.copyfile(archive_distribution / name, target)
     public_release = json.loads(json.dumps(release))
     public_release.pop("published", None)
     public_release.get("validation", {}).pop("public_hosting_verified", None)
@@ -228,6 +278,7 @@ def build(distribution: Path, output: Path, package_source: str = PACKAGE_COMMIT
         "docs_source_commit": revision,
         "docs_source_clean": not allow_dirty_preview,
         "package_source_commit": release["source_commit"],
+        "archived_distributions": archived_distributions,
         "qualified_distribution_release_sha256": digest(distribution / "release.json"),
         "public_release_sha256": digest(output / "release.json"),
         "public_release_transform": "Omit only build-time published and validation.public_hosting_verified booleans; artifact identities and qualification evidence are unchanged",
@@ -243,9 +294,14 @@ if __name__ == "__main__":
     cli.add_argument("--distribution", required=True, type=Path)
     cli.add_argument("--output", required=True, type=Path)
     cli.add_argument("--package-source", default=PACKAGE_COMMIT, help="Required package commit; defaults to the qualified publication snapshot. CI may require its own exact HEAD.")
+    cli.add_argument("--archive-distribution", type=Path, help="Qualified older distribution whose versioned wheel and sdist must remain downloadable.")
+    cli.add_argument("--archive-source", help="Required full source commit for --archive-distribution; both archive arguments must be supplied together.")
     cli.add_argument("--allow-dirty-preview", action="store_true", help="Permit local preview sources; marks the output unqualified for publication")
     args = cli.parse_args()
     try:
-        build(args.distribution, args.output, args.package_source, args.allow_dirty_preview)
+        build(
+            args.distribution, args.output, args.package_source, args.allow_dirty_preview,
+            archive_distribution=args.archive_distribution, archive_source=args.archive_source,
+        )
     except (ValueError, KeyError, OSError, StopIteration, subprocess.CalledProcessError) as exc:
         cli.exit(1, f"Build failed: {exc}\n")

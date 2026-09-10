@@ -1,6 +1,6 @@
 [project]
 name = "respawned"
-version = "1.0.0"
+version = "1.1.0"
 description = "Source-neutral follow-up orchestration with configurable review"
 readme = "README.md"
 license = "MIT"

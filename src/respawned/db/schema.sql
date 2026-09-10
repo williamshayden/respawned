@@ -150,6 +150,19 @@ ALTER TABLE outbox ADD COLUMN IF NOT EXISTS authorization_mode
     TEXT NOT NULL DEFAULT 'legacy_unknown'
     CHECK (authorization_mode IN ('human', 'automatic', 'legacy_unknown'));
 
+-- A receipt records an external sender's result; it never grants approval.
+CREATE TABLE IF NOT EXISTS outbox_receipts (
+    outbox_id           BIGINT PRIMARY KEY REFERENCES outbox(id),
+    sender              TEXT NOT NULL CHECK (sender ~ '^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$'),
+    provider_message_id TEXT NOT NULL CHECK (char_length(provider_message_id) BETWEEN 1 AND 300),
+    sent_at             TIMESTAMPTZ NOT NULL,
+    recorded_at         TIMESTAMPTZ NOT NULL,
+    UNIQUE (sender, provider_message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbox_pending_connector
+    ON outbox(id) WHERE status = 'pending' AND authorization_mode IN ('human', 'automatic');
+
 DROP INDEX IF EXISTS idx_activities_opportunity_id;
 DROP INDEX IF EXISTS idx_activities_occurred_at;
 DROP INDEX IF EXISTS idx_opportunities_status;

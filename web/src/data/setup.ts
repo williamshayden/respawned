@@ -21,7 +21,15 @@ export interface SetupStatus {
   database: { status: 'ready' | 'unavailable'; message: string }
   review: { enabled: boolean; authentication: 'bearer' | 'local_session'; token_env: string }
   model: ModelStatus
-  outbox: { mode: 'export_only'; automatic_delivery: false; export_url: string }
+  outbox: { mode: 'export_only'; automatic_delivery: false; export_url: string } | {
+    mode: 'api_and_export'
+    automatic_delivery: false
+    export_url: string
+    pending_url: string
+    receipt_url: string
+    token_env: string
+    token_configured: boolean
+  }
   sources: { mode: 'api_import'; import_url: string }
 }
 

@@ -101,6 +101,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
     catch (error) { return { payload: null, error: message(error, 'Check the import JSON.') } }
   }, [importText])
   const databaseReady = status?.database.status === 'ready'
+  const outboxIntegration = status?.outbox.mode === 'api_and_export' ? status.outbox : null
 
   return <div className="setup-view">
     <div className="setup-intro">
@@ -137,7 +138,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
     <section className="setup-section" aria-labelledby="setup-model-title">
       <div className="setup-section-heading"><Server size={21} /><h2 id="setup-model-title">Model backend</h2></div>
       <div className="setup-section-body">
-        <div className="setup-heading-row"><p>Configure the model used to generate drafts.</p><span className={`setup-state ${status?.model.ready ? 'is-ready' : ''}`}>{!connected ? 'Unlock to configure' : status?.model.ready ? 'Configured' : loading ? 'Loading settings' : 'Setup needed'}</span></div>
+        <div className="setup-heading-row"><p>Used to generate drafts.</p><span className={`setup-state ${status?.model.ready ? 'is-ready' : ''}`}>{!connected ? 'Unlock to configure' : status?.model.ready ? 'Configured' : loading ? 'Loading settings' : 'Setup needed'}</span></div>
         {!connected && <p className="setup-note">Unlock review access to view and save the server’s model settings.</p>}
         {status?.model.error && <p className="inline-error">{status.model.error}. Enter valid settings below to replace it.</p>}
         {connected && model && <form onSubmit={async event => {
@@ -229,9 +230,18 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
 
     <section className="setup-section" aria-labelledby="setup-outbox-title">
       <div className="setup-section-heading"><Mail size={21} /><h2 id="setup-outbox-title">Outbox & delivery</h2></div>
-      <div className="setup-section-body"><div className="setup-heading-row"><p>Approving a draft reserves an unsent message in the outbox. Delivery is manual in this version.</p><span className="setup-state">Export only</span></div>
-        <ol className="setup-delivery-steps"><li>Review and approve the exact message text.</li><li>Open the outbox and export the approved messages.</li><li>Send through your own mail or messaging tool, then import the actual outbound event.</li></ol>
-        <p className="setup-note">No email account, SMS provider, or sending worker is connected. Exporting does not mark a message sent; the UI keeps its recorded outbox status.</p>
+      <div className="setup-section-body">
+        {outboxIntegration ? <>
+          <div className="setup-heading-row"><p>Your tools can collect approved messages through the API, send them, and record the confirmed result.</p></div>
+          <ol className="setup-delivery-steps"><li>Poll <code>GET {outboxIntegration.pending_url}</code> for approved, unsent messages.</li><li>Send through your own mail or messaging service.</li><li>Record its confirmed result with <code>POST {outboxIntegration.receipt_url}</code>.</li></ol>
+          <p className="setup-note">Set <code>{outboxIntegration.token_env}</code> on the Respawned server and in your connector, then restart Respawned. Use it as a Bearer token for outbox polling and delivery receipts.</p>
+          <p className="setup-note">{outboxIntegration.token_configured ? 'The outbox token is configured on this server.' : 'The outbox token is not configured on this server.'} Your connector handles delivery. CSV export is also available; exporting alone does not mark a message sent.</p>
+          <p className="setup-note"><a href="https://respawned.williamshayden.com/api/#outbox-integration" target="_blank" rel="noreferrer">Outbox API documentation</a></p>
+        </> : status?.outbox.mode === 'export_only' ? <>
+          <div className="setup-heading-row"><p>Approving a draft reserves an unsent message in the outbox. Delivery is manual in this version.</p><span className="setup-state">Export only</span></div>
+          <ol className="setup-delivery-steps"><li>Review and approve the exact message text.</li><li>Open the outbox and export the approved messages.</li><li>Send through your own mail or messaging tool, then import the actual outbound event.</li></ol>
+          <p className="setup-note">No email account, SMS provider, or sending worker is connected. Exporting does not mark a message sent; the UI keeps its recorded outbox status.</p>
+        </> : <p className="setup-note">{connected ? 'Load server status to view the available outbox integrations.' : 'Unlock review access to view this server’s outbox integrations.'}</p>}
         <button className="button" disabled={!connected} onClick={onOpenOutbox}>Open outbox<ArrowUpRight size={17} /></button>
       </div>
     </section>

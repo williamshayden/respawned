@@ -47,6 +47,7 @@
 .setup-template-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
 .setup-delivery-steps { color: #35475b; font-size: 13px; line-height: 1.7; padding-left: 20px; margin: 0; }
 .setup-delivery-steps li + li { margin-top: 6px; }
+.setup-delivery-steps code, .setup-note code { overflow-wrap: anywhere; }
 @media (max-width: 1200px) {
   .setup-section { grid-template-columns: minmax(160px, 23%) minmax(0, 1fr); }
   .setup-heading-row { flex-direction: column; gap: 10px; }

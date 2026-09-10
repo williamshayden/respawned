@@ -20,9 +20,9 @@ python3 -m venv /tmp/respawned-site-build
 The output path must not exist. Publication builds require a clean checkout and
 verify that each allowlisted source file matches the committed revision. For
 local development only, add `--allow-dirty-preview`; its manifest is marked
-unqualified for publication. The distribution defaults to the qualified 1.0.0
-build from `8d0512d4ff0d367b04ec028198195dc18f697c2a`, with its successful installer
-verification recorded. The builder checks file sizes, manifest hashes, the exact
+unqualified for publication. The current distribution must be version 1.1.0,
+with its source revision explicitly pinned and successful installer verification
+recorded. The builder checks file sizes, manifest hashes, the exact
 `SHA256SUMS` allowlist, and the installer's pinned wheel digest before copying.
 It verifies the repository demo and poster against their recorded provenance.
 Raw HTML in Markdown is escaped; Markdown tables and fenced code are supported.
@@ -33,8 +33,31 @@ the default publication snapshot. Both paths require the recorded installer
 verification and exact hashes. Never infer a package revision from an unverified
 directory name.
 
+When publishing 1.1.0, preserve the original 1.0.0 package URLs so previously
+downloaded installers can still fetch their pinned wheel. Add both archive
+arguments to the build command:
+
+```bash
+/tmp/respawned-site-build/bin/python site/build.py \
+  --distribution /absolute/path/to/qualified-1.1.0-distribution \
+  --output /absolute/path/to/new-static-output \
+  --archive-distribution /absolute/path/to/qualified-1.0.0-distribution \
+  --archive-source 8d0512d4ff0d367b04ec028198195dc18f697c2a
+```
+
+The archive receives the same source-revision, clean-build, installer
+qualification, file-size, checksum, and installer-pin checks as the current
+distribution. Only its versioned wheel and source archive are copied. Its
+installer, `release.json`, and `SHA256SUMS` never replace the current release's
+files. An archive with the current version, a conflicting output path, or a
+newer version is rejected. `site-manifest.json` records the archived source
+revision, original release-manifest hash, and the identities of both preserved
+artifacts. CI may omit the archive arguments when qualifying only its own
+distribution. Publication must include the qualified 1.0.0 archive.
+
 Only the installer, wheel, source archive, checksums, and a public package manifest
-are copied from the distribution. Logs, verification reports, credentials,
+are copied from the current distribution, plus explicitly requested versioned
+archive artifacts. Logs, verification reports, credentials,
 internal handoff notes, and older distribution directories are excluded.
 Static assets also use an explicit allowlist; ignored files and symlinks cannot
 enter the output. The public `release.json` removes only two build-time hosting booleans:

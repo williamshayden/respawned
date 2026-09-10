@@ -86,6 +86,7 @@ services:
       RESPAWNED_PROCESS_TOKEN: ${RESPAWNED_PROCESS_TOKEN:-}
       # Review uses its own credential; setting this does not enable processing.
       RESPAWNED_REVIEW_TOKEN: ${RESPAWNED_REVIEW_TOKEN:-}
+      RESPAWNED_OUTBOX_TOKEN: ${RESPAWNED_OUTBOX_TOKEN:-}
       # Exact browser origins allowed to connect to this engine using Bearer access.
       RESPAWNED_UI_ORIGINS: ${RESPAWNED_UI_ORIGINS:-}
       # A container cannot use the host-facing localhost proxy URL.

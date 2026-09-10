@@ -89,26 +89,29 @@ The reviewer inspects evidence, generates a draft when needed, edits it, and cho
 
 The default policy requires human approval. An agent importing facts or running `sync` does not bypass it. `RESPAWNED_PROCESS_TOKEN` is a separate opt-in processing credential; it is not human review authority. A draft's `review_token` is an automatic version fingerprint, not an access password.
 
-## 4. Export the reviewed result
+## 4. Connect your sending tool
 
-After approval, an agent can export the outbox using the same database environment:
+Respawned 1.1.0 adds a connector API for approved messages and confirmed send results. Configure `RESPAWNED_OUTBOX_TOKEN` on the server and in your connector; this credential does not grant drafting or approval authority.
+
+Fetch a bounded batch:
+
+```bash
+curl --fail-with-body \
+  -H "Authorization: Bearer $RESPAWNED_OUTBOX_TOKEN" \
+  'http://127.0.0.1:8000/v1/outbox/pending?limit=50'
+```
+
+Your tool sends the exact returned body to the approved recipient through its own service. Once that service confirms the send, submit its account namespace, message ID, and timestamp to `POST /v1/outbox/{id}/receipt`. Respawned records the result, marks the item sent, and updates the related records' outbound history atomically.
+
+See [Outbox integration](API.md#outbox-integration) for request fields, authentication, responses, and retry handling. Coordinate one logical sender per engine and use provider idempotency. Fetching is not a work claim, and an uncertain provider response is not a reason to resend automatically.
+
+For a manual workflow, CSV export remains available:
 
 ```bash
 respawned outbox --path exports/outbox.csv
 ```
 
-Or use the authenticated HTTP export:
-
-```bash
-curl --fail-with-body \
-  -H "Authorization: Bearer $RESPAWNED_REVIEW_TOKEN" \
-  'http://127.0.0.1:8000/v1/outbox/export?format=json' \
-  -o outbox.json
-```
-
-UI, CLI, and API exports read the same reservations. JSON preserves original strings; CSV protects formula-like cells for spreadsheet use. Export is read-only and does not mark a reservation sent.
-
-There is no automatic delivery. If a separate tool actually sends the message, import its `message_sent` activity with `direction: outbound` and the source timestamp. This updates reply and cooldown state but does not correlate a delivered message to its outbox reservation. V1 has no delivery worker or provider-result reconciliation.
+UI, CLI, and API exports read the same reservations. JSON preserves original strings; CSV protects formula-like cells. Exporting does not mark a message sent. If another source adapter imports a `message_sent` activity, it updates reply/cooldown state but only a correlated receipt updates the corresponding outbox item.
 
 ## Retries and boundaries
 

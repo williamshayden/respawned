@@ -15,7 +15,8 @@ The [browser guide](WEB_UI.md) covers operator setup and workspace monitoring.
 | `GET /v1/inbox`, `/v1/drafts`, `/v1/outbox` | Trusted network | Read correspondence, draft history, and reservations |
 | `POST /v1/process` | `RESPAWNED_PROCESS_TOKEN` | Draft a bounded queue under server policy |
 | `/v1/ui/*` review, settings, import, workspace, and overview operations | Local browser session or `RESPAWNED_REVIEW_TOKEN` | The API used by the bundled UI |
-| `GET /v1/outbox/export` | Local browser session or `RESPAWNED_REVIEW_TOKEN` | Export the same JSON/CSV as `/v1/ui/outbox/export` |
+| `GET /v1/outbox/export` | `RESPAWNED_REVIEW_TOKEN` | Export JSON/CSV; the `/v1/ui/outbox/export` alias also accepts a local browser session |
+| `GET /v1/outbox/pending`, `GET /v1/outbox/{id}`, `POST /v1/outbox/{id}/receipt` | `RESPAWNED_OUTBOX_TOKEN` or reviewer Bearer credential | Read approved messages and record confirmed sends |
 
 Session/bootstrap discovery endpoints expose only access availability. Review
 credentials are independent of the processing token. A draft's `review_token`
@@ -227,9 +228,74 @@ whole reservations referencing matching records. Export is read-only.
 Approval reserves the reviewed copy and recipient. It does not send or mark the
 message sent. An actual outbound activity updates inbox/cooldown state but cannot
 identify a delivered reservation without explicit provider-message correlation.
-The [manual outbox workflow](WEB_UI.md#import-records-and-use-the-outbox) remains
-the supported path; a delivery worker would need claims, retries, cancellation,
-freshness checks, and correlated delivery results.
+Use the outbox integration below to correlate a confirmed external send with its
+reservation. CSV export remains available for manual workflows.
+
+## Outbox integration
+
+Available in Respawned 1.1.0. A connector can fetch approved messages, send them through its own provider, and report the confirmed result. The UI, CLI exports, and API then show the same recorded status.
+
+Run `respawned init` after upgrading to add the receipt table. Set `RESPAWNED_OUTBOX_TOKEN` to a separate random secret in the server environment, restart the server, and provide the same credential to the connector. Docker Compose forwards this variable to the app. Keep it out of browser storage and source files.
+
+The connector token permits these three operations; it cannot import records, change settings, generate drafts, or approve messages. Operators may use a reviewer Bearer credential instead. The browser's launch-session cookie is scoped to the UI; scripts need a configured Bearer credential. Legacy unauthenticated routes still require a trusted network.
+
+| Method and path | Result |
+| --- | --- |
+| `GET /v1/outbox/pending?limit=50` | Oldest pending messages first, with `items` and `has_more`. Limit is 1–200. |
+| `GET /v1/outbox/{id}` | The approved snapshot and `receipt`, which is `null` until a result is recorded. |
+| `POST /v1/outbox/{id}/receipt` | Record a confirmed send and return the updated snapshot with its receipt. |
+
+### Fetch approved messages
+
+```bash
+curl --fail-with-body \
+  -H "Authorization: Bearer $RESPAWNED_OUTBOX_TOKEN" \
+  'http://127.0.0.1:8000/v1/outbox/pending?limit=50'
+```
+
+Each item includes `id`, `draft_id`, `contact_key`, `contact_address`, `contact_name`, `channel`, `opportunity_ids`, `body`, `status`, `authorization_mode`, `created_at`, and `sent_at`. Use the returned recipient, channel, and exact body. Approval provenance is `human` or an explicitly configured `automatic` policy; old reservations marked `legacy_unknown` are excluded from this feed.
+
+Fetching does not claim work. After recording results, fetch again from the beginning. Do not persist the highest numeric ID as a delivery checkpoint: an earlier ID can commit later. There is no offset on the pending feed.
+
+### Record a confirmed send
+
+After the sending service confirms success, save its result as `receipt.json`. Replace these illustrative values with the provider account namespace, provider message ID, and actual send timestamp:
+
+```json
+{
+  "sender": "mail:account-123",
+  "provider_message_id": "provider-message-456",
+  "sent_at": "2026-09-10T04:55:00Z"
+}
+```
+
+Then submit it for the corresponding outbox ID:
+
+```bash
+curl --fail-with-body \
+  -H "Authorization: Bearer $RESPAWNED_OUTBOX_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data-binary @receipt.json \
+  http://127.0.0.1:8000/v1/outbox/42/receipt
+```
+
+| Field | Contract |
+| --- | --- |
+| `sender` | Stable provider/account namespace, 1–200 characters; starts with a letter or digit, then letters, digits, `_ . : @ / -`. |
+| `provider_message_id` | Nonempty provider result ID, up to 300 characters. The pair with `sender` identifies one message in this engine. |
+| `sent_at` | Timestamp with a UTC offset, at or after approval and no later than the server clock. |
+
+The response includes the full approved snapshot with `status: "sent"`, `sent_at`, and `receipt: {sender, provider_message_id, sent_at, recorded_at}`. The server stores the receipt, updates the outbox, and appends outbound activity for every grouped record in one transaction. Success is returned after commit. The approved text, recipient, channel, and authorization provenance remain unchanged.
+
+An identical retry returns the recorded result. A different receipt for the same item, or reuse of the same sender/message pair for another item, returns `409`. Missing or disabled resources return `404`; missing or invalid configured credentials return `401`; invalid fields, IDs, or timestamps return `422`. New receipts require a pending item with recorded human or automatic authorization.
+
+### Retries and delivery ownership
+
+Use one logical connector per engine, with durable coordination in that connector. Use a provider idempotency key based on the stable draft UUID and your engine identity. Receipt idempotency prevents duplicate records in Respawned; it does not prevent a provider from sending twice.
+
+If a send times out, reconcile with the provider before trying again. If receipt submission times out, inspect `GET /v1/outbox/{id}` or retry the identical receipt. Leave uncertain sends pending until the result is known. There are no automatic retries, claim leases, or failed/cancelled transitions in this interface.
+
+The connector checks source freshness and whether the message should still be sent before contacting its provider. A receipt records a send that already happened, so it does not rerun eligibility checks or rewrite the approved route from current contact data. Activities remain attached to the original record IDs; changing a record's contact changes how its history is projected. Respawned records the sender's report and does not independently verify it with the provider.
 
 ## Policy and drafting context
 

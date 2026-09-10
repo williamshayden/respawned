@@ -45,7 +45,7 @@ export function WorkspaceManager(props: Props) {
   }
   return <div className="workspace-management">
     <p className="workspace-intro">Group records into workspaces by type. Workspaces share this engine’s records, model connection, and review policy.</p>
-    {!props.token ? <div className="empty-state"><h2>Connect your engine first</h2><p>Workspaces are saved in the database so they are available the next time you connect.</p><button className="button primary" onClick={props.onSetup}>Open setup</button></div> : <>
+    {!props.token ? <div className="empty-state"><h2>Review access required</h2><p>Open Setup to unlock workspace settings.</p><button className="button primary" onClick={props.onSetup}>Open setup</button></div> : <>
       {props.error && <p role="alert" className="inline-error">{props.error}</p>}
       <div className="workspace-manager-grid"><div className="workspace-cards">
         <button className="button new-workspace" onClick={() => select()} disabled={busy}><Plus size={18} />New workspace</button>

@@ -105,3 +105,18 @@ class ActivityIn(BaseModel):
     summary: Summary | None = None
     source_url: SourceUrl | None = None
     classification: Classification = "unknown"
+
+
+class OutboxReceiptIn(BaseModel):
+    """A sender's confirmed result, without overriding approved message facts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sender: Annotated[str, StringConstraints(
+        strip_whitespace=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,199}$",
+    )]
+    provider_message_id: Annotated[str, StringConstraints(
+        strip_whitespace=True, min_length=1, max_length=300,
+        pattern=r"^[^\x00-\x1f\x7f]+$",
+    )]
+    sent_at: AwareDatetime
