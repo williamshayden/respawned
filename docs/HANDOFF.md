@@ -53,7 +53,7 @@ wsl.exe -d Ubuntu --cd /home/haydenw/Projects/follow-up-engine -- uv run pytest 
 
 Restore Docker Desktop's Ubuntu integration before the full suite. Serialize Docker-backed tests and integration work; earlier WSL/filesystem problems caused a machine crash. Do not prune unrelated Docker images or volumes.
 
-Use the [README quickstart](../README.md#quickstart) for setup and manual QA. Development ports bind to loopback. The API has no authentication or tenant isolation. The prototype-to-canonical schema change has no migration path; do not delete an existing data volume without first establishing that its contents are disposable.
+Use the [README setup guide](../README.md#install-and-start) for setup and manual QA. Development ports bind to loopback. The API has no authentication or tenant isolation. The prototype-to-canonical schema change has no migration path; do not delete an existing data volume without first establishing that its contents are disposable.
 
 ## Where the discussion stopped
 

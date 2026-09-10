@@ -1,6 +1,6 @@
 # Respawned shared review interface
 
-Respawned is the confirmed product name. Use it in the current interface and product documentation; it supersedes the Follow-up Engine label in the accepted mockups. The shared layout and behavior remain the design reference. The Python package and CLI use `respawned`; project environment variables use the `RESPAWNED_` prefix. Existing database and volume identities are preserved; the GitHub repository URL is unchanged until a separate repository rename.
+Respawned is the confirmed product name. Use it in the current interface and product documentation; it supersedes the Follow-up Engine label in the accepted mockups. The shared layout and behavior remain the design reference. The Python package and CLI use `respawned`; project environment variables use the `RESPAWNED_` prefix. Existing database and volume identities are preserved. The repository is [williamshayden/respawned](https://github.com/williamshayden/respawned); historical evidence keeps its original names.
 
 The UI is part of the V1 application: prebuilt assets ship in the Python wheel, source distribution, and Docker image and are served by `respawned serve` on port 8000. Node.js is a frontend development dependency. The same interface is used in the optional Vite development server.
 

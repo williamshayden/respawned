@@ -1,0 +1,169 @@
+#!/bin/sh
+# Generated Respawned installer; source: scripts/downloads/install.sh.in. Review before running; no sudo or repository clone.
+set -eu
+command -v python3 >/dev/null 2>&1 || {
+  printf '%s\n' 'Respawned requires Python 3.12 or newer with the venv module.' >&2
+  exit 1
+}
+exec python3 - "$@" <<'PY'
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+from urllib.parse import urlsplit
+
+VERSION = @@VERSION@@
+WHEEL = @@WHEEL@@
+SHA256 = @@SHA256@@
+BASE_URL = @@BASE_URL@@
+OWNER = 'respawned-versioned-installer-v1'
+
+
+def fail(message):
+    raise RuntimeError(message)
+
+
+def run(args, **kwargs):
+    return subprocess.run(args, check=True, **kwargs)
+
+
+def main():
+    parser = argparse.ArgumentParser(prog='install.sh', description='Install Respawned into a private virtual environment.')
+    parser.add_argument('--prefix', type=Path, default=Path.home() / '.local',
+                        help='installation prefix; creates share/respawned and bin/respawned (default: ~/.local)')
+    parser.add_argument('--test-base-url', metavar='URL',
+                        help='test only: fetch artifacts from an explicit loopback HTTP server')
+    args = parser.parse_args()
+    if sys.version_info < (3, 12):
+        fail('Python 3.12 or newer is required; python3 is currently ' + sys.version.split()[0])
+    if importlib.util.find_spec('venv') is None or importlib.util.find_spec('ensurepip') is None:
+        fail('Python venv and ensurepip are required. Install the venv package for your Python version.')
+    curl = shutil.which('curl')
+    if curl is None:
+        fail('curl is required. Install it with your operating system package manager.')
+    if os.name != 'posix':
+        fail('This installer supports Linux and macOS. On Windows, run it inside WSL.')
+
+    base_url, protocol = BASE_URL, '=https'
+    if args.test_base_url:
+        parsed = urlsplit(args.test_base_url)
+        if (parsed.scheme != 'http' or parsed.hostname not in ('127.0.0.1', 'localhost', '::1')
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment or parsed.path not in ('', '/')):
+            fail('--test-base-url must be a loopback HTTP origin without credentials, path, query, or fragment.')
+        # Read .port to reject malformed or out-of-range ports before curl runs.
+        parsed.port
+        base_url, protocol = args.test_base_url.rstrip('/'), '=http'
+        print('Using explicit local test artifacts at ' + base_url, flush=True)
+
+    prefix = args.prefix.expanduser().resolve()
+    root = prefix / 'share' / 'respawned'
+    release = root / VERSION
+    executable = release / 'bin' / 'respawned'
+    launcher = prefix / 'bin' / 'respawned'
+    marker = root / 'installer.json'
+    lock = root / '.install-lock'
+    receipt = release / 'respawned-install.json'
+    expected = {'installer': OWNER, 'version': VERSION, 'wheel': WHEEL, 'sha256': SHA256}
+
+    def owned_launcher():
+        if not launcher.is_symlink():
+            return False
+        target = launcher.resolve()
+        return target.parent.name == 'bin' and target.name == 'respawned' and target.parent.parent.parent == root.resolve()
+
+    if launcher.exists() or launcher.is_symlink():
+        if not owned_launcher():
+            fail('Refusing to overwrite an unrelated command: ' + str(launcher))
+    if root.is_symlink():
+        fail('Refusing to install through a symlink: ' + str(root))
+    if root.exists():
+        if not marker.is_file() or json.loads(marker.read_text()).get('installer') != OWNER:
+            fail('Refusing to modify an unrecognized installation directory: ' + str(root))
+    else:
+        root.mkdir(parents=True, mode=0o700)
+        marker.write_text(json.dumps({'installer': OWNER}) + '\n')
+    try:
+        lock.mkdir(mode=0o700)
+    except FileExistsError:
+        fail('Another installation may be running. Check ' + str(lock) + ' before retrying.')
+
+    created_release = False
+    try:
+        if release.exists() or release.is_symlink():
+            if release.is_symlink() or not receipt.is_file() or json.loads(receipt.read_text()) != expected:
+                fail('Refusing to overwrite an unrecognized version directory: ' + str(release))
+            result = run([str(executable), '--version'], capture_output=True, text=True, timeout=30)
+            if result.stdout.strip() != 'respawned ' + VERSION:
+                fail('The existing installation did not report the expected version: ' + str(release))
+            print('Respawned ' + VERSION + ' is already installed.', flush=True)
+        else:
+            with tempfile.TemporaryDirectory(prefix='respawned-download-') as temp:
+                wheel = Path(temp) / WHEEL
+                print('Downloading Respawned ' + VERSION + '…', flush=True)
+                # No redirects: a test URL cannot redirect to another host, and the
+                # production installer fetches only this exact HTTPS artifact URL.
+                run([curl, '--proto', protocol, '--tlsv1.2', '--fail', '--silent', '--show-error',
+                     '--connect-timeout', '15', '--max-time', '180', '--output', str(wheel),
+                     base_url + '/downloads/' + WHEEL], timeout=190)
+                with wheel.open('rb') as stream:
+                    actual = hashlib.file_digest(stream, 'sha256').hexdigest()
+                if actual != SHA256:
+                    fail('Downloaded wheel checksum mismatch; nothing was installed.')
+                release.mkdir(mode=0o700)
+                created_release = True
+                print('Creating private environment at ' + str(release), flush=True)
+                run([sys.executable, '-m', 'venv', str(release)], timeout=120)
+                python = release / 'bin' / 'python'
+                env = os.environ.copy()
+                env['PIP_CONFIG_FILE'] = os.devnull
+                run([str(python), '-m', 'pip', '--isolated', '--disable-pip-version-check',
+                     '--no-cache-dir', 'install', '--index-url', 'https://pypi.org/simple',
+                     '--timeout', '30', '--retries', '1', str(wheel)], env=env, timeout=600)
+                run([str(python), '-m', 'pip', '--disable-pip-version-check', 'check'], env=env, timeout=30)
+                result = run([str(executable), '--version'], capture_output=True, text=True, timeout=30)
+                if result.stdout.strip() != 'respawned ' + VERSION:
+                    fail('Installed command did not report the expected version.')
+                run([str(python), '-c',
+                     "from importlib.resources import files; p=files('respawned').joinpath('web_assets'); "
+                     "assert p.joinpath('index.html').is_file(); assert p.joinpath('bundle-manifest.json').is_file()"],
+                    timeout=30)
+                receipt.write_text(json.dumps(expected, indent=2) + '\n')
+
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        if launcher.exists() or launcher.is_symlink():
+            if not owned_launcher():
+                fail('Refusing to overwrite an unrelated command: ' + str(launcher))
+        # Create the replacement beside the launcher for an atomic, owned-link update.
+        with tempfile.TemporaryDirectory(prefix='.respawned-link-', dir=launcher.parent) as temp:
+            replacement = Path(temp) / 'respawned'
+            replacement.symlink_to(executable)
+            os.replace(replacement, launcher)
+        created_release = False
+    finally:
+        if created_release:
+            # Only this invocation's newly created private environment is removed.
+            shutil.rmtree(release)
+        lock.rmdir()
+
+    print('\nInstalled: ' + str(launcher))
+    print('Version: ' + VERSION)
+    if str(launcher.parent) not in os.environ.get('PATH', '').split(os.pathsep):
+        print('Add ' + str(launcher.parent) + ' to PATH, or invoke the full path above.')
+    print('PostgreSQL is separate. Set DB_HOST, DB_PORT, DB_NAME, DB_USER, and DB_PASSWORD,')
+    print('then run respawned init and respawned ui. Setup configures workspaces and models.')
+    print('Documentation: ' + BASE_URL)
+
+
+try:
+    main()
+except (RuntimeError, OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+    print('Install failed: ' + str(exc), file=sys.stderr)
+    sys.exit(1)
+PY

@@ -1,0 +1,47 @@
+{
+  "source_revision": "7e44fb42de8db356c585ab072297edad2a68109f",
+  "source_recording_date": "2026-09-10",
+  "sample_records": true,
+  "model_response": "Deterministic local OpenAI-compatible stub; no external model call",
+  "ui_footage": "Actual bundled application connected to an isolated PostgreSQL schema",
+  "agent_segment": "Illustrative API and CLI commands for connecting an existing agent; not a live agent execution",
+  "cli_presentation": {
+    "kind": "Typeset presentation of actual command and captured stdout",
+    "command": "respawned outbox --path exports/outbox.csv",
+    "stdout": "Exported 1 outbox rows to exports/outbox.csv\n",
+    "matches_browser_csv_byte_for_byte": true,
+    "outbox_rows": 1,
+    "status": "pending",
+    "sent_at": null
+  },
+  "editing": "Selected UI panels are cropped at their boundaries and framed with explanatory text. Timing and transitions are editorial choices, not model or network latency measurements. The portfolio loop dissolves to its first frame; the application does not undo the saved draft.",
+  "media": [
+    {
+      "file": "respawned-demo.mp4",
+      "poster": "respawned-demo-poster.png",
+      "width": 1920,
+      "height": 1080,
+      "duration_seconds": 48.56,
+      "fps": 25,
+      "decoded_frames": 1214,
+      "audio_tracks": 0,
+      "bytes": 2828529,
+      "sha256": "0b3b8c0574f74ed96fb4fc04b3c09a99bf95b33cbb51a9961f96696b5374b29d",
+      "poster_sha256": "043da2fa2907271149b4ca3b902570bd1a9e08fad0a1091dddd2fa9248f99ffa"
+    },
+    {
+      "file": "respawned-review-loop.mp4",
+      "poster": "respawned-review-poster.png",
+      "width": 1116,
+      "height": 1048,
+      "duration_seconds": 14.24,
+      "fps": 25,
+      "decoded_frames": 356,
+      "audio_tracks": 0,
+      "bytes": 524806,
+      "sha256": "0a8d82bb642352c5d28aa2da76b453bffedb56052e84446ae76f9e406531bf79"
+    }
+  ],
+  "verification": "Both MP4s fully decode. Sampled frames pass readability and panel-edge checks. The approval cut keeps the selected record and then shows its confirmed unsent outbox reservation. No external delivery occurred. Raw capture files and local credentials are excluded from the repository.",
+  "editing_revision": "Removed decorative eyebrow labels, corner chapter tags, and terminal header strips. Rebalanced text spacing. Original recording, timing, example disclosures, and unsent state are preserved."
+}
