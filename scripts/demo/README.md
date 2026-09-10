@@ -1,34 +1,40 @@
 # Recorded agent and connector demo
 
-The recording uses mock application correspondence and a live Codex backend.
-`scripts/demo/serve.py` owns an isolated database schema. `agent.py` reads the
-correspondence, imports source facts through HTTP, and evaluates the queue.
-The operator reviews the draft in the UI and explicitly approves it.
+Run these scripts from a developer checkout with dependencies installed, a loopback test PostgreSQL database, and an authenticated Codex runtime. The scripts use mock correspondence and make real Codex calls.
 
-After that approval, record the connector with a new output directory:
+Start the engine with a new output directory:
+
+```sh
+uv run python scripts/demo/serve.py \
+  --postgres-url 'postgresql+psycopg2://user:password@127.0.0.1:5432/test_database' \
+  --codex-bin /absolute/path/to/codex \
+  --scratch-dir /absolute/path/to/existing/scratch \
+  --output /tmp/respawned-take-1 --port 8127
+```
+
+The harness owns one temporary schema and removes it on normal shutdown. Windows Codex launched from WSL needs its executable and scratch directory on a mounted Windows drive. The generated `cli-env.sh` contains API connection settings; database settings stay on the engine.
+
+In another terminal, import the mock correspondence with the agent:
+
+```sh
+. /tmp/respawned-take-1/cli-env.sh
+uv run python scripts/demo/agent.py \
+  --codex-bin /absolute/path/to/codex \
+  --scratch-dir /absolute/path/to/existing/scratch \
+  --output /tmp/respawned-take-1/agent
+```
+
+Open the printed engine URL and enter the demo-only token `respawned-live-demo-review` under **Setup → Engine access**. Open **Review queue**, generate a draft, inspect the source message, edit and save the text, then choose **Approve to outbox**.
+
+Record the connector after approval:
 
 ```sh
 RESPAWNED_OUTBOX_TOKEN=respawned-live-demo-outbox \
 uv run python scripts/demo/deliver.py \
   --url http://127.0.0.1:8127 \
-  --output /tmp/respawned-test-delivery-take-1
+  --output /tmp/respawned-take-1/delivery
 ```
 
-The token above belongs to `serve.py`'s disposable demo engine. Run the script
-in the same app environment so `respawned outbox --pending --json` uses the
-current CLI. The script needs no database configuration or operator token.
+`deliver.py` accepts only the single human-approved Northstar demo message. It reads the actual CLI and API outbox, then posts the exact message to an ephemeral loopback **TEST delivery** endpoint. The endpoint writes one durable JSON file; no email or messaging provider runs. After confirmed acceptance, the connector records a receipt and checks both endpoint and receipt replays. Respawned then shows **Sent** based on that test confirmation.
 
-`deliver.py` refuses any pending batch except the single human-approved
-`demo:application:northstar-backend` message to `maya@northstar.example`.
-It posts the exact recipient, channel, body, and outbox ID to an ephemeral
-loopback **TEST delivery** endpoint. The outbox ID is its idempotency key.
-That endpoint only writes durable JSON; no email or messaging provider runs.
-After confirmed acceptance, the connector records the result through
-`POST /v1/outbox/{id}/receipt` and checks identical endpoint and receipt replays.
-Respawned then reports the message as sent based on that TEST confirmation.
-
-The output contains the actual CLI stdout before and after, the approved
-snapshot, the test endpoint's durable record, `receipt.json`, the final outbox
-detail, and `trace.json`. Keep the TEST delivery label in footage and captions.
-If a request fails, inspect these files before continuing; the script does not
-retry failed requests or resume an existing output directory.
+The delivery script needs no database configuration or operator token. Its output includes CLI stdout, the approved snapshot, the durable test record, receipt, final outbox detail, and trace. Keep the TEST label in footage. Inspect saved evidence after any failure; the script does not retry failed requests or resume an existing output directory.

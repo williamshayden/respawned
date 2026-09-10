@@ -109,12 +109,7 @@ def main():
             "record_id": "demo:application:northstar-backend",
         }
         (args.output / "runtime.json").write_text(json.dumps(manifest, indent=2))
-        from sqlalchemy.engine import make_url
-        db = make_url(args.postgres_url)
         env = {
-            "DB_HOST": db.host, "DB_PORT": str(db.port), "DB_USER": db.username,
-            "DB_PASSWORD": db.password, "DB_NAME": db.database,
-            "PGOPTIONS": f"-c search_path={schema}",
             "PYTHONPATH": str(REPO / "src"),
             "RESPAWNED_API_URL": manifest["url"], "RESPAWNED_REVIEW_TOKEN": REVIEW_TOKEN,
             "RESPAWNED_OUTBOX_TOKEN": OUTBOX_TOKEN,

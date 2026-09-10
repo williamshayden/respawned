@@ -11,7 +11,7 @@ python3 -m venv /tmp/respawned-site-build
 /tmp/respawned-site-build/bin/pip install -r site/requirements.txt
 ```
 
-The current package version is 2.0.0. Set `PACKAGE_COMMIT` near the top of `site/build.py` to its full application commit only after the artifacts pass distribution and installer qualification. Until then, the default is unset and the builder requires an explicit `--package-source`.
+The 2.0.0 download source is `1f33f8f17762ad6fde3e528261cc9d6aa4630d85`, pinned by `PACKAGE_COMMIT` in `site/build.py` after distribution and installer qualification. For another release, qualify its artifacts before updating the version and source pin.
 
 For a local preview, set `PACKAGE_SOURCE` to the full qualified application commit and use a new output directory:
 

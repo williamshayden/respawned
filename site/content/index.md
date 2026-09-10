@@ -45,7 +45,9 @@ respawned ui
 
 The app opens at `http://127.0.0.1:8000` with browser access connected. The launcher creates private CLI access for other terminals on this machine. Database settings belong to the engine; workflow clients do not need them.
 
-Engine commands do not automatically read `.env`. Keep database settings in the host shell or service configuration. Startup creates no sample records and needs no model credentials.
+Engine commands do not automatically read `.env`. Keep `DB_*` values and model credentials in the engine's shell or service configuration. For a custom policy, set `RESPAWNED_POLICY_PATH` to a file outside the installation directory. Client-only environments use the engine URL, an access credential or local discovery, and an optional request timeout. Startup creates no sample records and needs no model credentials.
+
+PostgreSQL holds records, activities, drafts, outbox reservations and receipts, workspace definitions, and saved model settings. The installation directory holds program files and dependencies. Preserve the engine environment and any custom policy file separately from database backups.
 
 Use `respawned ui --port 8001` for another port or `--no-open` to print the browser link. Set `RESPAWNED_API_URL` to that loopback URL in CLI terminals using a custom port. Leave the engine running while using clients. Stop it with Ctrl+C; PostgreSQL remains separate.
 
@@ -159,8 +161,15 @@ The [API reference](/api/) covers routes, payloads, errors, and retries. The run
 
 ## Upgrading to 2.0
 
-Back up the database, upgrade the engine, run `respawned init`, and restart it. Reconnect clients afterward.
+1. Stop the engine before upgrading; use Ctrl+C for a foreground `ui` or `serve` process. Keep PostgreSQL running for backup.
+2. Back up the existing database and preserve the engine environment and any custom policy file.
+3. Download the current [website installer](/install.sh) again and run it with the same prefix, following [Install and start locally](#install-and-start-locally). A previously downloaded installer remains pinned to its original release. If you installed the wheel directly, update the [2.0.0 wheel](/downloads/respawned-2.0.0-py3-none-any.whl) in that same Python environment.
+4. On the engine host, check `respawned --version`, run `respawned init` with the existing database settings, and restart with the usual `ui` or `serve` command. Reload the browser and reconnect clients.
+
+Use the 2.0.0 CLI and Python SDK with the 2.0.0 engine; this is the qualified combination. Update separately installed client environments to the same release. The matching browser UI is bundled with the engine.
 
 Workflow CLI commands now use the API. Remove database settings from client-only environments, and configure remote clients with the engine URL and credential. `--now` and `--policy` are server/simulation concerns, not workflow-client options.
 
 All data routes now require authentication. New clients use `/v1/workflow`; existing `/v1/ui` aliases remain available. See the [migration reference](/api/#upgrading-to-20).
+
+The installer retains earlier version environments and has no uninstall command. To remove an installer-managed copy, stop the engine and remove its `bin/respawned` symlink and `share/respawned` program directory under the chosen prefix, after confirming they belong to this installation. Preserve PostgreSQL, its backups, and external configuration when removing program files.

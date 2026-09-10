@@ -298,4 +298,6 @@ Drafting receives bounded record, contact, tone, and sender context. The engine 
 - New integrations use `/v1/workflow`. Existing `/v1/ui` routes remain compatibility aliases. The separate `/v1/outbox` connector routes are unchanged.
 - `review` always asks for human decisions. Use explicit `process` for server-policy processing.
 
-Back up the database, upgrade the package, run `respawned init` on the engine host, and restart the server and local clients.
+The 2.0.0 CLI and Python SDK are qualified with the 2.0.0 engine. The browser UI ships with that engine release. `/v1` identifies the HTTP route contract; it is separate from the package version.
+
+Stop the engine and back up PostgreSQL before upgrading. Install the current package, run `respawned init` on the engine host, restart the engine, and reconnect clients. See the [installation guide](../README.md#install-and-start) for the current installer.
