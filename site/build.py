@@ -103,19 +103,28 @@ def render_markdown(source: str, page: str, revision: str) -> tuple[str, list[tu
                     continue
                 href = child.attrGet("href") or ""
                 mapping = {
+                    "WEB_UI.md": "/",
                     "WEB_UI.md#connect-a-model-backend": "/#configure-a-drafting-backend",
                     "WEB_UI.md#server-and-api-access": "/#access-and-draft-version-tokens",
+                    "WEB_UI.md#add-an-engine-connection": "/#connect-another-engine",
+                    "WEB_UI.md#import-records-and-use-the-outbox": "/#review-and-export",
+                    "WEB_UI.md#shared-application-boundary": f"{REPO}/blob/{revision}/docs/WEB_UI.md#shared-application-boundary",
                     "../README.md#install-and-start": "/#install-and-start-locally",
                     "../README.md": "/",
-                    "API.md": f"{REPO}/blob/{revision}/docs/API.md",
+                    "API.md": "/api/",
+                    "./api/": "/api/",
+                    "./agent-integration/": "/agent-integration/",
+                    "../src/respawned/core/contracts.py": f"{REPO}/blob/{revision}/src/respawned/core/contracts.py",
+                    "../src/respawned/config/policy.yaml": f"{REPO}/blob/{revision}/src/respawned/config/policy.yaml",
+                    "../src/respawned/core/policy.py": f"{REPO}/blob/{revision}/src/respawned/core/policy.py",
+                    "../src/respawned/core/reasons.py": f"{REPO}/blob/{revision}/src/respawned/core/reasons.py",
                 }
-                if page == "agent":
-                    if href in mapping:
-                        child.attrSet("href", mapping[href])
-                    elif not href.startswith(("https://", "http://", "/", "#", "mailto:")):
-                        raise ValueError(f"Unmapped agent guide link: {href}")
-                if href == "./agent-integration/":
-                    child.attrSet("href", "/agent-integration/")
+                if href in mapping:
+                    child.attrSet("href", mapping[href])
+                elif href.startswith("API.md#"):
+                    child.attrSet("href", "/api/" + href[len("API.md"):])
+                elif not href.startswith(("https://", "http://", "/", "#", "mailto:")):
+                    raise ValueError(f"Unmapped {page} guide link: {href}")
     return parser.renderer.render(tokens, parser.options, {}), sections
 
 
@@ -123,6 +132,7 @@ def shell(title: str, body: str, path: str, sections: list[tuple[str, str]], rev
     escape = html.escape
     nav = '<a href="/"' + (' aria-current="page"' if path == "/" else "") + '>Documentation</a>'
     nav += '<a href="/agent-integration/"' + (' aria-current="page"' if path == "/agent-integration/" else "") + '>Agent integration</a>'
+    nav += '<a href="/api/"' + (' aria-current="page"' if path == "/api/" else "") + '>API reference</a>'
     toc = "".join(f'<a href="#{escape(anchor)}">{escape(label)}</a>' for anchor, label in sections)
     sidebar = f'<nav class="sidebar" aria-label="Documentation"><div class="page-links">{nav}</div><div class="section-links">{toc}</div></nav>'
     mobile = f'<details class="mobile-nav"><summary>Contents</summary><nav aria-label="Mobile documentation">{nav}<div class="section-links">{toc}</div></nav></details>'
@@ -131,7 +141,7 @@ def shell(title: str, body: str, path: str, sections: list[tuple[str, str]], rev
 <title>{escape(title)} · Respawned</title><meta name="description" content="Install Respawned and use its browser, CLI, and API to organize follow-up records, review drafts, and export approved messages.">
 <link rel="canonical" href="{ORIGIN}{escape(path)}"><link rel="stylesheet" href="/assets/docs.css"><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><script src="/assets/docs.js" defer></script>
 </head><body><a class="skip-link" href="#content">Skip to content</a>
-<header class="site-header"><a class="brand" href="/">Respawned</a><nav aria-label="External links"><a href="{REPO}">GitHub <span aria-hidden="true">↗</span></a><a href="/install.sh">Installer</a></nav></header>
+<header class="site-header"><a class="brand" href="/">Respawned</a><nav aria-label="External links"><a href="{REPO}">GitHub <span aria-hidden="true">↗</span></a><a href="/install.sh">View installer</a></nav></header>
 <div class="layout">{sidebar}<div class="reading-column">{mobile}<main id="content">{body}</main>
 <footer><a href="{REPO}/tree/{revision}">Documentation source · {revision[:7]}</a><a href="/release.json">Package provenance</a></footer></div></div>
 </body></html>'''
@@ -152,10 +162,11 @@ def build(distribution: Path, output: Path, package_source: str = PACKAGE_COMMIT
     source_files += [regular_file(SITE / "assets", name) for name in ASSETS]
     if (SITE / "wrangler.jsonc").exists():
         source_files.append(regular_file(SITE, "wrangler.jsonc"))
-    source_files += [ROOT / "docs/AGENT_INTEGRATION.md", ROOT / "docs/media/demo-provenance.json"]
+    source_files += [regular_file(ROOT, name) for name in ("docs/AGENT_INTEGRATION.md", "docs/API.md", "docs/media/demo-provenance.json")]
     pages = [
         (SITE / "content/index.md", "index.html", "/", "Documentation", "index"),
         (ROOT / "docs/AGENT_INTEGRATION.md", "agent-integration/index.html", "/agent-integration/", "Agent integration", "agent"),
+        (ROOT / "docs/API.md", "api/index.html", "/api/", "API reference", "api"),
     ]
     rendered = []
     for source, target, url, title, key in pages:
@@ -164,7 +175,7 @@ def build(distribution: Path, output: Path, package_source: str = PACKAGE_COMMIT
             markdown = markdown.replace("# Connect your own agent\n", "# Agent integration\n", 1)
         body, sections = render_markdown(markdown, key, revision)
         if key == "index":
-            video = '''<details class="demo"><summary>Product demo <span>49 seconds · silent</span></summary><video muted loop playsinline preload="none" width="1920" height="1080" poster="/media/respawned-demo-poster.png" aria-label="Respawned demo with sample records and illustrative agent commands" data-src="/media/respawned-demo.mp4"></video><p>Sample records in the actual application. The API and CLI integration examples are illustrative. No messages are delivered. <a href="/media/respawned-demo.mp4">Open video</a></p></details>'''
+            video = '''<details class="demo"><summary>Product demo</summary><video muted loop playsinline preload="none" width="1920" height="1080" poster="/media/respawned-demo-poster.png" aria-label="Respawned demo with sample records and illustrative agent commands" data-src="/media/respawned-demo.mp4"></video><p>Sample records in the actual application. The API and CLI integration examples are illustrative. No messages are delivered. <a href="/media/respawned-demo.mp4">Open video</a></p></details>'''
             position = body.find('<h2')
             body = body[:position] + video + body[position:]
         rendered.append((target, shell(title, body, url, sections, revision)))
@@ -209,7 +220,8 @@ def build(distribution: Path, output: Path, package_source: str = PACKAGE_COMMIT
         shutil.copyfile(regular_file(SITE / "assets", name), output / "assets" / name)
     shutil.copyfile(SITE / "_headers", output / "_headers")
     (output / "robots.txt").write_text(f"User-agent: *\nAllow: /\nSitemap: {ORIGIN}/sitemap.xml\n")
-    (output / "sitemap.xml").write_text(f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>{ORIGIN}/</loc></url><url><loc>{ORIGIN}/agent-integration/</loc></url></urlset>')
+    sitemap_urls = "".join(f"<url><loc>{ORIGIN}{url}</loc></url>" for _, _, url, _, _ in pages)
+    (output / "sitemap.xml").write_text(f'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{sitemap_urls}</urlset>')
     manifest = {
         "site": ORIGIN,
         "built_at": datetime.now(timezone.utc).isoformat(),

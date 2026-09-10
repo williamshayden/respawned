@@ -26,10 +26,14 @@ The shell installer requires Python 3.12+ with `venv` and `ensurepip`, and `curl
 It supports Linux, macOS, or WSL; the verified installation environment is
 Ubuntu/WSL with Python 3.12.3. PostgreSQL is a separate prerequisite.
 
-After the files are hosted, download the installer for review and run it:
+[View installer](https://respawned.williamshayden.com/install.sh) ·
+[Download package (Python wheel)](https://respawned.williamshayden.com/downloads/respawned-1.0.0-py3-none-any.whl) ·
+[Checksums](https://respawned.williamshayden.com/SHA256SUMS)
+
+Download the installer to inspect it before running it:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsS \
+curl -fsS \
   https://respawned.williamshayden.com/install.sh -o install-respawned.sh
 # Read install-respawned.sh before running it.
 sh install-respawned.sh
@@ -40,7 +44,7 @@ respawned --version
 For a one-line installation after reviewing the script:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsS https://respawned.williamshayden.com/install.sh | sh
+curl -fsS https://respawned.williamshayden.com/install.sh | sh
 ```
 
 The installer verifies the pinned wheel's SHA-256 digest, creates a private

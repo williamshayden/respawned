@@ -1,10 +1,10 @@
 # Documentation
 
-Respawned tracks follow-up records, selects work under a shared policy, generates drafts on request, and reserves reviewed messages in an unsent outbox. Job applications, sales, and other record types use the same interface. Monetary values are optional.
+Respawned organizes follow-up work across job applications, sales, and other record types. Review and approve drafts in the browser or CLI, then collect approved messages from the outbox as JSON or CSV. Monetary values are optional.
 
-The browser, CLI, and HTTP API share one Python application core and PostgreSQL database. The browser holds navigation and unsaved edits; the server owns records, eligibility, draft versions, approvals, and outbox state. The built browser UI is included in the Python package and Docker image. Node.js is only needed for frontend development.
+The browser, CLI, and HTTP API use the same Python application and PostgreSQL database. The browser UI is included in the Python package and Docker image. Node.js is only needed for frontend development.
 
-For code examples that connect your own agent to this workflow, see [Connect your own agent](./agent-integration/).
+See [Agent integration](./agent-integration/) for a complete workflow and the [API reference](/api/) for endpoints, authentication, and request formats.
 
 V1 is intended for a trusted operator on loopback or a trusted network. It does not connect a mailbox, schedule source updates, or deliver messages. Some legacy API routes are unauthenticated; workspaces do not provide account or tenant isolation.
 
@@ -12,20 +12,22 @@ V1 is intended for a trusted operator on loopback or a trusted network. It does 
 
 The installer requires `curl`, a POSIX shell, and Python 3.12+ with `venv` and `ensurepip`. It accepts Linux, macOS, or WSL; the application is qualified on Linux, including WSL2. PostgreSQL remains a separate requirement.
 
+[View installer](/install.sh) · [Download package (Python wheel)](/downloads/respawned-1.0.0-py3-none-any.whl) · [Checksums](/SHA256SUMS)
+
 Install Respawned:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsS https://respawned.williamshayden.com/install.sh | sh
+curl -fsS https://respawned.williamshayden.com/install.sh | sh
 ```
 
 The installer verifies the pinned wheel's SHA-256 digest, installs it in `~/.local/share/respawned/1.0.0`, and adds a launcher at `~/.local/bin/respawned`. The package includes the CLI, HTTP API, and built browser UI. No Node.js, npm, or repository clone is needed.
 
-Versioned files are also available directly: [Python wheel](/downloads/respawned-1.0.0-py3-none-any.whl), [source archive](/downloads/respawned-1.0.0.tar.gz), [SHA-256 checksums](/SHA256SUMS), and [package provenance](/release.json). The package provenance identifies the verified application build. Documentation and media can receive updates independently; their source revision is recorded in the [site manifest](/site-manifest.json).
+A [source archive](/downloads/respawned-1.0.0.tar.gz) and [package provenance](/release.json) are also available. The package provenance identifies the verified application build. Documentation and media can receive updates independently; their source revision is recorded in the [site manifest](/site-manifest.json).
 
-To inspect the script before running it:
+To download and inspect the script before running it:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsS \
+curl -fsS \
   https://respawned.williamshayden.com/install.sh -o install.sh
 # Read install.sh, then run it.
 sh install.sh
@@ -202,7 +204,7 @@ The origin allowlist enables browser access; it does not secure unauthenticated 
 
 ## API reference and troubleshooting
 
-The running server exposes interactive schemas at `http://127.0.0.1:8000/docs` and machine-readable schemas at `/openapi.json`. Use `respawned serve --api-only` to serve the API without the bundled interface. `/healthz` checks process liveness; `/readyz` checks the database, schema, and policy. Neither proves model availability or fresh source data.
+The [API reference](/api/) covers endpoints, authentication, request formats, and retry behavior. The running server also exposes interactive schemas at `http://127.0.0.1:8000/docs` and machine-readable schemas at `/openapi.json`. Use `respawned serve --api-only` to serve the API without the bundled interface. `/healthz` checks process liveness; `/readyz` checks the database, schema, and policy. Neither proves model availability or fresh source data.
 
 | Symptom | Next check |
 | --- | --- |
