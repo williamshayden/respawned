@@ -52,6 +52,10 @@ subcommand. The UI calls those operations directly; it contains no alternative
 storage or evaluation engine. Fixtures and the simulated review client are
 test utilities and are not imported by the application entry point.
 
+For a source-import, human-review, and export workflow driven by your own agent,
+see the [agent integration examples](AGENT_INTEGRATION.md). The
+[product demo](DEMO.md) shows the shared UI workflow with sample data.
+
 ## Start the application
 
 The preferred package download location is

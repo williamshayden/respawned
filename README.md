@@ -141,11 +141,11 @@ policy-controlled processing and does not grant human approval authority.
 
 ## Direct package installation
 
-After website hosting is enabled, the pinned wheel can also be installed in an
+After website hosting is enabled, the wheel can also be installed in an
 existing Python 3.12+ virtual environment:
 
 ```sh
-python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-1.0.0-py3-none-any.whl#sha256=d96057181619f71bfff3e99430a0111f7f86a26ecf130c4fd1a887e71d52ac03'
+python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-1.0.0-py3-none-any.whl'
 ```
 
 The planned source archive is
@@ -153,6 +153,9 @@ The planned source archive is
 Both formats include the prebuilt UI. A supplied local wheel also works with
 `python -m pip install /path/to/respawned-1.0.0-py3-none-any.whl`. Set the database
 environment above before running `respawned init` and `respawned ui`.
+The generated checksum manifest is planned at
+`https://respawned.williamshayden.com/SHA256SUMS`; the preferred installer verifies
+its pinned wheel digest automatically.
 These planned URLs and package version `1.0.0` are not publication claims.
 
 ## Developer source checkout
@@ -221,6 +224,8 @@ Historical evidence names retain their original spelling.
 | Task | Guide |
 | --- | --- |
 | Workspaces, local access, remote engines, models, and outbox | [Browser guide](docs/WEB_UI.md) |
+| Connect your own agent through the API and CLI | [Agent integration](docs/AGENT_INTEGRATION.md) |
+| Watch the product walkthrough and review loop | [Demo and provenance](docs/DEMO.md) |
 | Source adapters, API operations, policy, and retries | [API and policy](docs/API.md) |
 | Build the UI and run browser checks | [Frontend development](docs/WEB_UI.md#frontend-development-and-bundled-assets) |
 | Preserve an existing database | [Database migration](docs/RELEASE_CHECKS.md) |
