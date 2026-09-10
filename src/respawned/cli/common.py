@@ -2,10 +2,9 @@
 
 import argparse
 from datetime import UTC, datetime
-from pathlib import Path
 
 
-DEFAULT_POLICY_PATH = Path(__file__).parents[1] / "config" / "policy.yaml"
+from respawned.config import DEFAULT_POLICY_PATH
 
 
 def parse_now(value: str) -> datetime:

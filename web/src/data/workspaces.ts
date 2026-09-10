@@ -1,6 +1,7 @@
+import { workflowRoot } from './workflow'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { accessHeaders, type ReviewAccess } from './auth'
-import { engineNetworkError, engineRequestOptions } from './connections'
+import { engineNetworkError, engineRequestOptions } from './transport'
 
 export interface Workspace {
   id: string
@@ -16,8 +17,11 @@ export interface WorkspaceList { items: Workspace[]; available_kinds: string[]; 
 export async function workspaceRequest<T>(token: ReviewAccess, path = '', method = 'GET', body?: WorkspaceInput, baseUrl = ''): Promise<T> {
   let response: Response
   const deadline = AbortSignal.timeout(20_000)
-  try { response = await fetch(`${baseUrl}/v1/ui/workspaces${path}`, {
-    ...engineRequestOptions(token, baseUrl),
+  try {
+    const transport = engineRequestOptions(token, baseUrl)
+    const root = await workflowRoot(baseUrl, deadline)
+    response = await fetch(`${root}/workspaces${path}`, {
+    ...transport,
     signal: deadline,
     method, headers: { ...accessHeaders(token), ...(body ? { 'Content-Type': 'application/json' } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),

@@ -1,0 +1,39 @@
+{
+  "account": "demo-mail",
+  "application": {
+    "id": "demo:application:northstar-backend",
+    "kind": "job_application",
+    "title": "Backend Engineer at Northstar Labs",
+    "status": "open",
+    "created_at": "2026-08-25T14:00:00Z",
+    "contact_key": "demo:contact:maya-chen",
+    "contact_name": "Maya Chen",
+    "contact_email": "maya@northstar.example",
+    "preferred_channel": "email",
+    "context": {
+      "company": "Northstar Labs",
+      "role": "Backend Engineer",
+      "stage": "Team interview",
+      "summary": "Met the platform team. Maya planned to share the next interview decision by September 5.",
+      "expected_reply_at": "2026-09-05T17:00:00Z"
+    }
+  },
+  "messages": [
+    {
+      "id": "maya-next-steps",
+      "occurred_at": "2026-09-03T15:30:00Z",
+      "direction": "inbound",
+      "from": "maya@northstar.example",
+      "to": "jordan@example.com",
+      "body": "Hi Jordan, it was lovely meeting you and introducing you to the platform team. I expect to share next steps for the Backend Engineer role by September 5. Best, Maya"
+    },
+    {
+      "id": "jordan-thanks",
+      "occurred_at": "2026-09-04T14:00:00Z",
+      "direction": "outbound",
+      "from": "jordan@example.com",
+      "to": "maya@northstar.example",
+      "body": "Thank you, Maya. I enjoyed meeting the team and learning about the platform. Looking forward to hearing about the next steps. Best, Jordan"
+    }
+  ]
+}

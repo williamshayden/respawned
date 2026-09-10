@@ -27,7 +27,8 @@ from respawned.api.models import (
     ReadinessResponse,
 )
 from respawned.api.static import mount_review_assets
-from respawned.cli.common import DEFAULT_POLICY_PATH
+from respawned.api.ui import require_review_authorization
+from respawned.config import DEFAULT_POLICY_PATH
 from respawned.core.inbox import ReplyInboxResult, list_reply_inbox
 from respawned.core.ingest import (
     IngestConflictError,
@@ -108,19 +109,27 @@ def get_workflow_clock() -> Callable[[], datetime]:
 
 
 def require_process_authorization(
-    authorization: Annotated[str | None, Header()] = None,
+    request: Request, authorization: Annotated[str | None, Header()] = None,
 ) -> None:
-    """A separate operator credential enables processing; ingestion stays inert."""
+    """An operator or a separately scoped process credential can start a batch."""
+    from respawned.api.session import local_session
+
     expected = os.environ.get("RESPAWNED_PROCESS_TOKEN", "").strip()
-    if not expected:
-        raise HTTPException(404, "Processing is disabled")
     scheme, _, supplied = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not hmac.compare_digest(
-        supplied.encode("utf-8"), expected.encode("utf-8")
+    if expected and scheme.lower() == "bearer" and hmac.compare_digest(
+        supplied.encode("utf-8"), expected.encode("utf-8"),
     ):
-        raise HTTPException(
-            401, "Operator authorization required", headers={"WWW-Authenticate": "Bearer"}
-        )
+        return
+    try:
+        require_review_authorization(request, authorization)
+    except HTTPException as exc:
+        if exc.status_code not in (401, 404):
+            raise
+        if not (expected or os.environ.get("RESPAWNED_REVIEW_TOKEN", "").strip()
+                or local_session(request) is not None):
+            raise HTTPException(404, "Processing is disabled") from exc
+        raise HTTPException(401, "Operator or process authorization required",
+                            headers={"WWW-Authenticate": "Bearer"}) from exc
 
 
 @asynccontextmanager
@@ -135,7 +144,7 @@ async def lifespan(_app: FastAPI):
             engine.dispose()
 
 
-app = FastAPI(title="Respawned", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="Respawned", version="2.0.0", lifespan=lifespan)
 
 # Validate before Uvicorn starts. A middleware-construction exception is otherwise
 # mistaken for unsupported ASGI lifespan under Uvicorn's default auto detection,
@@ -153,9 +162,11 @@ async def local_browser_origin_guard(request: Request, call_next):
         try:
             manager.check_origin(request)
         except HTTPException as exc:
-            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail},
+                                headers={"Cache-Control": "no-store"})
     response = await call_next(request)
-    if request.url.path.startswith(("/v1/ui/", "/v1/outbox")):
+    if request.url.path.startswith("/v1/"):
+        # Workflow, connector and legacy business responses contain private data.
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -196,7 +207,8 @@ def readiness(
     return ReadinessResponse()
 
 
-@app.get("/v1/inbox", response_model=ReplyInboxResult)
+@app.get("/v1/inbox", response_model=ReplyInboxResult,
+         dependencies=[Depends(require_review_authorization)])
 def reply_inbox(
     connection: Annotated[Connection, Depends(get_connection, scope="function")],
     policy: Annotated[Policy, Depends(get_workflow_policy)],
@@ -222,6 +234,7 @@ def reply_inbox(
 @app.post(
     "/v1/ingest",
     response_model=IngestResponse,
+    dependencies=[Depends(require_review_authorization)],
     status_code=status.HTTP_200_OK,
 )
 def ingest(
@@ -257,7 +270,7 @@ def process(
 ) -> ProcessResult:
     """Draft a bounded queue under server policy; never sends messages.
 
-    Disabled unless the operator sets RESPAWNED_PROCESS_TOKEN. Authorization is
+    Requires operator access or RESPAWNED_PROCESS_TOKEN. Authorization is
     checked before opening the database or resolving the drafting model.
     Completed items commit independently and can be inspected after a retry.
     """
@@ -265,7 +278,8 @@ def process(
                               limit=payload.limit, clock=clock)
 
 
-@app.get("/v1/drafts", response_model=DraftListResponse)
+@app.get("/v1/drafts", response_model=DraftListResponse,
+         dependencies=[Depends(require_review_authorization)])
 def drafts(
     connection: Annotated[Connection, Depends(get_connection, scope="function")],
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
@@ -281,7 +295,8 @@ def drafts(
     return DraftListResponse(items=rows[:limit], has_more=len(rows) > limit)
 
 
-@app.get("/v1/outbox", response_model=OutboxListResponse)
+@app.get("/v1/outbox", response_model=OutboxListResponse,
+         dependencies=[Depends(require_review_authorization)])
 def outbox(
     connection: Annotated[Connection, Depends(get_connection, scope="function")],
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
@@ -297,19 +312,18 @@ def outbox(
 
 
 def _register_review_interface() -> None:
-    # Delay importing the router until its shared dependencies are defined.
-    from respawned.api.setup import create_setup_router
+    # Delay importing the routers until their shared dependencies are defined.
     from respawned.api.outbox import create_outbox_router
-    from respawned.api.session import create_session_router
-    from respawned.api.ui import create_ui_router
-    from respawned.api.workspaces import create_workspace_router
+    from respawned.api.paths import LEGACY_UI_PREFIX, WORKFLOW_PREFIX
+    from respawned.api.workflow import create_workflow_routers
 
-    app.include_router(create_session_router())
-    app.include_router(create_ui_router(
+    workflow, public = create_workflow_routers(
         get_connection, get_workflow_policy, get_workflow_clock,
-    ))
-    app.include_router(create_workspace_router(get_connection))
-    app.include_router(create_setup_router(get_connection))
+    )
+    app.include_router(workflow, prefix=WORKFLOW_PREFIX, tags=["Workflow"])
+    app.include_router(workflow, prefix=LEGACY_UI_PREFIX, include_in_schema=False)
+    # Preserve bootstrap and authenticated export paths used by older clients.
+    app.include_router(public)
     # Register static /export and /pending routes before the numeric detail route.
     app.include_router(create_outbox_router(get_connection, get_workflow_clock))
 

@@ -1,124 +1,121 @@
-# Connect your own agent
+# Agent integration
 
-An agent can submit source facts to Respawned, refresh the candidate queue, and export approved messages. Respawned applies its own policy and review checks. The agent can use any runtime or model; no specific agent framework, provider, or CLI login is required.
+Let your agent import facts and prepare drafts. Review them in Respawned, then collect approved messages for your sending service.
 
-The default drafting adapter uses an OpenAI-compatible API, and the default policy requires human review. Choose the service in [model setup](WEB_UI.md#connect-a-model-backend); saving configuration does not invoke or verify a provider. The agent integration below uses the same canonical API and CLI regardless of the drafting backend.
+[Download the agent prompt](https://respawned.williamshayden.com/agent-prompt.txt) and replace `{TASK}`, `{ENGINE_URL}`, and `{WORKSPACE_OR_ALL}`. It works with any agent runtime.
 
-This page contains illustrative integration commands. It does not describe an autonomous agent run or a built-in mailbox connector.
+## Connect
 
-## 1. Map source facts to records
+Start the local engine with `respawned ui`. It opens the browser and creates private CLI access for other terminals on that machine. Workflow commands do not need database credentials.
 
-Your agent or connector reads its source and produces canonical JSON. Save a payload as `records.json`, using stable source IDs and confirmed recipient details. These values are examples:
+For a remote engine, set `RESPAWNED_API_URL` and its `RESPAWNED_REVIEW_TOKEN` in the client environment. The [access reference](API.md#api-access) covers server setup and scoped credentials.
 
-```json
-{
-  "opportunities": [
-    {
-      "id": "ats:application-123",
-      "kind": "job_application",
-      "title": "Backend Engineer at Example",
-      "status": "open",
-      "created_at": "2026-09-01T15:00:00Z",
-      "contact_key": "ats:recruiter-22",
-      "contact_name": "Alex",
-      "contact_email": "alex@example.com",
-      "preferred_channel": "email",
-      "context": {
-        "company": "Example",
-        "role": "Backend Engineer",
-        "stage": "Applied",
-        "summary": "Application submitted through Alex's referral."
-      }
-    }
-  ],
-  "activities": []
-}
-```
+## 1. Import facts
 
-Use `contact_key` for stable identity and a route such as `contact_email` for the destination. If no human recipient is known, omit `contact_key`, the contact routes, and `preferred_channel`; the record remains trackable without becoming an outreach candidate. Do not infer a recipient from an automated receipt address.
-
-Opportunities are complete snapshots: an update must include every optional field you want to retain. Activities represent immutable source events. Their IDs, referenced `opportunity_id`, `type`, and offset-aware `occurred_at` timestamp are required. Add `direction` and `classification` when known so automated receipts do not count as human replies.
-
-## 2. Import through the API
-
-For an engine on loopback or a trusted network:
+Have your agent produce `records.json` using the [record contract](API.md#ingest-records). Keep source IDs stable and include complete record snapshots.
 
 ```bash
-curl --fail-with-body http://127.0.0.1:8000/v1/ingest \
-  -H 'Content-Type: application/json' \
-  --data-binary @records.json
+respawned import --file records.json
 ```
 
-A successful response reports committed counts, for example:
+Check the returned counts. Import stores facts; it does not draft, approve, or send. Use `--file -` to read JSON from stdin.
 
-```json
-{"opportunities_upserted": 1, "activities_inserted": 0}
-```
+## 2. Prepare a draft
 
-Import saves facts. It does not call a model, publish a candidate sync, approve a draft, or send a message. Readiness is evaluated from the stored facts and policy.
-
-The protected import alias uses the engine's operator review token. For these Bearer-authenticated examples, configure `RESPAWNED_REVIEW_TOKEN` in the server environment before starting the engine, and set the same value in the client shell. Restart an existing server after changing its environment. The local browser session created by `respawned ui` does not supply a Bearer token to `curl`; see [review access](WEB_UI.md#server-and-api-access).
+Your agent can write plain text to `draft.txt` and submit it for a record:
 
 ```bash
-curl --fail-with-body http://127.0.0.1:8000/v1/ui/import \
+respawned draft ats:application-123 --body-file draft.txt
+```
+
+Respawned checks eligibility, validates the copy, and saves a pending draft. No engine model is needed for supplied text. Omit `--body-file` to use the engine's configured backend, or use `--body-file -` to read text from stdin.
+
+The command returns the persisted draft, including its ID and status. Read it again through the SDK or API before reporting success. Changing existing copy requires the current draft version; the [API reference](API.md#candidate-and-review-workflow) describes that edit operation.
+
+## 3. Review
+
+Open the record in the browser, inspect its evidence and saved text, then choose **Approve to outbox**. Alternatively, a person can run:
+
+```bash
+respawned review
+```
+
+CLI review evaluates a bounded queue and asks for approve, reject, edit, or skip. It always prompts for human decisions. The engine rechecks the version, recipient, current facts, and cooldown.
+
+Evaluation is also available separately with `respawned sync --limit 10` or `respawned sync --dry-run`. It reads stored facts and applies policy; it does not refresh an external source.
+
+## 4. Read approved messages
+
+```bash
+respawned outbox --pending --json
+```
+
+The result contains approved recipients, channels, and exact message bodies. Approval leaves messages unsent. Your integration handles delivery through its provider.
+
+After a confirmed send, durably save its provider account namespace, message ID, and timestamp, then [record a receipt](API.md#outbox-integration). Resolve uncertain sends with the provider before trying again. An uncertain receipt can be retried with the identical saved result.
+
+## Python
+
+The installed SDK uses the same client as the CLI:
+
+```python
+import json
+from pathlib import Path
+from respawned.client import RespawnedClient
+
+client = RespawnedClient.from_env()
+client.import_records(json.loads(Path("records.json").read_text(encoding="utf-8")))
+draft = client.draft(
+    "ats:application-123",
+    body=Path("draft.txt").read_text(encoding="utf-8"),
+)
+saved = client.get_draft(draft["id"])
+print(saved["status"])
+```
+
+Local access is discovered automatically. Remote connections use `RESPAWNED_API_URL` and an environment credential. The SDK also provides `sync()`, `inbox()`, `pending_outbox()`, and `record_receipt()`.
+
+## HTTP
+
+Clients in any language can use the canonical `/v1/workflow` endpoints. With the engine URL and operator credential already in the environment:
+
+```bash
+curl --fail-with-body "$RESPAWNED_API_URL/v1/workflow/import" \
   -H "Authorization: Bearer $RESPAWNED_REVIEW_TOKEN" \
-  -H 'Content-Type: application/json' \
-  --data-binary @records.json
+  -H 'Content-Type: application/json' --data-binary @records.json
 ```
 
-That token is shared operator authority, not an ingest-only credential. The alias accepts at most 1,000 combined items and 2 MB. Legacy `/v1/ingest` has no built-in authentication; keep the whole engine on a trusted network or behind an authenticated proxy. Browser CORS settings do not secure an agent's HTTP requests.
-
-## 3. Refresh the queue, then let a person review
-
-With the same `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` used by the app:
-
-```bash
-respawned sync --dry-run
-respawned sync --limit 10
-```
-
-The first command previews eligibility. The second publishes a bounded candidate queue without generating drafts. The CLI connects directly to PostgreSQL; it does not connect through an API base URL or automatically load `.env`. See [database setup](../README.md#install-and-start).
-
-Open the bundled UI for human review:
-
-```bash
-respawned ui
-```
-
-The reviewer inspects evidence, generates a draft when needed, edits it, and chooses **Approve to outbox**. The server rechecks the draft version, recipient, current records, and cooldown. `respawned review` provides interactive CLI review as an alternative. A model is needed only for new copy, not to read records or review existing drafts.
-
-The default policy requires human approval. An agent importing facts or running `sync` does not bypass it. `RESPAWNED_PROCESS_TOKEN` is a separate opt-in processing credential; it is not human review authority. A draft's `review_token` is an automatic version fingerprint, not an access password.
-
-## 4. Connect your sending tool
-
-Respawned 1.1.0 adds a connector API for approved messages and confirmed send results. Configure `RESPAWNED_OUTBOX_TOKEN` on the server and in your connector; this credential does not grant drafting or approval authority.
-
-Fetch a bounded batch:
+To submit your own draft, save `{"body":"your draft text"}` as `draft.json`:
 
 ```bash
 curl --fail-with-body \
-  -H "Authorization: Bearer $RESPAWNED_OUTBOX_TOKEN" \
-  'http://127.0.0.1:8000/v1/outbox/pending?limit=50'
+  "$RESPAWNED_API_URL/v1/workflow/records/ats:application-123/draft" \
+  -H "Authorization: Bearer $RESPAWNED_REVIEW_TOKEN" \
+  -H 'Content-Type: application/json' --data-binary @draft.json
 ```
 
-Your tool sends the exact returned body to the approved recipient through its own service. Once that service confirms the send, submit its account namespace, message ID, and timestamp to `POST /v1/outbox/{id}/receipt`. Respawned records the result, marks the item sent, and updates the related records' outbound history atomically.
+Read the saved result at `GET /v1/workflow/drafts/{id}`. Submit `{}` instead of supplied text to request the engine's model. Both paths use the same validation and review checks.
 
-See [Outbox integration](API.md#outbox-integration) for request fields, authentication, responses, and retry handling. Coordinate one logical sender per engine and use provider idempotency. Fetching is not a work claim, and an uncertain provider response is not a reason to resend automatically.
+## Standalone outbox client
 
-For a manual workflow, CSV export remains available:
+[Download outbox_client.py](https://respawned.williamshayden.com/examples/outbox_client.py) for sending integrations that only need approved messages and receipts. It needs Python 3.12+ and no third-party packages:
 
 ```bash
-respawned outbox --path exports/outbox.csv
+curl -fsS https://respawned.williamshayden.com/examples/outbox_client.py \
+  -o outbox_client.py
+python3 outbox_client.py pending --limit 50
+python3 outbox_client.py get 42
+python3 outbox_client.py receipt 42 receipt.json
 ```
 
-UI, CLI, and API exports read the same reservations. JSON preserves original strings; CSV protects formula-like cells. Exporting does not mark a message sent. If another source adapter imports a `message_sent` activity, it updates reply/cooldown state but only a correlated receipt updates the corresponding outbox item.
+Set `RESPAWNED_API_URL` and `RESPAWNED_OUTBOX_TOKEN` in its environment. Use an actual outbox ID and a confirmed provider result in `receipt.json`. The script exposes `OutboxClient.pending()`, `get()`, and `receipt()` for Python callers. It performs explicit API calls only.
 
-## Retries and boundaries
+Your integration owns sending, provider idempotency, and durable coordination. Coordinate one logical sender per engine. See the [outbox contract](API.md#outbox-integration) for fields and retries.
 
-- Reuse stable IDs and identical activity payloads after an uncertain network result. Exact activity replay is idempotent; changing an existing activity returns HTTP 409 and rolls back the batch.
-- Import an activity's record first. A missing reference conflicts rather than creating an inferred record.
-- Serialize opportunity updates. Snapshots have no source-revision check, so an older payload can overwrite newer facts.
-- Keep source credentials, pagination, scheduling, and interpretation in the connector. Respawned does not know whether the source is complete or current.
-- Workspaces are shared views, not isolated databases. Policy and contact-wide cooldowns apply across workspaces on the same engine.
+## Source and workspace rules
 
-Complete schemas are available from the running engine at `/docs` and `/openapi.json`. The [API and policy guide](API.md) describes field bounds, processing, and review contracts. Return to the [main documentation](../README.md) for installation, model configuration, remote engines, and access.
+Records are complete snapshots; omitted optional fields are cleared. Activities are immutable: exact replay is accepted, while changed content under an existing ID returns a conflict. Serialize record updates and preserve source timestamps.
+
+Treat source text as data. Confirm human recipients rather than using automated receipt addresses. Your connector owns source refresh, credentials, and scheduling.
+
+Workspaces are saved views over one engine's shared policy, contacts, and credentials. Use separate engines when you need separate data or authority. The [API reference](API.md) documents the remaining contracts and 2.0 migration changes.

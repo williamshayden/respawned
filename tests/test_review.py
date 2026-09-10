@@ -803,3 +803,45 @@ def test_approval_preserves_cooldown_despite_future_timestamps(postgres_connecti
         text("SELECT COUNT(*) FROM outbox WHERE draft_id = :id"),
         {"id": draft.id},
     ).scalar_one() == 0
+
+
+@pytest.mark.parametrize("changes", [
+    {"body": "Changed copy"}, {"contact_address": "another@example.com"},
+    {"contact_key": "another-person"}, {"channel": "email"},
+    {"opportunity_ids": ("another-opportunity",)},
+])
+def test_review_token_binds_copy_to_its_recipient_and_opportunities(changes):
+    from respawned.core.review import PersistedDraft
+
+    original = PersistedDraft(
+        id=uuid4(), candidate_id=uuid4(), contact_key="person:one", contact_address="+13125550123",
+        contact_name="Jamie", channel="sms", primary_opportunity_id="one", opportunity_ids=("one",),
+        body="Hi Jamie, checking in.", status="pending", created_at=NOW, updated_at=NOW, reviewed_at=None,
+    )
+    changed = replace(original, **changes)
+    assert changed.updated_at == original.updated_at
+    assert changed.review_token != original.review_token
+
+
+def test_outbox_cooldown_uses_one_bounded_exists_query():
+    from respawned.core.review import _has_outbox_reservation
+
+    observed = {}
+
+    class Result:
+        def scalar_one(self):
+            return True
+
+    class Connection:
+        def execute(self, statement, parameters):
+            observed["sql"] = " ".join(str(statement).split())
+            observed["parameters"] = parameters
+            return Result()
+
+    draft_id = uuid4()
+    assert _has_outbox_reservation(Connection(), draft_id=draft_id, contact_key="crm:contact:1",
+                                  now=NOW, cooldown_hours=Decimal(72))
+    assert "SELECT EXISTS" in observed["sql"]
+    assert "created_at >" in observed["sql"] and "created_at <=" not in observed["sql"]
+    assert observed["parameters"] == {"draft_id": draft_id, "contact_key": "crm:contact:1",
+                                      "now": NOW, "cooldown_seconds": Decimal(259200)}

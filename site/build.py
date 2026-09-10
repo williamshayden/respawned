@@ -20,10 +20,15 @@ ROOT = Path(__file__).resolve().parent.parent
 SITE = ROOT / "site"
 ORIGIN = "https://respawned.williamshayden.com"
 REPO = "https://github.com/williamshayden/respawned"
-PACKAGE_COMMIT = "25aded36e5c5357a3d9c7365d8dbd71695f8f386"
-PACKAGE_VERSION = "1.1.0"
+# Set this to the full application commit after its 2.0.0 artifacts qualify.
+PACKAGE_COMMIT: str | None = None
+PACKAGE_VERSION = "2.0.0"
 ASSETS = ("docs.css", "docs.js", "favicon.svg")
 SITE_SOURCES = ("build.py", "README.md", "requirements.txt", "_headers", "content/index.md")
+TEXT_DOWNLOADS = {
+    "examples/outbox_client.py": "examples/outbox_client.py",
+    "docs/agent-prompt.txt": "agent-prompt.txt",
+}
 
 
 def distribution_files(version: str) -> tuple[str, str, str]:
@@ -54,8 +59,8 @@ def regular_file(root: Path, name: str) -> Path:
     return candidate
 
 
-def validate_distribution(dist: Path, package_source: str, expected_version: str | None = PACKAGE_VERSION) -> dict:
-    if not re.fullmatch(r"[0-9a-f]{40}", package_source):
+def validate_distribution(dist: Path, package_source: str | None, expected_version: str | None = PACKAGE_VERSION) -> dict:
+    if not isinstance(package_source, str) or not re.fullmatch(r"[0-9a-f]{40}", package_source):
         raise ValueError("Expected an explicit full package source commit")
     release = json.loads(regular_file(dist, "release.json").read_text())
     version = release.get("version")
@@ -123,11 +128,12 @@ def render_markdown(source: str, page: str, revision: str) -> tuple[str, list[tu
                     "WEB_UI.md#connect-a-model-backend": "/#configure-a-drafting-backend",
                     "WEB_UI.md#server-and-api-access": "/#access-and-draft-version-tokens",
                     "WEB_UI.md#add-an-engine-connection": "/#connect-another-engine",
-                    "WEB_UI.md#import-records-and-use-the-outbox": "/#review-and-export",
+                    "WEB_UI.md#import-records-and-use-the-outbox": "/#review-and-outbox",
                     "WEB_UI.md#shared-application-boundary": f"{REPO}/blob/{revision}/docs/WEB_UI.md#shared-application-boundary",
                     "../README.md#install-and-start": "/#install-and-start-locally",
                     "../README.md": "/",
                     "API.md": "/api/",
+                    "AGENT_INTEGRATION.md": "/agent-integration/",
                     "./api/": "/api/",
                     "./agent-integration/": "/agent-integration/",
                     "../src/respawned/core/contracts.py": f"{REPO}/blob/{revision}/src/respawned/core/contracts.py",
@@ -139,6 +145,8 @@ def render_markdown(source: str, page: str, revision: str) -> tuple[str, list[tu
                     child.attrSet("href", mapping[href])
                 elif href.startswith("API.md#"):
                     child.attrSet("href", "/api/" + href[len("API.md"):])
+                elif href.startswith("AGENT_INTEGRATION.md#"):
+                    child.attrSet("href", "/agent-integration/" + href[len("AGENT_INTEGRATION.md"):])
                 elif not href.startswith(("https://", "http://", "/", "#", "mailto:")):
                     raise ValueError(f"Unmapped {page} guide link: {href}")
     return parser.renderer.render(tokens, parser.options, {}), sections
@@ -154,7 +162,7 @@ def shell(title: str, body: str, path: str, sections: list[tuple[str, str]], rev
     mobile = f'<details class="mobile-nav"><summary>Contents</summary><nav aria-label="Mobile documentation">{nav}<div class="section-links">{toc}</div></nav></details>'
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{escape(title)} · Respawned</title><meta name="description" content="Install Respawned and use its browser, CLI, and API to organize follow-up records, review drafts, and export approved messages.">
+<title>{escape(title)} · Respawned</title><meta name="description" content="Import records, review drafts, and connect approved messages to your sending tools through the Respawned API.">
 <link rel="canonical" href="{ORIGIN}{escape(path)}"><link rel="stylesheet" href="/assets/docs.css"><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><script src="/assets/docs.js" defer></script>
 </head><body><a class="skip-link" href="#content">Skip to content</a>
 <header class="site-header"><a class="brand" href="/">Respawned</a><nav aria-label="External links"><a href="https://williamshayden.com/" aria-label="Back to williamshayden.com" title="Back to williamshayden.com">← Portfolio</a><a href="{REPO}">GitHub <span aria-hidden="true">↗</span></a><a href="/install.sh">View installer</a></nav></header>
@@ -166,11 +174,11 @@ def shell(title: str, body: str, path: str, sections: list[tuple[str, str]], rev
 def build(
     distribution: Path,
     output: Path,
-    package_source: str = PACKAGE_COMMIT,
+    package_source: str | None = PACKAGE_COMMIT,
     allow_dirty_preview: bool = False,
     *,
-    archive_distribution: Path | None = None,
-    archive_source: str | None = None,
+    archive_distribution: Path | list[Path] | None = None,
+    archive_source: str | list[str] | None = None,
 ) -> None:
     distribution = distribution.resolve()
     output = output.absolute()
@@ -179,27 +187,34 @@ def build(
     if output.resolve().is_relative_to(distribution) or distribution.is_relative_to(output.resolve()):
         raise ValueError("Output must be separate from the qualified distribution")
     release = validate_distribution(distribution, package_source)
-    if (archive_distribution is None) != (archive_source is None):
+    archive_dirs = ([archive_distribution] if isinstance(archive_distribution, Path)
+                    else list(archive_distribution or []))
+    archive_sources = ([archive_source] if isinstance(archive_source, str)
+                       else list(archive_source or []))
+    if len(archive_dirs) != len(archive_sources):
         raise ValueError("--archive-distribution and --archive-source must be supplied together")
     archived_distributions = []
-    archive_files = ()
-    if archive_distribution is not None:
-        archive_distribution = archive_distribution.resolve()
-        if output.resolve().is_relative_to(archive_distribution) or archive_distribution.is_relative_to(output.resolve()):
+    archive_files = []
+    reserved_files = set(PUBLIC_FILES)
+    for archive_dir, source_commit in zip(archive_dirs, archive_sources, strict=True):
+        archive_dir = archive_dir.resolve()
+        if output.resolve().is_relative_to(archive_dir) or archive_dir.is_relative_to(output.resolve()):
             raise ValueError("Output must be separate from the archived distribution")
-        archive = validate_distribution(archive_distribution, archive_source, expected_version=None)
-        archive_files = distribution_files(archive["version"])[1:]
-        if archive["version"] == release["version"] or set(archive_files) & set(PUBLIC_FILES):
-            raise ValueError("Archived distribution duplicates the current version or artifact target")
+        archive = validate_distribution(archive_dir, source_commit, expected_version=None)
+        names = distribution_files(archive["version"])[1:]
+        if set(names) & reserved_files:
+            raise ValueError("Archived distribution duplicates a version or artifact target")
         if tuple(map(int, archive["version"].split("."))) >= tuple(map(int, PACKAGE_VERSION.split("."))):
             raise ValueError("Archived distribution must be older than the current release")
+        reserved_files.update(names)
+        archive_files.extend((archive_dir, name) for name in names)
         archived_distributions.append({
             "version": archive["version"],
-            "source_commit": archive["source_commit"],
-            "qualified_distribution_release_sha256": digest(archive_distribution / "release.json"),
+            "source_commit": source_commit,
+            "qualified_distribution_release_sha256": digest(archive_dir / "release.json"),
             "artifacts": [
                 {key: item[key] for key in ("path", "sha256", "size_bytes")}
-                for item in archive["artifacts"] if item["path"] in archive_files
+                for item in archive["artifacts"] if item["path"] in names
             ],
         })
     revision = git("rev-parse", "HEAD")
@@ -207,7 +222,8 @@ def build(
     source_files += [regular_file(SITE / "assets", name) for name in ASSETS]
     if (SITE / "wrangler.jsonc").exists():
         source_files.append(regular_file(SITE, "wrangler.jsonc"))
-    source_files += [regular_file(ROOT, name) for name in ("docs/AGENT_INTEGRATION.md", "docs/API.md", "docs/media/demo-provenance.json")]
+    source_files += [regular_file(ROOT, name) for name in ("docs/AGENT_INTEGRATION.md", "docs/API.md", "docs/WEB_UI.md", "docs/media/demo-provenance.json")]
+    source_files += [regular_file(ROOT, name) for name in TEXT_DOWNLOADS]
     pages = [
         (SITE / "content/index.md", "index.html", "/", "Documentation", "index"),
         (ROOT / "docs/AGENT_INTEGRATION.md", "agent-integration/index.html", "/agent-integration/", "Agent integration", "agent"),
@@ -220,7 +236,7 @@ def build(
             markdown = markdown.replace("# Connect your own agent\n", "# Agent integration\n", 1)
         body, sections = render_markdown(markdown, key, revision)
         if key == "index":
-            video = '''<details class="demo"><summary>Product demo</summary><video muted loop playsinline preload="none" width="1920" height="1080" poster="/media/respawned-demo-poster.png" aria-label="Respawned demo with sample records and illustrative agent commands" data-src="/media/respawned-demo.mp4"></video><p>Sample records in the actual application. The API and CLI integration examples are illustrative. No messages are delivered. <a href="/media/respawned-demo.mp4">Open video</a></p></details>'''
+            video = '''<details class="demo"><summary>Product demo</summary><video muted loop playsinline preload="none" width="1920" height="1080" poster="/media/respawned-demo-poster.png" aria-label="Respawned with live Codex, mock correspondence, and local test delivery" data-src="/media/respawned-demo.mp4"></video><p>Codex drafts from mock correspondence. The recording includes browser edits, CLI output, and delivery to a local test HTTP endpoint followed by a receipt. No external provider is contacted. <a href="/media/respawned-demo.mp4">Open video</a></p></details>'''
             position = body.find('<h2')
             body = body[:position] + video + body[position:]
         rendered.append((target, shell(title, body, url, sections, revision)))
@@ -252,11 +268,15 @@ def build(
         target = output / name
         target.parent.mkdir(exist_ok=True, parents=True)
         shutil.copyfile(distribution / name, target)
-    for name in archive_files:
+    for archive_dir, name in archive_files:
         target = output / name
         if target.exists():
             raise ValueError(f"Archived artifact would replace an existing output: {name}")
-        shutil.copyfile(archive_distribution / name, target)
+        shutil.copyfile(archive_dir / name, target)
+    for source, destination in TEXT_DOWNLOADS.items():
+        target = output / destination
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(regular_file(ROOT, source), target)
     public_release = json.loads(json.dumps(release))
     public_release.pop("published", None)
     public_release.get("validation", {}).pop("public_hosting_verified", None)
@@ -293,9 +313,9 @@ if __name__ == "__main__":
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument("--distribution", required=True, type=Path)
     cli.add_argument("--output", required=True, type=Path)
-    cli.add_argument("--package-source", default=PACKAGE_COMMIT, help="Required package commit; defaults to the qualified publication snapshot. CI may require its own exact HEAD.")
-    cli.add_argument("--archive-distribution", type=Path, help="Qualified older distribution whose versioned wheel and sdist must remain downloadable.")
-    cli.add_argument("--archive-source", help="Required full source commit for --archive-distribution; both archive arguments must be supplied together.")
+    cli.add_argument("--package-source", default=PACKAGE_COMMIT, help="Full qualified package commit; required until PACKAGE_COMMIT is pinned. CI may require its own exact HEAD.")
+    cli.add_argument("--archive-distribution", type=Path, action="append", help="Qualified older distribution to preserve. Repeat with a matching --archive-source for every prior release.")
+    cli.add_argument("--archive-source", action="append", help="Full source commit for each --archive-distribution, in matching order.")
     cli.add_argument("--allow-dirty-preview", action="store_true", help="Permit local preview sources; marks the output unqualified for publication")
     args = cli.parse_args()
     try:

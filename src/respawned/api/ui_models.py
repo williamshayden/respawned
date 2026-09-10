@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from respawned.api.models import OutboxResponse
+from respawned.core.candidates import Candidate
 from respawned.core.inbox import ReplyEvidence
 
 
@@ -114,6 +115,26 @@ class UIDraft(BaseModel):
     outbox_id: int | None = None
 
 
+class WorkflowDraft(UIDraft):
+    candidate_id: UUID
+    primary_opportunity_id: str
+    opportunity_ids: list[str]
+    contact_key: str
+    contact_address: str
+    contact_name: str | None
+    channel: Literal["email", "sms"]
+    created_at: datetime
+    updated_at: datetime
+    reviewed_at: datetime | None
+
+
+class ReviewQueueResponse(BaseModel):
+    """The latest persisted queue, read before making review decisions."""
+
+    items: list[Candidate]
+    has_more: Literal[False] = False
+
+
 class UIRecord(BaseModel):
     id: str
     kind: str
@@ -146,12 +167,14 @@ class UIRecordList(BaseModel):
 class UISyncRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     limit: int = Field(default=200, ge=1, le=200, strict=True)
+    dry_run: bool = Field(default=False, strict=True)
 
 
 class UISyncResult(BaseModel):
     candidate_count: int
     inserted_count: int
-    run_id: UUID
+    run_id: UUID | None
+    dry_run: bool = False
 
 
 class UIReviewRequest(BaseModel):
@@ -161,3 +184,10 @@ class UIReviewRequest(BaseModel):
 
 class UIEditRequest(UIReviewRequest):
     body: str = Field(max_length=10000)
+
+
+class WorkflowDraftRequest(BaseModel):
+    """Omit body to use the configured model; supply text for an external agent."""
+
+    model_config = ConfigDict(extra="forbid")
+    body: str | None = Field(default=None, max_length=10000)

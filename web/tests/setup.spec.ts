@@ -4,18 +4,20 @@ import type { ModelStatus, SetupStatus } from '../src/data/setup'
 const access = 'setup-test-review-access'
 const initialModel: ModelStatus = { backend: 'openai_compatible', source: 'environment', base_url: 'http://litellm:4000', model_alias: 'respawned-default', timeout_seconds: 60, api_key_env: 'LITELLM_MASTER_KEY', key_configured: false, ready: false, verified: false, error: null }
 
-async function environment(page: Page, databaseReady = true, outbox: SetupStatus['outbox'] = { mode: 'export_only', automatic_delivery: false, export_url: '/v1/ui/outbox/export' }) {
+async function environment(page: Page, databaseReady = true, outbox: SetupStatus['outbox'] = { mode: 'export_only', automatic_delivery: false, export_url: '/v1/ui/outbox/export' }, prefix = '/v1/ui') {
   let model = structuredClone(initialModel)
   const writes: { path: string; body: unknown }[] = []
   const unexpected: string[] = []
   await page.route('**/v1/**', async route => {
     const request = route.request()
-    const path = new URL(request.url()).pathname
+    const actualPath = new URL(request.url()).pathname
+    const path = prefix === '/v1/workflow' ? actualPath.replace('/v1/workflow', '/v1/ui') : actualPath
     const method = request.method()
-    if (path === '/v1/setup/bootstrap') return route.fulfill({ json: { review_enabled: true } })
+    if (path === '/v1/setup/bootstrap') return route.fulfill({ json: { review_enabled: true, ...(prefix === '/v1/workflow' ? { workflow_api_prefix: prefix } : {}) } })
     if (path === '/v1/ui/session' && method === 'GET') return route.fulfill({ json: { authenticated: false, local_launcher: false } })
-    if (request.headers().authorization !== `Bearer ${access}`) return route.fulfill({ status: 401, json: { detail: 'Review access token was not accepted' } })
-    if (method !== 'GET') writes.push({ path, body: request.postDataJSON() })
+    if (request.headers().authorization !== `Bearer ${access}`) return route.fulfill({ status: 401, json: { detail: 'Engine access token was not accepted' } })
+    if (method !== 'GET') writes.push({ path: actualPath, body: request.postDataJSON() })
+    if (path === '/v1/ui/sync') return route.fulfill({ json: { candidates_created: 0 } })
     if (path === '/v1/ui/config') return route.fulfill({ json: { policy_mode: 'human', cooldown_hours: 48, max_draft_characters: 320, source_freshness: 'unknown' } })
     if (path === '/v1/ui/setup') {
       const body: SetupStatus = {
@@ -48,7 +50,7 @@ async function environment(page: Page, databaseReady = true, outbox: SetupStatus
 }
 
 async function connect(page: Page) {
-  await page.getByLabel('Review access token', { exact: true }).fill(access)
+  await page.getByLabel('Engine access token', { exact: true }).fill(access)
   await page.getByRole('button', { name: 'Connect local engine', exact: true }).click()
   await expect(page.getByText('Unlocked', { exact: true })).toBeVisible()
   await expect(page.getByLabel('API base URL')).toBeVisible()
@@ -71,7 +73,7 @@ test('starts empty with server setup, and review access clears on reload', async
   const stored = await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))
   expect(stored).not.toContain(access)
   await page.reload()
-  await expect(page.getByLabel('Review access token', { exact: true })).toHaveValue('')
+  await expect(page.getByLabel('Engine access token', { exact: true })).toHaveValue('')
   await expect(page.getByText('Locked', { exact: true })).toBeVisible()
   expect(unexpected).toEqual([])
 })
@@ -199,4 +201,52 @@ test('shows the engine outbox capability without collecting credentials or perfo
   expect(writes).toEqual([])
   expect(unexpected).toEqual([])
   expect(errors).toEqual([])
+})
+
+for (const prefix of ['/v1/ui', '/v1/workflow']) {
+  test(`offers the next step from empty setup and keeps refresh read-only with ${prefix}`, async ({ page }) => {
+    const { writes, unexpected } = await environment(page, true, undefined, prefix)
+    const workflowRequests: string[] = []
+    page.on('request', request => { if (/\/v1\/(ui|workflow)\//.test(request.url())) workflowRequests.push(new URL(request.url()).pathname) })
+    await page.goto('/')
+    await connect(page)
+    const headings = await page.locator('.setup-section h2').allTextContents()
+    expect(headings).toEqual(['Engine access', 'Records & sources', 'Model backend', 'Outbox & delivery'])
+    await page.getByRole('button', { name: 'Open review queue', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'No tracked records', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Import records', exact: true }).click()
+    await expect(page.getByLabel('Or paste your import JSON')).toBeInViewport()
+    await page.getByLabel('Or paste your import JSON').fill(JSON.stringify({ opportunities: [{ id: 'mock-record' }], activities: [] }))
+    await page.getByRole('button', { name: 'Import records', exact: true }).click()
+    await page.getByRole('button', { name: 'Review imported records', exact: true }).click()
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled()
+    expect(writes.map(write => write.path)).toEqual([`${prefix}/import`])
+    await page.getByRole('button', { name: 'Evaluate queue', exact: true }).click()
+    await expect(page.getByRole('status')).toContainText('Queue evaluated.')
+    for (const name of ['Outbox', 'Activity', 'Policy', 'Reply inbox']) {
+      await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: new RegExp(`^${name}`) }).click()
+      await expect(page.getByRole('button', { name: 'Evaluate queue', exact: true })).toHaveCount(0)
+      await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+      await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled()
+    }
+    expect(writes.map(write => write.path)).toEqual([`${prefix}/import`, `${prefix}/sync`])
+    expect(workflowRequests.every(path => path.startsWith(prefix + '/'))).toBe(true)
+    expect(unexpected).toEqual([])
+  })
+}
+
+test('keeps engine identity visible while navigating at laptop height', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await environment(page)
+  await page.goto('/')
+  await connect(page)
+  await page.getByRole('button', { name: 'Go to import', exact: true }).click()
+  await page.getByRole('button', { name: 'Open review queue', exact: true }).click()
+  await expect(page.getByRole('link', { name: 'Respawned', exact: true })).toBeInViewport({ ratio: 1 })
+  await page.getByRole('button', { name: 'All tracked', exact: true }).click()
+  await page.getByRole('textbox', { name: 'Find a record', exact: true }).focus()
+  const position = await page.evaluate(() => ({ scroll: window.scrollY, top: document.querySelector('.brand')!.getBoundingClientRect().top, overflow: document.documentElement.scrollWidth > innerWidth }))
+  expect(position).toMatchObject({ scroll: 0, overflow: false })
+  expect(position.top).toBeGreaterThanOrEqual(0)
 })

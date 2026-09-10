@@ -1,3 +1,5 @@
+// Keep these request-contract tests on a legacy engine; workflow.test.ts covers discovery.
+vi.mock('./workflow', async importOriginal => ({ ...await importOriginal<typeof import('./workflow')>(), workflowRoot: async (baseUrl = '', signal?: AbortSignal) => { signal?.throwIfAborted(); return `${baseUrl.replace(/\/+$/, '')}/v1/ui` } }))
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { importRecords, parseImport, readBootstrap, saveModel } from './setup'
 

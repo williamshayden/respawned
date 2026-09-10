@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # contains no package sources. Its imports therefore verify the distribution.
 INSTALLED_PROBE = r'''
 import csv
+from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from importlib.metadata import version
 import json
@@ -46,7 +47,10 @@ from uuid import uuid4
 
 # No Node executable, frontend checkout, or UI override is available at runtime.
 os.environ["PATH"] = str(Path(sys.executable).parent)
-os.environ.pop("RESPAWNED_UI_DIST", None)
+# Keep the probe independent of the caller's model, connection and credentials.
+for key in list(os.environ):
+    if key.startswith(("RESPAWNED_", "LITELLM_", "OPENAI_")) and key != "RESPAWNED_DISTRIBUTION_POSTGRES_URL":
+        os.environ.pop(key)
 os.environ["RESPAWNED_REVIEW_TOKEN"] = "distribution-review-test-token"
 assert shutil.which("node") is None
 
@@ -54,7 +58,8 @@ import respawned
 from respawned.__main__ import DEFAULT_SEED_DIR
 from respawned.adapters import load_legacy_seed
 from respawned.api.app import app
-from respawned.cli.common import DEFAULT_POLICY_PATH
+from respawned.client import RespawnedClient
+from respawned.config import DEFAULT_POLICY_PATH
 from respawned.core.policy import load_policy
 from respawned.db.helpers.pg_connect import DEFAULT_SCHEMA_PATH
 
@@ -67,7 +72,10 @@ assert DEFAULT_SEED_DIR.is_relative_to(root)
 batch = load_legacy_seed(DEFAULT_SEED_DIR / "quotes.json", DEFAULT_SEED_DIR / "events.jsonl")
 assert len(batch.opportunities) == 30
 assert len({row["id"] for row in batch.activities}) == 82
-assert {"/healthz", "/readyz", "/v1/ingest", "/v1/inbox", "/v1/process", "/v1/drafts", "/v1/outbox"} <= set(app.openapi()["paths"])
+assert app.openapi()["info"]["version"] == version("respawned")
+assert {"/healthz", "/readyz", "/v1/workflow/import", "/v1/workflow/queue",
+        "/v1/workflow/records/{record_id}/draft", "/v1/workflow/drafts/{draft_id}",
+        "/v1/process", "/v1/outbox/pending", "/v1/outbox/{outbox_id}/receipt"} <= set(app.openapi()["paths"])
 
 bin_dir = Path(sys.executable).parent
 console = bin_dir / ("respawned.exe" if os.name == "nt" else "respawned")
@@ -87,7 +95,7 @@ class AssetLinks(HTMLParser):
             self.paths.append(values[key])
 
 
-def verify_http(prefix, *, environment=None, api_only=False):
+def verify_http(prefix, *, environment=None, api_only=False, exercise=None):
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
@@ -142,11 +150,14 @@ def verify_http(prefix, *, environment=None, api_only=False):
                         pending.extend(re.findall(r'url\([\"\x27]?(/[^)\"\x27]+)', body.decode("utf-8")))
                 verified.append(path)
             assert any(path.endswith(".woff2") for path in verified), verified
-            try:
-                urlopen(base + "/v1/ui/config", timeout=5)
-                raise AssertionError("Bundled UI shadowed a protected API route")
-            except HTTPError as error:
-                assert error.code == 401
+            for protected in ("/v1/workflow/config", "/v1/inbox", "/v1/outbox/pending"):
+                try:
+                    urlopen(base + protected, timeout=5)
+                    raise AssertionError("Installed engine exposed an unauthenticated data route")
+                except HTTPError as error:
+                    assert error.code == 401
+            if exercise is not None:
+                exercise(base)
             return sorted(verified)
         finally:
             if process.poll() is None:
@@ -158,10 +169,10 @@ def verify_http(prefix, *, environment=None, api_only=False):
                 process.wait(timeout=5)
 
 
-def invoke(prefix, *args, environment=None, expected=0):
+def invoke(prefix, *args, environment=None, expected=0, stdin=""):
     completed = subprocess.run(
         [*map(str, prefix), *args], env=environment, capture_output=True,
-        text=True, timeout=45, check=False,
+        text=True, input=stdin, timeout=45, check=False,
     )
     output = completed.stdout + completed.stderr
     commands.append({"arguments": args, "interface": "module" if len(prefix) > 1 else "console", "exit_code": completed.returncode})
@@ -177,9 +188,9 @@ def invoke(prefix, *args, environment=None, expected=0):
 for prefix in ([console], module):
     assert "respawned " + version("respawned") in invoke(prefix, "--version")
     assert "demo" in invoke(prefix, "--help")
-    for command in ("init", "demo", "serve", "ui", "sync", "review", "inbox", "outbox"):
+    for command in ("init", "demo", "serve", "ui", "import", "sync", "draft", "review", "inbox", "outbox", "process"):
         invoke(prefix, command, "--help")
-    invoke(prefix, "sync", "--policy", str(Path.cwd() / "missing-policy.yaml"), expected=1)
+    invoke(prefix, "--api-url", "http://127.0.0.1:0", "sync", expected=1)
     unavailable = dict(os.environ, DB_HOST="127.0.0.1", DB_PORT="0",
                        DB_NAME="unavailable", DB_USER="unavailable",
                        DB_PASSWORD="distribution-password-sentinel",
@@ -213,27 +224,85 @@ if url:
             PGOPTIONS=f"-csearch_path={schema}",
         )
         invoke([console], "init", environment=environment)
-        first = invoke([console], "demo", environment=environment)
-        replay = invoke(module, "demo", environment=environment)
-        assert "30 demo opportunities and 82 new activities" in first, first
-        assert "30 demo opportunities and 0 new activities" in replay, replay
+        def exercise_workflow(base):
+            # An invalid client DB configuration proves commands use HTTP.
+            client_environment = dict(environment, RESPAWNED_API_URL=base,
+                                      DB_HOST="127.0.0.1", DB_PORT="0",
+                                      DB_NAME="not-the-engine", DB_USER="not-the-engine",
+                                      DB_PASSWORD="distribution-password-sentinel",
+                                      NO_COLOR="1")
+            client = RespawnedClient(base, token=environment["RESPAWNED_REVIEW_TOKEN"])
+            now = datetime.now(UTC)
+            payload = {
+                "opportunities": [{
+                    "id": "distribution:application", "kind": "job_application",
+                    "title": "Distribution fixture", "status": "open",
+                    "created_at": (now - timedelta(days=8)).isoformat(),
+                    "contact_key": "distribution:alex", "contact_name": "Alex",
+                    "contact_email": "alex@example.com", "preferred_channel": "email",
+                }],
+                "activities": [{
+                    "id": "distribution:reply", "opportunity_id": "distribution:application",
+                    "type": "contact_replied", "occurred_at": (now - timedelta(hours=1)).isoformat(),
+                    "direction": "inbound", "channel": "email", "classification": "human",
+                }],
+            }
+            source = Path.cwd() / "records.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            first = json.loads(invoke([console], "import", "--file", str(source), environment=client_environment))
+            assert first == {"opportunities_upserted": 1, "activities_inserted": 1}, first
+            replay = json.loads(invoke(module, "import", "--file", "-", environment=client_environment,
+                                       stdin=json.dumps(payload)))
+            assert replay == {"opportunities_upserted": 1, "activities_inserted": 0}, replay
+            body = "Hi Alex, thanks for your message. I can share an update tomorrow.\n\nMorgan"
+            message = Path.cwd() / "draft.txt"
+            message.write_text(body, encoding="utf-8")
+            draft = json.loads(invoke([console], "draft", "distribution:application",
+                                      "--body-file", str(message), environment=client_environment))
+            assert draft["body"] == body and draft["status"] == "pending", draft
+            again = json.loads(invoke(module, "draft", "distribution:application",
+                                      "--body-file", "-", environment=client_environment, stdin=body))
+            assert again["id"] == draft["id"]
+            assert client.get_draft(draft["id"])["body"] == body
+            queue = client.queue()
+            invoke([console], "sync", "--dry-run", environment=client_environment)
+            assert client.queue() == queue
+            review = invoke(module, "review", "--limit", "1", environment=client_environment, stdin="a\n")
+            assert "1 approved" in review, review
+            pending = json.loads(invoke([console], "outbox", "--pending", "--json",
+                                        environment=client_environment))
+            assert len(pending["items"]) == 1, pending
+            approved = pending["items"][0]
+            assert approved["body"] == body and approved["authorization_mode"] == "human"
+            assert approved["contact_address"] == "alex@example.com"
+            assert json.loads(invoke(module, "inbox", "--json", environment=client_environment))["total"] == 1
+            # A synthetic confirmation verifies receipt behavior; nothing is sent.
+            receipt = {"sender": "distribution:simulated", "provider_message_id": "fixture-message",
+                       "sent_at": datetime.now(UTC).isoformat()}
+            sent = client.record_receipt(approved["id"], receipt)
+            assert sent["status"] == "sent" and sent["body"] == body
+            assert client.record_receipt(approved["id"], receipt) == sent
+            assert client.pending_outbox()["items"] == []
+            assert json.loads(invoke(module, "inbox", "--json", environment=client_environment))["total"] == 0
+            export = Path.cwd() / "outbox.csv"
+            invoke([console], "outbox", "--path", str(export), environment=client_environment)
+            with export.open(newline="", encoding="utf-8") as stream:
+                rows = list(csv.DictReader(stream))
+            assert len(rows) == 1 and rows[0]["status"] == "sent" and rows[0]["body"] == body
+            fixtures = json.loads(invoke([console], "demo", environment=client_environment))
+            assert fixtures == {"opportunities_upserted": 30, "activities_inserted": 82}, fixtures
+            repeated = json.loads(invoke(module, "demo", environment=client_environment))
+            assert repeated == {"opportunities_upserted": 30, "activities_inserted": 0}, repeated
+
+        assert verify_http([console, "serve"], environment=environment,
+                           exercise=exercise_workflow) == bundled_http_assets
         with database.connect() as connection:
             counts = connection.execute(text(
                 f'SELECT (SELECT count(*) FROM "{schema}".opportunities), '
                 f'(SELECT count(*) FROM "{schema}".activities), '
                 f'(SELECT count(*) FROM "{schema}".outbox)'
             )).one()
-        assert tuple(counts) == (30, 82, 0), counts
-        invoke([console], "sync", "--dry-run", "--now", "2026-08-20T12:00:00Z", environment=environment)
-        inbox = invoke(module, "inbox", "--json", "--now", "2026-08-20T12:00:00Z", environment=environment)
-        assert isinstance(json.loads(inbox), dict)
-        export = Path.cwd() / "outbox.csv"
-        invoke([console], "outbox", "--path", str(export), environment=environment)
-        with export.open(newline="", encoding="utf-8") as source:
-            rows = csv.DictReader(source)
-            assert "authorization_mode" in rows.fieldnames
-            assert list(rows) == []
-        assert verify_http([console, "serve"], environment=environment) == bundled_http_assets
+        assert tuple(counts) == (31, 84, 1), counts
         verify_http([console, "serve"], environment=environment, api_only=True)
         cli_http_verified = True
         database_verified = True
@@ -254,6 +323,7 @@ print(json.dumps({
     "bundled_http_assets": bundled_http_assets,
     "node_available_at_runtime": shutil.which("node") is not None,
     "cli_http_verified": cli_http_verified,
+    "synthetic_receipt_verified": database_verified,
     "commands": commands,
 }, indent=2))
 '''
@@ -298,6 +368,8 @@ def main() -> int:
         "web/src/App.tsx", "web/package-lock.json", "web/scripts/bundle-ui.mjs",
         "src/respawned/web_assets/index.html", "src/respawned/web_assets/THIRD_PARTY_NOTICES.txt",
     } <= source_files, "Source distribution omitted frontend sources or bundled assets"
+    assert {"examples/outbox_client.py", "docs/agent-prompt.txt"} <= source_files, \
+        "Source distribution omitted connector example or agent prompt"
     assert not any("node_modules/" in name or name.startswith("web/dist/") for name in source_files)
     rebuilt_dir = output / "from-sdist"
     run("build-sdist", [uv, "build", sdist, "--wheel", "--force-pep517", "--out-dir", rebuilt_dir])
@@ -342,6 +414,7 @@ def main() -> int:
         },
         "wheel_contents_match_sdist_build": True,
         "sdist_includes_frontend_source_and_bundle": True,
+        "sdist_includes_outbox_client_and_agent_prompt": True,
         "installed_checks": verified,
     }
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

@@ -15,6 +15,10 @@ async function engines(page: Page) {
     const path = new URL(request.url()).pathname.slice('/v1/ui'.length)
     const headers = { 'Access-Control-Allow-Origin': 'http://127.0.0.1:5173', 'Access-Control-Allow-Headers': 'Authorization,Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS' }
     if (request.method() === 'OPTIONS') { await route.fulfill({ status: 204, headers }); return }
+    if (new URL(request.url()).pathname === '/v1/setup/bootstrap') {
+      expect(request.headers().authorization).toBeUndefined()
+      await route.fulfill({ json: { review_enabled: true }, headers }); return
+    }
     expect(request.headers().authorization).toBe(`Bearer ${REMOTE_TOKEN}`)
     expect(request.headers().cookie).toBeUndefined()
     const body = request.postDataJSON()

@@ -47,6 +47,7 @@ def test_app_profile_has_no_seed_or_litellm_dependency(compose_environment):
     app = services["app"]
     assert set(app["depends_on"]) == {"db"}
     assert app["environment"]["RESPAWNED_PROCESS_TOKEN"] == ""
+    assert app["environment"]["RESPAWNED_REVIEW_TOKEN"] == "compose-test-operator"
     assert set(json.loads(result.stdout)["services"]) == APP_SERVICES
     assert services["db"]["image"] == "postgres:16-alpine"
     assert services["db"]["volumes"][0]["target"] == "/var/lib/postgresql/data"
@@ -75,15 +76,15 @@ def test_app_health_endpoint_is_reachable(app_stack):
     assert payload == {"status": "ok"}
 
 
-def test_app_readiness_checks_database_and_default_processing_is_disabled(app_stack):
+def test_app_readiness_checks_database_and_processing_requires_operator_access(app_stack):
     port = app_stack.environment["APP_PORT"]
     with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=10, trust_env=False) as client:
         ready = client.get("/readyz")
         assert ready.status_code == 200
         assert ready.json() == {"status": "ready"}
-        disabled = client.post("/v1/process", json={})
-        assert disabled.status_code == 404
-        assert disabled.json() == {"detail": "Processing is disabled"}
+        unauthorized = client.post("/v1/process", json={})
+        assert unauthorized.status_code == 401
+        assert unauthorized.headers["www-authenticate"] == "Bearer"
 
 
 def test_app_startup_initializes_an_empty_generic_schema(app_stack):
@@ -133,7 +134,8 @@ def test_container_recreation_preserves_ingestion_and_backup_restores_it(lifecyc
         return json.loads(command("exec", "-T", "db", "psql", "-U", user, "-d", name,
                                   "-At", "-c", f"SELECT json_build_object({fields});"))
 
-    with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=10, trust_env=False) as client:
+    with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=10, trust_env=False,
+                      headers={"Authorization": f"Bearer {stack.environment['RESPAWNED_REVIEW_TOKEN']}"}) as client:
         response = client.post("/v1/ingest", json=batch)
         assert response.status_code == 200, response.text
         assert response.json() == {"opportunities_upserted": 1, "activities_inserted": 1}
@@ -144,7 +146,7 @@ def test_container_recreation_preserves_ingestion_and_backup_restores_it(lifecyc
         assert inbox.status_code == 200, inbox.text
         assert len(inbox.json()["items"]) == 1
         # Installed application services create a real policy-authorized reservation
-        # with a local stub. Processing credentials stay disabled; no provider runs.
+        # with a local stub. No processing action or external provider runs.
         processed = command("exec", "-T", "app", "uv", "run", "--no-sync", "python", "-c", """
 import json
 from dataclasses import replace

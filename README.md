@@ -1,64 +1,33 @@
 # Respawned
 
-Respawned organizes follow-up work, drafts messages, and tracks approved messages in an outbox.
-It uses one interface for job applications, sales, and other record types. Track
-work before a recipient is known, create your own workspaces, and monitor several
-local or remote engines from the same UI.
+Track follow-ups, review drafts, and record confirmed sends from your own tools. Respawned supports job applications, sales, and other record types through one workflow.
 
-The browser and CLI use the same Python application services. PostgreSQL stores
-records, policy decisions, drafts, and approvals; a model writes copy only when
-requested. The built UI ships in the Python wheel, source distribution, and Docker
-image. Node.js is needed only for frontend development.
+The browser, CLI, and Python SDK call the same HTTP API. The engine stores records in PostgreSQL and owns policy, validation, review, and outbox state. Your agent can supply draft text or request a configured model.
 
-**V1 is for a trusted operator.** Source integrations submit canonical records;
-Respawned does not connect a mailbox, schedule source updates, or send messages.
-Some legacy API routes are unauthenticated, so use loopback or a trusted network.
-Workspaces are views within an engine, not separate accounts.
-External tools can fetch approved messages through the [outbox API](docs/API.md#outbox-integration),
-send through their own provider, and record confirmed results in Respawned.
+[Documentation](https://respawned.williamshayden.com/) · [Agent guide](docs/AGENT_INTEGRATION.md) · [Agent prompt](docs/agent-prompt.txt) · [API reference](docs/API.md)
 
 ## Install and start
 
-The preferred download location is
-[respawned.williamshayden.com](https://respawned.williamshayden.com/).
-The installer downloads a verified package with the CLI, API, and prebuilt web UI.
-No repository clone is needed.
+The package includes the CLI, API, SDK, and prebuilt browser UI. The installer needs `curl`, a POSIX shell, and Python 3.12+ with `venv` and `ensurepip`. It supports Linux, macOS, and WSL; release qualification runs on Linux. PostgreSQL is a separate engine requirement.
 
-The shell installer requires Python 3.12+ with `venv` and `ensurepip`, and `curl`.
-It supports Linux, macOS, or WSL; the verified installation environment is
-Ubuntu/WSL with Python 3.12.3. PostgreSQL is a separate prerequisite.
-
-[View installer](https://respawned.williamshayden.com/install.sh) ·
-[Download package (Python wheel)](https://respawned.williamshayden.com/downloads/respawned-1.1.0-py3-none-any.whl) ·
-[Checksums](https://respawned.williamshayden.com/SHA256SUMS)
-
-Download the installer to inspect it before running it:
-
-```sh
-curl -fsS \
-  https://respawned.williamshayden.com/install.sh -o install-respawned.sh
-# Read install-respawned.sh before running it.
-sh install-respawned.sh
-export PATH="$HOME/.local/bin:$PATH"
-respawned --version
-```
-
-For a one-line installation after reviewing the script:
+[View installer](https://respawned.williamshayden.com/install.sh) · [Download package](https://respawned.williamshayden.com/downloads/respawned-2.0.0-py3-none-any.whl) · [Checksums](https://respawned.williamshayden.com/SHA256SUMS)
 
 ```sh
 curl -fsS https://respawned.williamshayden.com/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The installer verifies the pinned wheel's SHA-256 digest, creates a private
-environment at `~/.local/share/respawned/1.1.0`, and adds
-`~/.local/bin/respawned`. It refuses to overwrite unrelated commands or directories
-and does not edit shell startup files. Use `sh install-respawned.sh --prefix
-/absolute/path` for another location. The package includes the CLI, HTTP API,
-and built browser UI; Node.js, npm, and sudo are not needed. Python dependencies
-are resolved from PyPI using the wheel's declarations.
+To inspect the script first:
 
-Create a PostgreSQL database and user, then set its connection values in the
-terminal that will run Respawned:
+```sh
+curl -fsS https://respawned.williamshayden.com/install.sh -o install.sh
+# Read install.sh, then run it.
+sh install.sh
+```
+
+The installer verifies the wheel checksum, installs into `~/.local/share/respawned/2.0.0`, and adds `~/.local/bin/respawned`. It leaves shell startup files unchanged and refuses to overwrite unrelated commands. Use `sh install.sh --prefix /absolute/path` for another prefix.
+
+Create a PostgreSQL database and user on the engine host, then set its connection values:
 
 ```sh
 export DB_HOST=127.0.0.1
@@ -70,101 +39,83 @@ respawned init
 respawned ui
 ```
 
-Replace the example credentials with your database's values. The CLI does not
-automatically load `.env`; retain these settings in your shell or service
-configuration. Back up existing data before upgrading and follow the
-[database migration guide](docs/RELEASE_CHECKS.md) for older installations.
-No model credentials are needed to start, import records, or inspect work.
+The app opens at `http://127.0.0.1:8000` with browser access connected. The launcher also creates private CLI access for other terminals on that machine. No token copying or model credentials are needed to start.
 
-`respawned ui` opens the bundled app at <http://127.0.0.1:8000> with review access
-connected. No manual token is needed. Use `--port 8001` if the port is occupied,
-or `--no-open` to print a one-use launch link. The session survives reloads for
-12 hours, until you lock access or stop the server. Start it again for a new link.
-Normal startup creates no sample records.
+Engine commands do not automatically load `.env`. Keep database settings in the host shell or service configuration. Workflow clients do not need them.
 
-1. **Setup:** import canonical JSON from your source and choose a model backend
-   when you want to generate drafts. Importing and saving settings make no model
-   requests. See the [input contract](docs/API.md#ingest-records).
-2. **Workspaces:** create a named view for any record kinds, or include all kinds.
-3. **Review queue:** inspect the reason and history, generate a draft, edit it,
-   then approve it to the unsent outbox. **All tracked** includes waiting, closed,
-   and contactless records too.
-4. **Overview:** choose several workspaces to watch. **Connections** adds another
-   engine by URL and its own review token; see [remote setup](docs/WEB_UI.md#monitor-local-and-remote-workspaces).
-
-Approval and export do not deliver a message. See the [outbox workflow](docs/WEB_UI.md#import-records-and-use-the-outbox)
-for recording actual outbound activity after manual delivery.
-
-Stop the CLI with Ctrl+C; PostgreSQL is managed separately. For development, use
-the [source checkout workflow](#developer-source-checkout) below.
-
-## Model backends
-
-In **Setup → Model backend**, configure your chosen drafting service. The default
-adapter accepts an OpenAI-compatible API URL, model or proxy alias, timeout, and
-credential environment variable. LiteLLM is optional. For source checkouts, the
-`litellm` Compose profile supplies a proxy after its upstream model and key are
-configured in `.env`.
-
-Saved model settings apply to the browser, CLI, and API on that engine. Credentials
-remain on the server. Saving validates configuration only; it does not test a
-provider, executable, or login. A backend is invoked when you explicitly generate
-a draft. No particular model provider or CLI login is a product or release
-requirement. See [backend configuration](docs/WEB_UI.md#connect-a-model-backend)
-for the available adapters, including the optional experimental CLI adapter.
+Use `--port 8001` for another port or `--no-open` to print a browser link. Set `RESPAWNED_API_URL` to the chosen loopback URL in CLI terminals using a custom port. Leave the engine running while using clients. Ctrl+C stops the engine; PostgreSQL remains separate.
 
 ## CLI and API
 
-Use the same database environment as the app. The CLI connects directly to
-PostgreSQL and does not load `.env` automatically:
+With the local engine running, use another terminal:
 
 ```bash
-respawned sync --dry-run
-respawned sync --limit 10
+respawned import --file records.json
+respawned draft ats:application-123 --body-file draft.txt
 respawned review
-respawned inbox --json
-respawned outbox --path exports/outbox.csv
+respawned outbox --pending --json
 ```
 
-`sync` publishes eligible candidates without drafting. `review` generates missing
-drafts as needed and supports approve, reject, edit, and skip; human review is the
-default. `inbox` reads unanswered human replies independently of outreach cooldown.
-`outbox` exports reservations without changing them. Use `respawned COMMAND --help`
-for options, and the [API and policy guide](docs/API.md) for import, processing,
-review versions, pagination, and retry behavior.
+Use the [record contract](docs/API.md#ingest-records) for `records.json` and plain text for `draft.txt`. Supplied copy is validated without configuring an engine model. Omit `--body-file` to request the engine's backend.
 
-For an API server without the browser interface:
+`review` evaluates a bounded queue and always asks for human decisions. `sync --dry-run` previews eligibility. `process --limit 10` explicitly processes a batch under the server's review policy, which defaults to human review.
 
-```bash
-respawned serve --api-only
-```
+`inbox --json` reads unanswered human replies. `outbox --path outbox.csv` exports a spreadsheet. Reads and exports do not mark messages sent.
 
-Interactive endpoint schemas are at <http://127.0.0.1:8000/docs>. Protected review
-routes use `RESPAWNED_REVIEW_TOKEN`; the separate `RESPAWNED_PROCESS_TOKEN` enables
-policy-controlled processing and does not grant human approval authority.
+For a remote engine, set `RESPAWNED_API_URL` and `RESPAWNED_REVIEW_TOKEN` in the client environment. Workflow commands and `RespawnedClient.from_env()` use the same connection. See [Agent integration](docs/AGENT_INTEGRATION.md) for CLI, SDK, and HTTP examples.
+
+The API reference is available on the engine at `/docs` and `/openapi.json`. Canonical operator routes use `/v1/workflow`. Local `respawned serve` starts the engine without opening a browser; `--api-only` disables the bundled UI.
+
+## Browser workflow
+
+1. **Setup → Records & sources:** import canonical JSON. **Review imported records** opens the queue.
+2. **Workspaces:** save views for selected record kinds or include all kinds.
+3. **Review queue:** evaluate the queue, inspect evidence, generate or review a draft, then approve it to the outbox.
+4. **Overview:** watch several workspaces. **Connections** adds other engines.
+
+**Refresh** reads the current view; **Evaluate queue** applies policy to stored facts. Neither refreshes an external source. **All tracked** includes waiting, closed, and contactless records.
+
+Workspaces share an engine's policy, contacts, credentials, and outbox. Use separate engines for separate data or authority. The [browser guide](docs/WEB_UI.md) covers configuration and remote connections.
+
+## Model backends
+
+Configure **Setup → Model backend** only when the engine should generate new text. Choose an OpenAI-compatible API, an optional LiteLLM proxy, or the optional Codex CLI adapter.
+
+Credentials stay on the engine host. Saving settings does not invoke the backend; explicit generation does. Supplied text and existing drafts need no model configuration. See [backend setup](docs/WEB_UI.md#connect-a-model-backend).
+
+## Outbox integration
+
+A sending service fetches approved messages, sends through its own provider, and records the confirmed result:
+
+- `GET /v1/outbox/pending` reads approved pending messages.
+- `GET /v1/outbox/{id}` reads a message and its receipt.
+- `POST /v1/outbox/{id}/receipt` records a confirmed send.
+
+Use a dedicated `RESPAWNED_OUTBOX_TOKEN` for the connector. It does not grant drafting or approval authority. Provider idempotency and durable coordination belong to the sender.
+
+The [outbox reference](docs/API.md#outbox-integration) includes request fields and retries. A [standalone Python client](examples/outbox_client.py) needs no third-party packages or source checkout.
 
 ## Direct package installation
 
-The wheel can also be installed in an
-existing Python 3.12+ virtual environment:
+Install the wheel into an existing Python 3.12+ environment:
 
 ```sh
-python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-1.1.0-py3-none-any.whl'
+python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-2.0.0-py3-none-any.whl'
 ```
 
-The source archive is
-`https://respawned.williamshayden.com/downloads/respawned-1.1.0.tar.gz`.
-Both formats include the prebuilt UI. A supplied local wheel also works with
-`python -m pip install /path/to/respawned-1.1.0-py3-none-any.whl`. Set the database
-environment above before running `respawned init` and `respawned ui`.
-The checksum manifest is at
-`https://respawned.williamshayden.com/SHA256SUMS`; the preferred installer verifies
-its pinned wheel digest automatically.
+The [source archive](https://respawned.williamshayden.com/downloads/respawned-2.0.0.tar.gz) also includes the prebuilt UI and connector example. Package installation does not run a frontend build.
+
+## Upgrading to 2.0
+
+Back up the database, upgrade the package, run `respawned init` on the engine host, and restart. Reconnect clients afterward.
+
+The 2.0 CLI requires a 2.0 engine. Workflow commands now call the API and no longer read PostgreSQL settings or accept `--now` and `--policy`. Configure policy on the server and use fixed time only in simulations.
+
+Data routes now require operator authentication. Existing `/v1/ui` aliases remain available; new clients use `/v1/workflow`. Outbox connector routes and receipt semantics are unchanged. See [migration details](docs/API.md#upgrading-to-20).
 
 ## Developer source checkout
 
-Cloning is for development or source-based operation. With repository access,
-Python 3.12+, [uv](https://docs.astral.sh/uv/), and Docker Compose v2:
+With Python 3.12+, [uv](https://docs.astral.sh/uv/), and Docker Compose:
 
 ```bash
 git clone https://github.com/williamshayden/respawned.git
@@ -173,88 +124,61 @@ cp .env.example .env
 uv sync --frozen
 ```
 
-Reuse an existing checkout and `.env` if present. In PowerShell, use
-`Copy-Item .env.example .env`. Set the database values in `.env`, including
-`DB_PASSWORD`. Start only the database, then the local app:
+Set the engine's database values in `.env`. Start the database and application:
 
 ```bash
 docker compose --profile postgres up -d --wait db
 uv run --env-file .env respawned ui
 ```
 
-For an existing PostgreSQL server, use its credentials and skip the Compose
-command. Prefix other checkout CLI commands with `uv run --env-file .env` to
-load that environment. Stop the database with `docker compose --profile postgres
-down`; named volumes remain. Do not add `--volumes` when preserving data.
+For an existing PostgreSQL server, use its credentials and skip the Compose command. In another terminal, workflow commands can run with `uv run respawned ...` and the launcher's local access.
+
+Stop the database with `docker compose --profile postgres down`. Named volumes remain; preserve them when upgrading.
 
 ### Run the checkout in Docker
 
-Use this instead of the local `respawned ui` process; both default to port 8000.
-Set `RESPAWNED_REVIEW_TOKEN` in `.env` to a random operator password, for example
-one generated with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
-Then:
+Set `RESPAWNED_REVIEW_TOKEN` in `.env`, then:
 
 ```bash
 docker compose --profile app up -d --build --wait
 curl --fail http://127.0.0.1:8000/readyz
 ```
 
-Open <http://127.0.0.1:8000> and enter the token in **Setup → Review access**.
-Manual tokens stay in tab memory and clear on reload. An empty review token
-keeps protected UI operations disabled in ordinary server mode. The image
-contains the UI; the optional model service is separate.
+Open `http://127.0.0.1:8000` and enter the token under **Setup → Engine access**. Host CLI clients use the same URL and credential through their environment. The image includes the UI; model services remain optional.
 
-`/readyz` checks the database, schema, and policy; `/healthz` checks process
-liveness. Neither proves model availability or fresh source data. Stop services
-with `docker compose --profile app --profile litellm down`, preserving volumes.
+`/readyz` checks database, schema, and policy. `/healthz` checks process liveness. Stop services with `docker compose --profile app --profile litellm down`, preserving volumes.
 
 ### Upgrade from Follow-up Engine
 
-The Python package, imports, and CLI are now `respawned`; project-specific `FUE_`
-environment variables use `RESPAWNED_`. Reinstall from this checkout with
-`uv sync --frozen`. Keep existing database names, credentials, and volumes. If
-renaming a checkout directory, preserve its Compose project name with
-`docker compose -p <existing-project>` so it keeps the same storage.
+The package, imports, and CLI are `respawned`. Project-specific `FUE_` environment variables now use `RESPAWNED_`. Keep existing database names, credentials, and storage.
 
-Back up before upgrading, run `respawned init`, then `respawned sync` to publish a
-fresh queue. Canonical upgrades add schema fields without rewriting old messages;
-the quote-specific prototype requires [separate migration](docs/RELEASE_CHECKS.md).
-The repository is now [williamshayden/respawned](https://github.com/williamshayden/respawned).
-Historical evidence names retain their original spelling.
+If renaming a checkout, preserve its Compose project name with `docker compose -p <existing-project>`. The quote-specific prototype schema requires [separate migration](docs/RELEASE_CHECKS.md). Historical evidence retains its original names.
 
 ## Documentation and development
 
 | Task | Guide |
 | --- | --- |
-| Workspaces, local access, remote engines, models, and outbox | [Browser guide](docs/WEB_UI.md) |
-| Connect your own agent through the API and CLI | [Agent integration](docs/AGENT_INTEGRATION.md) |
-| Watch the product walkthrough and review loop | [Demo and provenance](docs/DEMO.md) |
-| Source adapters, API operations, policy, and retries | [API and policy](docs/API.md) |
+| Browser setup, workspaces, and remote engines | [Browser guide](docs/WEB_UI.md) |
+| Connect an agent | [Agent guide](docs/AGENT_INTEGRATION.md), [prompt](docs/agent-prompt.txt) |
+| API schemas, policy, and retries | [API reference](docs/API.md) |
+| Demo and recording provenance | [Demo notes](docs/DEMO.md) |
 | Build the UI and run browser checks | [Frontend development](docs/WEB_UI.md#frontend-development-and-bundled-assets) |
-| Preserve an existing database | [Database migration](docs/RELEASE_CHECKS.md) |
-| Review implementation evidence and remaining integration gaps | [Integration review](docs/INTEGRATION_REVIEW.md) |
-| Run isolated synthetic workflows | [Scripted simulations](docs/SIMULATIONS.md), [agent experiments](docs/AGENT_SIMULATIONS.md), [HTTP connector simulation](docs/CONNECTOR_SIMULATION.md) |
-| Changes in this version | [Changelog](CHANGELOG.md) |
+| Preserve existing data | [Database migration](docs/RELEASE_CHECKS.md) |
+| Run isolated fixtures | [Simulations](docs/SIMULATIONS.md), [agent experiments](docs/AGENT_SIMULATIONS.md), [connector simulation](docs/CONNECTOR_SIMULATION.md) |
+| Build and verify documentation downloads | [Documentation site](site/README.md) |
+| Changes | [Changelog](CHANGELOG.md) |
 
 Run the Python suite with Docker available:
 
 ```bash
-uv run --frozen pytest -q --capture=no
+uv run --frozen pytest -q
 uv lock --check
 ```
 
-With an existing test PostgreSQL server, use `--postgres-url <test-url>` and
-`--ignore=tests/test_app_compose.py`; this skips Docker lifecycle coverage.
-Tests create and remove isolated schemas. Model calls are stubbed unless a live
-simulation is explicitly selected. In `web`, use `npm ci`, `npm test`,
-`npm run test:e2e`, and `npm run bundle:check`. After UI edits, run `npm run bundle`
-and commit the generated package assets with the source change.
+With an existing test database, use `--postgres-url <test-url>` and `--ignore=tests/test_app_compose.py`; that omits Docker lifecycle coverage. Tests own isolated schemas. Model calls are stubbed unless a live simulation is explicitly selected.
 
-Earlier [design proposals](docs/PROPOSALS.md), [handoff](docs/HANDOFF.md),
-[quality review](docs/QUALITY_REVIEW.md), and [pre-UI release record](docs/V1_RELEASE.md)
-are historical evidence, not the current feature list. Outstanding product work
-includes provider connectors, ordered source snapshots and freshness, unresolved
-source associations, and delivery claims/results. Public or multi-user hosting
-also requires authentication across all routes and an explicit tenant boundary.
+In `web`, use `npm ci`, `npm test`, `npm run test:e2e`, and `npm run bundle:check`. After UI edits, regenerate and commit packaged assets with `npm run bundle`.
+
+Earlier [design proposals](docs/PROPOSALS.md), [quality review](docs/QUALITY_REVIEW.md), and [pre-UI release record](docs/V1_RELEASE.md) are historical evidence.
 
 Licensed under the [MIT License](LICENSE).

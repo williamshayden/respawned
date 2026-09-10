@@ -11,6 +11,8 @@ interface Props {
   busy: string | null; records: UIRecord[]
 }
 
+const activityDisclosure = (type: string) => ['inbound', 'outbound', 'message_sent', 'contact_replied', 'message_received'].includes(type) ? 'View message' : 'View activity'
+
 export function ReviewPanel(props: Props) {
   const { record, busy } = props
   const scroll = useRef<HTMLDivElement>(null)
@@ -60,6 +62,7 @@ export function ReviewPanel(props: Props) {
           <span className="timeline-dot" /><time dateTime={activity.occurred_at}>{shortDate(activity.occurred_at)}</time>
           <span className="activity-label">{activity.label}{safeSource(activity.source_url) && <a href={safeSource(activity.source_url)} target="_blank" rel="noreferrer" aria-label={`Source for ${activity.label}`}><ExternalLink size={13} /></a>}</span>
           {activity.classification !== 'unknown' && <span className="activity-classification">{activity.classification === 'human' ? 'Human' : 'Automated'}</span>}
+          {activity.summary?.trim() && <details className="activity-message"><summary aria-label={`${activityDisclosure(activity.type)} for ${activity.label} on ${shortDate(activity.occurred_at)}`}>{activityDisclosure(activity.type)}</summary><p>{activity.summary}</p></details>}
         </li>)}</ol> : <p className="muted">No source activity available.</p>}
       </section>
       <section className="draft-panel" aria-labelledby="draft-heading">

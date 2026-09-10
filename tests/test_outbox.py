@@ -1,11 +1,12 @@
 import csv
+from io import StringIO
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
 
-from respawned.cli.outbox import export_outbox
+from respawned.core.outbox import list_outbox_rows, render_outbox_csv
 from respawned.core.review import enqueue_outbox
 
 NOW = datetime(2026, 8, 20, 14, tzinfo=UTC)
@@ -193,8 +194,8 @@ def test_enqueueing_different_drafts_creates_distinct_rows(postgres_connection):
 
 
 @pytest.mark.parametrize("authorization_mode", ("human", "automatic", "legacy_unknown"))
-def test_export_outbox_writes_generic_deterministic_csv(
-    postgres_connection, tmp_path, authorization_mode
+def test_outbox_core_renders_generic_deterministic_csv(
+    postgres_connection, authorization_mode
 ):
     # Export timestamps must not depend on the server/session timezone.
     postgres_connection.exec_driver_sql("SET LOCAL TIME ZONE 'America/New_York'")
@@ -217,13 +218,9 @@ def test_export_outbox_writes_generic_deterministic_csv(
         created_at=NOW,
         authorization_mode=authorization_mode,
     )
-    path = tmp_path / "missing" / "exports" / "outbox.csv"
-
-    assert not path.parent.exists()
-    assert export_outbox(postgres_connection, path) == 1
-    assert path.parent.is_dir()
-    with path.open(newline="", encoding="utf-8") as exported:
-        rows = list(csv.reader(exported))
+    snapshot = list_outbox_rows(postgres_connection)
+    assert len(snapshot) == 1
+    rows = list(csv.reader(StringIO(render_outbox_csv(snapshot))))
 
     assert rows == [
         [

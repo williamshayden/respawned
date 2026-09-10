@@ -54,7 +54,7 @@ export function ConnectionsView({ connections, accessById, activeId, onAdd, onUn
         </article>
       })}
       <p className="connection-help">Names and URLs are remembered in this browser when storage is available. Remote access tokens stay in this tab’s memory and clear on reload. Removing a connection does not delete anything on its server.</p>
-    </section><section className="connection-add" aria-labelledby="connection-add-title"><h3 id="connection-add-title"><Plus size={18} />Connect an engine</h3><p>Enter the server’s root URL and review access token.</p>
+    </section><section className="connection-add" aria-labelledby="connection-add-title"><h3 id="connection-add-title"><Plus size={18} />Connect an engine</h3><p>Enter the server’s root URL and engine access token.</p>
       <form onSubmit={event => {
         event.preventDefault()
         void perform('add', async () => { await onAdd(name, url, token); setName(''); setUrl(''); setToken(''); setNotice('Engine connected. Open Overview to choose the workspaces you want to monitor.') })
@@ -62,7 +62,7 @@ export function ConnectionsView({ connections, accessById, activeId, onAdd, onUn
         <label htmlFor="connection-url">Engine URL</label><input id="connection-url" type="url" value={url} onChange={event => setUrl(event.target.value)} placeholder="https://respawned.example.com" autoComplete="url" spellCheck={false} required /><span className="connection-help">HTTPS is required remotely. Another local engine can use http://127.0.0.1:8001. Include a reverse-proxy path if your server uses one.</span>
         <label htmlFor="connection-token">Engine access token</label><input id="connection-token" type="password" autoComplete="off" spellCheck={false} value={token} onChange={event => setToken(event.target.value)} required /><span className="connection-help">Use this engine’s RESPAWNED_REVIEW_TOKEN. Your local browser session is never sent to another engine.</span>
         <button className="button primary" type="submit" disabled={!name.trim() || !url.trim() || !token.trim()}>{busy === 'add' ? <LoaderCircle size={16} className="spin" /> : <Link2 size={16} />}Connect engine</button></fieldset></form>
-      <details className="connection-server-help"><summary>Prepare a remote engine</summary><p>Set a review token on the remote server and serve it over HTTPS. Allow this UI’s exact origin in its server environment, then restart Respawned:</p><pre><code>RESPAWNED_UI_ORIGINS={browserOrigin}</code></pre><p>Multiple allowed origins are comma-separated. Use the browser origin above without a trailing slash or path. The browser connects directly to that API; this app does not relay credentials through the local engine.</p></details>
+      <details className="connection-server-help"><summary>Prepare a remote engine</summary><p>Set an engine access token on the remote server and serve it over HTTPS. Allow this UI’s exact origin in its server environment, then restart Respawned:</p><pre><code>RESPAWNED_UI_ORIGINS={browserOrigin}</code></pre><p>Multiple allowed origins are comma-separated. Use the browser origin above without a trailing slash or path. The browser connects directly to that API; this app does not relay credentials through the local engine.</p></details>
     </section></div>
   </div>
 }

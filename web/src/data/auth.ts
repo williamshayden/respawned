@@ -1,3 +1,5 @@
+import { workflowRoot } from './workflow'
+
 /** A browser session is held in an HttpOnly cookie, never in JS storage. */
 export type ReviewAccess = string | { readonly mode: 'session' } | null
 export const LOCAL_SESSION = { mode: 'session' } as const
@@ -17,8 +19,9 @@ export function restoreLocalSession(): Promise<boolean> {
   const secret = fragment.get('login')
   if (secret !== null) window.history.replaceState(null, '', window.location.pathname + window.location.search)
   initialization = (async () => {
-    const response = await fetch('/v1/ui/session', secret === null ? { credentials: 'same-origin' } : {
-      method: 'POST', credentials: 'same-origin',
+    const root = await workflowRoot()
+    const response = await fetch(`${root}/session`, secret === null ? { credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(20_000) } : {
+      method: 'POST', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(20_000),
       headers: { 'Content-Type': 'application/json', 'X-Respawned-Request': '1' },
       body: JSON.stringify({ secret }),
     })
@@ -31,8 +34,9 @@ export function restoreLocalSession(): Promise<boolean> {
 }
 
 export async function endLocalSession(): Promise<void> {
-  const response = await fetch('/v1/ui/session', {
-    method: 'DELETE', credentials: 'same-origin', headers: accessHeaders(LOCAL_SESSION),
+  const root = await workflowRoot()
+  const response = await fetch(`${root}/session`, {
+    method: 'DELETE', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(20_000), headers: accessHeaders(LOCAL_SESSION),
   })
   if (!response.ok && response.status !== 401) throw new Error('Could not lock the local session. Try again.')
   initialization = undefined

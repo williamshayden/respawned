@@ -34,7 +34,7 @@ from respawned.core.policy import ReviewPolicy
 from respawned.db.helpers.pg_connect import create_tables
 from respawned.llm.adapter import LiteLLMAdapter
 from simulate_agents import Codex, DraftOutput, message
-from simulate_use_cases import NOW, POLICY, opportunity
+from simulate_use_cases import NOW, POLICY, opportunity, simulation_authorization
 
 
 class ExtractedBatch(BaseModel):
@@ -95,7 +95,8 @@ def engine_api(url, settings):
             get_workflow_clock: lambda: lambda: NOW,
         })
         os.environ["RESPAWNED_PROCESS_TOKEN"] = token
-        with serve(app) as client:
+        with simulation_authorization() as headers, serve(app) as client:
+            client.headers.update(headers)
             yield engine, client, {"Authorization": f"Bearer {token}"}
     finally:
         app.dependency_overrides.clear()
@@ -295,8 +296,8 @@ def run_case(url, directory, mode, codex=None):
                   opportunity_catalog_matches(catalog, mailbox.pages[:1]))
             check("Ingestion creates no draft or outbox reservation",
                   not api.get("/v1/drafts").json()["items"] and not api.get("/v1/outbox").json()["items"])
-            check("A source caller cannot trigger processing without operator credentials",
-                  api.post("/v1/process", json={}).status_code == 401)
+            check("An unauthenticated caller cannot trigger processing",
+                  api.post("/v1/process", json={}, headers={"Authorization": ""}).status_code == 401)
             check("Process payload cannot override review policy",
                   api.post("/v1/process", json={"review_mode": "automatic"}, headers=operator).status_code == 422)
 

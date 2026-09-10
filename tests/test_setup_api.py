@@ -12,7 +12,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from respawned.api import app as api_module, setup
-from respawned.cli import review
 from respawned.core.settings import ModelSettings, configured_adapter, load_model_settings
 
 
@@ -56,9 +55,9 @@ def test_bootstrap_only_reports_review_enabled_without_resolving_dependencies(de
     api_module.app.dependency_overrides[api_module.get_api_engine] = forbidden
     monkeypatch.setenv("LITELLM_MASTER_KEY", "private-provider-secret")
     with TestClient(api_module.app) as client:
-        assert client.get("/v1/setup/bootstrap").json() == {"review_enabled": True}
+        assert client.get("/v1/setup/bootstrap").json() == {"review_enabled": True, "workflow_api_prefix": "/v1/workflow"}
         monkeypatch.delenv("RESPAWNED_REVIEW_TOKEN")
-        assert client.get("/v1/setup/bootstrap").json() == {"review_enabled": False}
+        assert client.get("/v1/setup/bootstrap").json() == {"review_enabled": False, "workflow_api_prefix": "/v1/workflow"}
 
 
 @pytest.mark.parametrize("method,path,payload", [
@@ -171,45 +170,53 @@ def test_command_backend_setup_saves_configuration_without_constructing_or_probi
     assert client.get("/v1/ui/setup", headers=HEADERS).json()["model"] == status
 
 
-def test_api_and_cli_use_shared_saved_settings(setup_api, monkeypatch):
+def test_http_drafting_resolves_saved_settings_only_at_generation(setup_api, monkeypatch):
+    from respawned.core import settings
+
     client, connection = setup_api
+    now = datetime(2026, 9, 9, 12, tzinfo=UTC)
     monkeypatch.setenv("RESPAWNED_MODEL_API_KEY", "local-placeholder")
-    assert client.put("/v1/ui/setup/model", headers=HEADERS, json=MODEL).status_code == 200
+    assert client.put("/v1/workflow/setup/model", headers=HEADERS, json=MODEL).status_code == 200
+    payload = {"opportunities": [{
+        "id": "saved-model", "contact_key": "saved-model", "contact_name": "Avery",
+        "contact_email": "avery@example.com", "status": "open", "created_at": "2026-09-04T12:00:00Z",
+    }], "activities": [{
+        "id": "saved-model:reply", "opportunity_id": "saved-model", "type": "contact_replied",
+        "direction": "inbound", "channel": "email", "occurred_at": "2026-09-09T11:00:00Z",
+    }]}
+    assert client.post("/v1/workflow/import", headers=HEADERS, json=payload).status_code == 200
+    api_module.app.dependency_overrides[api_module.get_workflow_clock] = lambda: lambda: now
 
     @contextmanager
     def connect():
         yield connection
 
     engine = SimpleNamespace(connect=connect, dispose=lambda: None)
-    with monkeypatch.context() as patch:
-        patch.setattr(api_module, "get_api_engine", lambda: engine)
-        assert api_module.get_workflow_adapter().model_alias == MODEL["model_alias"]
-    monkeypatch.setattr(review, "get_engine", lambda: engine)
-    monkeypatch.setattr(review, "create_tables", lambda _engine: None)
-    resolutions, completions = [], []
-    messages = [{"role": "user", "content": "Draft from the saved backend"}]
-    updated_model = {**MODEL, "model_alias": "generation-time-model"}
+    with monkeypatch.context() as runtime_patch:
+        runtime_patch.setattr(api_module, "get_api_engine", lambda: engine)
+        resolutions, completions = [], []
+        updated_model = {**MODEL, "model_alias": "generation-time-model"}
 
-    def resolve_at_generation(current_connection):
-        resolutions.append(current_connection)
-        adapter = configured_adapter(current_connection)
-        return replace(adapter, completion_fn=lambda **kwargs: (
-            completions.append(kwargs) or {"choices": [{"message": {"content": "Configured copy"}}]}
-        ))
+        def resolve_at_generation(current_connection):
+            resolutions.append(current_connection)
+            adapter = configured_adapter(current_connection)
+            return replace(adapter, completion_fn=lambda **kwargs: (
+                completions.append(kwargs) or {"choices": [{"message": {"content": "Hi Avery, when would you like to speak?"}}]}
+            ))
 
-    monkeypatch.setattr(review, "configured_adapter", resolve_at_generation)
-
-    def run(_engine, **kwargs):
-        assert resolutions == completions == []  # Opening review needs no model configuration.
-        assert client.put("/v1/ui/setup/model", headers=HEADERS, json=updated_model).status_code == 200
-        assert kwargs["adapter"].complete(messages) == "Configured copy"
-        return review.ReviewSummary()
-
-    monkeypatch.setattr(review, "run_review", run)
-    assert review.main([]) == 0
-    assert resolutions == [connection]
-    assert completions == [{"model": updated_model["model_alias"], "messages": messages,
-                            "base_url": MODEL["base_url"], "api_key": "local-placeholder"}]
+        monkeypatch.setattr(settings, "configured_adapter", resolve_at_generation)
+        assert client.get("/v1/workflow/records", headers=HEADERS).status_code == 200
+        assert resolutions == completions == []
+        assert client.put("/v1/workflow/setup/model", headers=HEADERS, json=updated_model).status_code == 200
+        draft = client.post("/v1/workflow/records/saved-model/draft", headers=HEADERS)
+        assert draft.status_code == 200, draft.text
+        assert resolutions == [connection] and len(completions) == 1
+        assert completions[0]["model"] == updated_model["model_alias"]
+        assert completions[0]["base_url"] == MODEL["base_url"]
+        assert completions[0]["api_key"] == "local-placeholder"
+        monkeypatch.delenv("RESPAWNED_MODEL_API_KEY")
+        assert client.post("/v1/workflow/records/saved-model/draft", headers=HEADERS).json() == draft.json()
+        assert len(resolutions) == len(completions) == 1
 
 
 def test_environment_fallback_preserves_existing_cli_configuration(setup_api, monkeypatch):

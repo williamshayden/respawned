@@ -16,6 +16,7 @@ from sqlalchemy.pool import NullPool
 from respawned.api.models import IngestRequest, IngestResponse, OutboxResponse
 from respawned.api.ui import require_review_authorization
 from respawned.api.session import local_session
+from respawned.api.paths import WORKFLOW_PREFIX
 from respawned.core.ingest import IngestConflictError, UnknownOpportunityError, ingest_records
 from respawned.core.outbox import list_outbox_rows, render_outbox_csv
 from respawned.core.settings import (
@@ -81,15 +82,19 @@ def probe_setup_database() -> ModelSettings | None:
         engine.dispose()
 
 
-def create_setup_router(connection_dependency) -> APIRouter:
+def create_setup_routers(connection_dependency) -> tuple[APIRouter, APIRouter]:
+    """Return workflow setup routes and the existing public discovery/export routes."""
     router = APIRouter()
-    protected = APIRouter(prefix="/v1/ui", dependencies=[Depends(require_review_authorization)])
+    protected = APIRouter(dependencies=[Depends(require_review_authorization)])
     ConnectionDep = Annotated[Connection, Depends(connection_dependency, scope="function")]
 
     @router.get("/v1/setup/bootstrap")
     def bootstrap(request: Request) -> dict:
         # No database, credential values, configuration, or auth bypass here.
-        return {"review_enabled": local_session(request) is not None or bool(os.environ.get("RESPAWNED_REVIEW_TOKEN", "").strip())}
+        return {
+            "review_enabled": local_session(request) is not None or bool(os.environ.get("RESPAWNED_REVIEW_TOKEN", "").strip()),
+            "workflow_api_prefix": WORKFLOW_PREFIX,
+        }
 
     @protected.get("/setup")
     def setup(request: Request) -> dict:
@@ -105,11 +110,11 @@ def create_setup_router(connection_dependency) -> APIRouter:
             "model": model_status(settings).model_dump(),
             "outbox": {
                 "mode": "api_and_export", "automatic_delivery": False,
-                "export_url": "/v1/ui/outbox/export", "pending_url": "/v1/outbox/pending",
+                "export_url": WORKFLOW_PREFIX + "/outbox/export", "pending_url": "/v1/outbox/pending",
                 "receipt_url": "/v1/outbox/{id}/receipt", "token_env": "RESPAWNED_OUTBOX_TOKEN",
                 "token_configured": bool(os.environ.get("RESPAWNED_OUTBOX_TOKEN", "").strip()),
             },
-            "sources": {"mode": "api_import", "import_url": "/v1/ui/import"},
+            "sources": {"mode": "api_import", "import_url": WORKFLOW_PREFIX + "/import"},
         }
 
     @protected.put("/setup/model", response_model=ModelStatus)
@@ -151,5 +156,4 @@ def create_setup_router(connection_dependency) -> APIRouter:
             headers=headers,
         )
 
-    router.include_router(protected)
-    return router
+    return protected, router

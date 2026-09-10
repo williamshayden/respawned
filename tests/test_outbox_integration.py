@@ -2,6 +2,7 @@
 
 import csv
 import io
+import json
 import os
 import subprocess
 import sys
@@ -9,7 +10,9 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
+import httpx
+
+from http_engine import serve_http
 import pytest
 from sqlalchemy import create_engine, text
 
@@ -49,9 +52,11 @@ def persisted_outbox_api(postgres_engine, monkeypatch):
         api_module.app.dependency_overrides[api_module.get_workflow_policy] = lambda: load_policy(DEFAULT_POLICY_PATH)
         api_module.app.dependency_overrides[api_module.get_workflow_clock] = lambda: lambda: state.now
         api_module.app.dependency_overrides[ui.get_draft_adapter_factory] = lambda: lambda: state.adapter
-        with TestClient(api_module.app, raise_server_exceptions=False) as client:
-            state.client = client
-            yield state
+        with serve_http(api_module.app) as base_url:
+            state.url = base_url
+            with httpx.Client(base_url=base_url, headers=HEADERS, timeout=10, trust_env=False) as client:
+                state.client = client
+                yield state
     finally:
         api_module.app.dependency_overrides.clear()
         api_module.app.dependency_overrides.update(previous)
@@ -85,7 +90,8 @@ def _approved(state, key="one", kind="community"):
         "review_token": draft["review_token"],
     }, status=409)
     assert "changed since it was shown" in stale["detail"]
-    assert state.client.get("/v1/outbox").json()["items"] == []
+    assert all(item["draft_id"] != draft["id"]
+               for item in state.client.get("/v1/outbox").json()["items"])
     approved = _post(state, f"/v1/ui/drafts/{draft['id']}/approve", {
         "review_token": edited["review_token"],
     })
@@ -110,13 +116,12 @@ def test_persisted_review_cli_api_exports_and_outbound_evidence(persisted_outbox
         exported = state.client.get(path, headers=HEADERS)
         assert exported.json() == {"items": canonical}
         assert exported.headers["cache-control"] == "no-store"
-        assert state.client.get(path).status_code == 401
+        assert state.client.get(path, headers={"Authorization": ""}).status_code == 401
 
     destination = tmp_path / "outside-checkout" / "outbox.csv"
-    url = state.engine.url
-    environment = {**os.environ, "DB_HOST": url.host, "DB_PORT": str(url.port or 5432),
-                   "DB_USER": url.username, "DB_PASSWORD": url.password or "",
-                   "DB_NAME": url.database, "PGOPTIONS": f"-csearch_path={state.schema}"}
+    environment = {**os.environ, "DB_HOST": "never-connect.invalid", "DB_PORT": "invalid-db-port",
+                   "RESPAWNED_API_URL": state.url, "RESPAWNED_REVIEW_TOKEN": "outbox-integration-operator",
+                   "RESPAWNED_OUTBOX_TOKEN": "", "RESPAWNED_PROCESS_TOKEN": ""}
     result = subprocess.run(
         [sys.executable, "-m", "respawned", "outbox", "--path", str(destination)],
         cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=30,
@@ -193,3 +198,65 @@ def test_csv_protects_spreadsheet_cells_without_mutating_raw_snapshot(unsafe):
 
 def test_empty_csv_has_the_full_contract():
     assert list(csv.reader(io.StringIO(render_outbox_csv([])))) == [list(CSV_FIELDS)]
+
+
+def test_cli_json_pending_batch_matches_api_and_retains_complete_history(persisted_outbox_api, tmp_path):
+    state = persisted_outbox_api
+    environment = {**os.environ, "DB_HOST": "never-connect.invalid", "DB_PORT": "invalid-db-port",
+                   "RESPAWNED_API_URL": state.url, "RESPAWNED_REVIEW_TOKEN": "outbox-integration-operator",
+                   "RESPAWNED_OUTBOX_TOKEN": "", "RESPAWNED_PROCESS_TOKEN": ""}
+    # Invalid database settings prove the CLI uses only its authenticated HTTP connection.
+
+    def cli(*arguments):
+        result = subprocess.run(
+            [sys.executable, "-m", "respawned", "outbox", *arguments],
+            cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result.stdout
+
+    for arguments in (("--json",), ("--pending", "--json")):
+        assert json.loads(cli(*arguments)) == {"items": [], "has_more": False}
+    ids = [_approved(state, key)["outbox_id"] for key in ("human", "automatic", "legacy", "sent", "failed")]
+    exact_body = '=literal follow-up\r\nCafé — “Thursday”, 14:00.\n'
+    with state.engine.begin() as connection:
+        connection.execute(text("UPDATE outbox SET body = :body WHERE id = :id"),
+                           {"body": exact_body, "id": ids[0]})
+        for identity, mode in ((ids[1], "automatic"), (ids[2], "legacy_unknown")):
+            connection.execute(text("UPDATE outbox SET authorization_mode = :mode WHERE id = :id"),
+                               {"mode": mode, "id": identity})
+        for identity, status in ((ids[3], "sent"), (ids[4], "failed")):
+            connection.execute(text("UPDATE outbox SET status = :status WHERE id = :id"),
+                               {"status": status, "id": identity})
+
+    all_items = state.client.get("/v1/outbox").json()["items"]
+    history = json.loads(cli("--json"))
+    assert history == {"items": all_items, "has_more": False}
+    assert len(history["items"]) == 5
+    assert history["items"][0]["body"] == exact_body
+    for limit in (1, 2, 200):
+        expected = state.client.get(f"/v1/outbox/pending?limit={limit}", headers=HEADERS).json()
+        batch = json.loads(cli("--pending", "--json", "--limit", str(limit)))
+        assert batch == expected
+        assert [item["id"] for item in batch["items"]] == ids[:min(limit, 2)]
+        assert batch["has_more"] is (limit == 1)
+
+    # A confirmed receipt removes the first batch item. Polling has no cursor,
+    # and an unbounded history export still contains the acknowledged message.
+    sent_at = NOW + timedelta(minutes=1)
+    state.now = sent_at
+    _post(state, f"/v1/outbox/{ids[0]}/receipt", {
+        "sender": "cli-test", "provider_message_id": "confirmed-one", "sent_at": sent_at.isoformat(),
+    })
+    pending = json.loads(cli("--pending", "--json", "--limit", "1"))
+    assert pending == state.client.get("/v1/outbox/pending?limit=1", headers=HEADERS).json()
+    assert [item["id"] for item in pending["items"]] == [ids[1]]
+    assert pending["has_more"] is False
+    history = json.loads(cli("--json"))
+    assert history["items"][0]["sent_at"] == sent_at.isoformat().replace("+00:00", "Z")
+    assert history["items"][0]["status"] == "sent"
+    destination = tmp_path / "all-statuses.csv"
+    cli("--path", str(destination))
+    with destination.open(newline="") as output:
+        assert len(list(csv.DictReader(output))) == 5
+    assert state.client.get("/v1/outbox").json()["items"] == history["items"]

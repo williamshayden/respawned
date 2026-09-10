@@ -147,7 +147,7 @@ def test_pending_feed_detail_export_and_scoped_access(outbox_state, monkeypatch)
         detail = state.client.get(f"/v1/outbox/{ids[0]}", headers=headers).json()
         assert detail["receipt"] is None and detail["authorization_mode"] == "human"
         assert detail["contact_address"] == "one@example.com"
-    assert len(state.client.get("/v1/outbox").json()["items"]) == 3  # Legacy API preserved.
+    assert len(state.client.get("/v1/outbox", headers=OPERATOR).json()["items"]) == 3  # Legacy API preserved.
     assert state.client.get("/v1/outbox/export", headers=OPERATOR).status_code == 200
     assert state.client.get("/v1/outbox/export", headers=CONNECTOR).status_code == 401
     assert state.client.get("/v1/outbox/pending", headers=CONNECTOR).json()["items"][1]["authorization_mode"] == "automatic"
@@ -165,7 +165,7 @@ def test_setup_reports_connector_capabilities_without_exposing_credentials(outbo
     assert response.status_code == 200
     assert response.json()["outbox"] == {
         "mode": "api_and_export", "automatic_delivery": False,
-        "export_url": "/v1/ui/outbox/export", "pending_url": "/v1/outbox/pending",
+        "export_url": "/v1/workflow/outbox/export", "pending_url": "/v1/outbox/pending",
         "receipt_url": "/v1/outbox/{id}/receipt", "token_env": "RESPAWNED_OUTBOX_TOKEN",
         "token_configured": True,
     }
@@ -376,3 +376,50 @@ def test_schema_initialization_preserves_existing_receipts(outbox_state):
     before = _receipt(state, outbox_id).json()
     create_tables(state.engine)
     assert state.client.get(f"/v1/outbox/{outbox_id}", headers=CONNECTOR).json() == before
+
+
+@pytest.mark.parametrize("same_body", [False, True])
+def test_concurrent_external_draft_submissions_preserve_one_exact_body(outbox_state, monkeypatch, same_body):
+    from respawned.core import review
+    from threading import local
+
+    state = outbox_state
+    imported = state.client.post("/v1/workflow/import", headers=OPERATOR, json={
+        "opportunities": [{"id": "agent-race", "contact_key": "agent-race", "contact_name": "Avery",
+                           "contact_email": "avery@example.com", "status": "open",
+                           "created_at": (NOW - timedelta(days=5)).isoformat()}],
+        "activities": [{"id": "agent-race:reply", "opportunity_id": "agent-race", "type": "contact_replied",
+                        "direction": "inbound", "channel": "email", "occurred_at": (NOW - timedelta(hours=1)).isoformat()}],
+    })
+    assert imported.status_code == 200
+    assert state.client.post("/v1/workflow/sync", headers=OPERATOR, json={}).status_code == 200
+    candidate = state.client.get("/v1/workflow/queue", headers=OPERATOR).json()["items"][0]
+    barrier = Barrier(2)
+    thread_state = local()
+    original = review._load_candidate_draft
+
+    def simultaneous_empty_read(connection, candidate_id):
+        result = original(connection, candidate_id)
+        if not getattr(thread_state, "started", False):
+            thread_state.started = True
+            assert result is None
+            barrier.wait(timeout=10)
+        return result
+
+    monkeypatch.setattr(review, "_load_candidate_draft", simultaneous_empty_read)
+    bodies = ["Hi Avery, Thursday works for me.", "Hi Avery, Thursday works for me." if same_body else "Hi Avery, Friday works for me."]
+
+    def submit(body):
+        return state.client.post(f"/v1/workflow/candidates/{candidate['id']}/draft", headers=OPERATOR, json={"body": body})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(submit, bodies))
+    assert sorted(result.status_code for result in results) == ([200, 200] if same_body else [200, 409])
+    successful = [result.json() for result in results if result.status_code == 200]
+    assert len({item["id"] for item in successful}) == 1
+    assert successful[0]["body"] in bodies
+    with state.engine.connect() as connection:
+        rows = connection.execute(text("SELECT body, status FROM drafts")).mappings().all()
+        assert [dict(row) for row in rows] == [{"body": successful[0]["body"], "status": "pending"}]
+        assert connection.execute(text("SELECT count(*) FROM outbox")).scalar_one() == 0
+    assert state.calls == 0

@@ -13,6 +13,7 @@ from respawned.core.inbox import ReplyEvidence, ReplyInboxItem, ReplyInboxResult
 
 @pytest.fixture
 def inbox_client(monkeypatch):
+    monkeypatch.setenv("RESPAWNED_REVIEW_TOKEN", "inbox-test-operator")
     calls = []
 
     @contextmanager
@@ -40,7 +41,7 @@ def inbox_client(monkeypatch):
         lambda: SimpleNamespace(begin=transaction)
     )
     monkeypatch.setattr(api_module, "list_reply_inbox", list_inbox)
-    with TestClient(api_module.app) as client:
+    with TestClient(api_module.app, headers={"Authorization": "Bearer inbox-test-operator"}) as client:
         yield client, calls
 
 

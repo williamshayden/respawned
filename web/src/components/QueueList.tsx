@@ -8,10 +8,12 @@ interface Props {
   channel: string; onChannel: (value: string) => void
   view: string; onView: (value: string) => void
   sort: string; onSort: (value: string) => void
+  onImport: () => void; onClearFilters: () => void
   total: number; hasMore: boolean; onMore: () => void; busy: boolean
 }
 
 export function QueueList(props: Props) {
+  const filtered = !!props.query || props.channel !== 'all'
   return <section className="queue-pane" aria-label="Records">
     <div className="queue-controls">
       <div className="search-control"><Search size={20} aria-hidden="true" />
@@ -44,8 +46,10 @@ export function QueueList(props: Props) {
           </span>
         </button>
       })}
-      {!props.records.length && <div className="empty-state queue-empty"><SearchX size={28} /><h2>No records here</h2>
-        <p>{props.query || props.channel !== 'all' ? 'Try another search or channel.' : props.view === 'ready' ? 'No records currently need review. See All tracked for waiting records.' : 'Imported records will appear here.'}</p>
+      {!props.records.length && <div className="empty-state queue-empty"><SearchX size={28} />
+        <h2>{props.total === 0 ? 'No tracked records' : filtered ? 'No matching records' : 'Nothing ready for review'}</h2>
+        <p>{props.total === 0 ? 'Import records and activity to start tracking this workspace.' : filtered ? 'Clear your search and channel filter to see more records.' : 'See All tracked for waiting records, or evaluate the queue after importing new activity.'}</p>
+        {props.total === 0 ? <button className="button primary" onClick={props.onImport}>Import records</button> : filtered ? <button className="button" onClick={props.onClearFilters}>Clear filters</button> : <button className="button" onClick={() => props.onView('all')}>View all tracked</button>}
       </div>}
       <div className="queue-footer">{props.records.length} {props.hasMore ? 'loaded records' : `record${props.records.length === 1 ? '' : 's'}`}
         {props.hasMore && <button className="text-button" onClick={props.onMore} disabled={props.busy}>Load more ({props.total} total)</button>}

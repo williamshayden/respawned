@@ -13,6 +13,7 @@ from respawned.api import app as api_module
 @pytest.mark.parametrize("commit_fails", [False, True])
 def test_ingestion_commits_before_sending_response(monkeypatch, commit_fails):
     events = []
+    monkeypatch.setenv("RESPAWNED_REVIEW_TOKEN", "transaction-test")
 
     @contextmanager
     def transaction():
@@ -55,7 +56,7 @@ def test_ingestion_commits_before_sending_response(monkeypatch, commit_fails):
             "path": "/v1/ingest",
             "raw_path": b"/v1/ingest",
             "query_string": b"",
-            "headers": [(b"content-type", b"application/json")],
+            "headers": [(b"content-type", b"application/json"), (b"authorization", b"Bearer transaction-test")],
             "client": ("test", 123),
             "server": ("test", 80),
         }

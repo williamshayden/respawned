@@ -1,6 +1,6 @@
 """Reply visibility must not weaken outbound approval or cooldown policy."""
 
-from contextlib import contextmanager
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 import json
 from types import SimpleNamespace
@@ -162,32 +162,22 @@ def test_pending_outbox_reservation_does_not_answer_reply(postgres_connection):
     assert sync_candidates(connection, now=NOW, policy=POLICY, dry_run=True).candidates == ()
 
 
-def test_cli_json_is_readable_evidence_and_engine_is_disposed(
+def test_cli_json_preserves_the_api_evidence_without_interpreting_source_markup(
     postgres_connection, monkeypatch, capsys
 ):
     ingest_records(postgres_connection, opportunities=[_opportunity(contact_name="[red]Avery")],
                    activities=[_activity()])
-    disposed = []
-
-    @contextmanager
-    def connect():
-        yield postgres_connection
-
-    engine = SimpleNamespace(connect=connect, dispose=lambda: disposed.append(True))
-    monkeypatch.setattr(inbox_cli, "get_engine", lambda: engine)
-
-    assert inbox_cli.main(["--json", "--now", NOW.isoformat(), "--limit", "1"]) == 0
+    payload = json.loads(json.dumps(asdict(_inbox(postgres_connection)), default=lambda item: item.isoformat()))
+    calls = []
+    client = SimpleNamespace(inbox=lambda **kwargs: calls.append(kwargs) or payload)
+    monkeypatch.setattr(inbox_cli, "client_from_args", lambda _args: client)
+    assert inbox_cli.main(["--json", "--limit", "1"]) == 0
     result = json.loads(capsys.readouterr().out)
+    assert result == payload and calls == [{"limit": 1}]
     assert result["source_freshness"] == "unknown"
-    assert result["items"][0]["reply_evidence"][0] == {
-        "opportunity_id": "one", "activity_id": "reply", "channel": "email",
-        "occurred_at": (NOW - timedelta(hours=1)).isoformat(),
-    }
-    assert disposed == [True]
-    assert inbox_cli.main(["--now", NOW.isoformat()]) == 0
-    display = capsys.readouterr().out
-    assert "[red]Avery" in display
-    assert "cooldown and review can still block action" in display
+    assert result["items"][0]["reply_evidence"][0]["activity_id"] == "reply"
+    assert inbox_cli.main([]) == 0
+    assert "[red]Avery" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("limit", [0, -1, 201, True, 1.5])
@@ -196,8 +186,11 @@ def test_limit_validation_precedes_database_access(limit):
         _inbox(None, limit=limit)
 
 
-def test_cli_rejects_invalid_cutoff_before_opening_database(monkeypatch):
-    monkeypatch.setattr(inbox_cli, "get_engine", lambda: pytest.fail("opened database"))
+def test_cli_rejects_local_cutoff_before_creating_http_client(monkeypatch, capsys):
+    from respawned.__main__ import main
+
+    monkeypatch.setattr(inbox_cli, "client_from_args", lambda _args: pytest.fail("created HTTP client"))
     with pytest.raises(SystemExit) as exc:
-        inbox_cli.main(["--now", "2026-09-08T12:00:00"])
+        main(["inbox", "--now", "2026-09-08T12:00:00"])
     assert exc.value.code == 2
+    assert "The engine owns time and policy" in capsys.readouterr().err

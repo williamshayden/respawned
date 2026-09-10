@@ -13,8 +13,8 @@ from respawned.core.workspaces import (
 )
 
 
-def create_workspace_router(connection_dependency) -> APIRouter:
-    router = APIRouter(prefix="/v1/ui/workspaces",
+def create_workspace_router(connection_dependency, *, prefix: str = "/v1/ui/workspaces") -> APIRouter:
+    router = APIRouter(prefix=prefix,
                        dependencies=[Depends(require_review_authorization)])
     ConnectionDep = Annotated[Connection, Depends(connection_dependency, scope="function")]
 

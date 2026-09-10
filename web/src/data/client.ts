@@ -1,6 +1,7 @@
+import { workflowRoot } from './workflow'
 import type { InboxResult, OutboxItem, RecordPage, ReviewClient, SyncResult, UIConfig, UIDraft, UIRecord } from './types'
 import { accessHeaders, type ReviewAccess } from './auth'
-import { engineNetworkError, engineRequestOptions } from './connections'
+import { engineNetworkError, engineRequestOptions } from './transport'
 
 export class ClientError extends Error {
   constructor(
@@ -37,13 +38,13 @@ function errorMessage(payload: unknown, fallback: string): string {
 
 /** Credentials live only in this closure; they are never written to storage or URLs. */
 export function createHttpClient(baseUrl = '', operatorToken: ReviewAccess = '', workspaceId = ''): ReviewClient {
-  const root = `${baseUrl.replace(/\/+$/, '')}/v1/ui`
   const transport = engineRequestOptions(operatorToken, baseUrl)
   async function request<T>(path: string, method = 'GET', body?: unknown, csv = false): Promise<T> {
     const headers: Record<string, string> = { Accept: csv ? 'text/csv' : 'application/json', ...accessHeaders(operatorToken) }
     if (body !== undefined) headers['Content-Type'] = 'application/json'
     let response: Response
     try {
+      const root = await workflowRoot(baseUrl)
       response = await fetch(`${root}${path}`, { ...transport, method, headers,
         signal: AbortSignal.timeout(method === 'GET' ? 20_000 : 330_000),
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
@@ -64,7 +65,7 @@ export function createHttpClient(baseUrl = '', operatorToken: ReviewAccess = '',
     }
     if (!response.ok) {
       const fallback = response.status === 401 || response.status === 403
-        ? 'Review access expired or was not accepted. Open Setup to reconnect.'
+        ? 'Engine access expired or was not accepted. Open Setup to reconnect.'
         : response.status === 409
           ? 'The record or draft changed. Refresh and review the latest copy.'
           : 'The request could not be completed. Please try again.'

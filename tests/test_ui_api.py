@@ -42,6 +42,8 @@ def dependencies(monkeypatch):
 
 
 @pytest.mark.parametrize("method,path", [
+    ("get", "/queue"), ("get", f"/drafts/{DRAFT_ID}"),
+    ("post", f"/candidates/{DRAFT_ID}/draft"),
     ("get", "/config"), ("get", "/records"), ("get", "/records/one"),
     ("get", "/outbox"), ("get", "/inbox"), ("get", "/overview"),
     ("post", "/sync"), ("post", "/records/one/draft"),
@@ -49,8 +51,9 @@ def dependencies(monkeypatch):
     ("post", f"/drafts/{DRAFT_ID}/approve"),
     ("post", f"/drafts/{DRAFT_ID}/reject"),
 ])
+@pytest.mark.parametrize("prefix", ["/v1/ui", "/v1/workflow"])
 def test_review_auth_precedes_database_policy_and_provider(
-    dependencies, monkeypatch, method, path,
+    dependencies, monkeypatch, method, path, prefix,
 ):
     def forbidden():
         pytest.fail("resolved a protected dependency before authorization")
@@ -61,12 +64,12 @@ def test_review_auth_precedes_database_policy_and_provider(
     monkeypatch.setenv("RESPAWNED_PROCESS_TOKEN", "processing-token")
     with TestClient(app) as client:
         call = getattr(client, method)
-        response = call("/v1/ui" + path)
+        response = call(prefix + path)
         assert response.status_code == 401
         assert response.headers["www-authenticate"] == "Bearer"
-        assert call("/v1/ui" + path, headers={"Authorization": "Bearer processing-token"}).status_code == 401
+        assert call(prefix + path, headers={"Authorization": "Bearer processing-token"}).status_code == 401
         monkeypatch.delenv("RESPAWNED_REVIEW_TOKEN")
-        assert call("/v1/ui" + path, headers=HEADERS).status_code == 404
+        assert call(prefix + path, headers=HEADERS).status_code == 404
 
 
 def _record(key="one", **overrides):
@@ -508,7 +511,7 @@ def test_grouped_inbox_navigates_to_the_contact_candidate_primary(review_api):
     assert primary["candidate_id"] is not None
     assert primary["referenced_record_ids"] == ["reply-evidence"]
     assert _get(state, "/records/reply-evidence")["candidate_id"] is None
-    legacy = state.client.get("/v1/inbox").json()["items"][0]
+    legacy = state.client.get("/v1/inbox", headers=HEADERS).json()["items"][0]
     assert "record_refs" not in legacy and "review_record_id" not in legacy
     assert state.calls == []
 
@@ -579,3 +582,111 @@ def test_approval_commits_before_http_success(dependencies, monkeypatch, commit_
     if commit_fails:
         bodies = b"".join(event["body"] for event in events[1:] if event["type"] == "http.response.body")
         assert json.loads(bodies) == {"detail": "Database unavailable"}
+
+
+@pytest.mark.parametrize("draft_from_queue", [False, True])
+def test_canonical_workflow_accepts_agent_copy_and_preserves_versioned_review(review_api, draft_from_queue):
+    from fastapi.encoders import jsonable_encoder
+    from urllib.parse import quote
+
+    state = review_api
+    prefix = "/v1/workflow"
+    key = "agent/source-record"
+    body = "Hi Avery, Thursday works for me. Would after lunch suit you?"
+
+    def request(method, path, payload=None, status=200):
+        response = state.client.request(method, prefix + path, headers=HEADERS,
+                                        **({"json": payload} if payload is not None else {}))
+        assert response.status_code == status, response.text
+        assert response.headers["cache-control"] == "no-store"
+        return response.json()
+
+    def forbidden_model():
+        pytest.fail("Supplied copy or a saved draft must not resolve the model")
+
+    app.dependency_overrides[ui.get_draft_adapter_factory] = lambda: forbidden_model
+    assert request("GET", "/queue") == {"items": [], "has_more": False}
+    payload = jsonable_encoder({"opportunities": [_record(key)], "activities": [_reply(key)]})
+    assert request("POST", "/import", payload) == {"opportunities_upserted": 1, "activities_inserted": 1}
+    preview = request("POST", "/sync", {"dry_run": True})
+    assert preview == {"candidate_count": 1, "inserted_count": 1, "run_id": None, "dry_run": True}
+    assert request("GET", "/queue")["items"] == []
+    assert state.connection.execute(text("SELECT count(*) FROM sync_runs")).scalar_one() == 0
+    synced = request("POST", "/sync", {})
+    assert synced["dry_run"] is False and synced["run_id"]
+    queue = request("GET", "/queue")
+    assert len(queue["items"]) == 1
+    candidate = queue["items"][0]
+    assert candidate["primary_opportunity_id"] == key
+    assert candidate["contact_address"] == f"{key}@example.com"
+    path = (f"/candidates/{candidate['id']}/draft" if draft_from_queue
+            else f"/records/{quote(key, safe='')}/draft")
+    draft = request("POST", path, {"body": body})
+    assert draft["status"] == "pending" and draft["outbox_id"] is None
+    assert draft["body"] == body and state.calls == []
+    detail = request("GET", f"/drafts/{draft['id']}")
+    assert detail["body"] == body and detail["review_token"] == draft["review_token"]
+    assert detail["primary_opportunity_id"] == key
+    assert detail["contact_address"] == candidate["contact_address"]
+    assert detail["opportunity_ids"] == [key]
+    assert request("POST", path, {"body": "  " + body + "  "}) == draft
+    assert request("POST", path) == draft
+    conflict = request("POST", path, {"body": "Hi Avery, is Friday better?"}, status=409)
+    assert "review_token" in conflict["detail"]
+    assert request("GET", f"/drafts/{draft['id']}") == detail
+    assert request("GET", "/outbox")["items"] == []
+    edited = request("POST", f"/drafts/{draft['id']}/edit", {
+        "body": "Hi Avery, Friday after lunch works for me.", "review_token": draft["review_token"],
+    })
+    assert edited["review_token"] != draft["review_token"]
+    request("POST", f"/drafts/{draft['id']}/approve", {"review_token": draft["review_token"]}, status=409)
+    current = request("GET", f"/drafts/{draft['id']}")
+    assert current["review_token"] == edited["review_token"]
+    approved = request("POST", f"/drafts/{draft['id']}/approve", {"review_token": current["review_token"]})
+    assert approved == request("POST", f"/drafts/{draft['id']}/approve", {"review_token": current["review_token"]})
+    outbox = request("GET", "/outbox")["items"]
+    assert len(outbox) == 1 and outbox[0]["authorization_mode"] == "human"
+    assert outbox[0]["status"] == "pending" and outbox[0]["sent_at"] is None
+    assert request("GET", "/queue") == {"items": [], "has_more": False}
+    legacy = state.client.get("/v1/ui/outbox", headers=HEADERS)
+    assert legacy.json() == request("GET", "/outbox")
+
+
+@pytest.mark.parametrize("draft_from_queue", [False, True])
+@pytest.mark.parametrize("payload", [{"body": ""}, {"body": "Hello [NAME]"}, {"body": "a" * 321},
+                                    {"body": "a" * 10001}, {"body": "Copy", "approved": True}])
+def test_external_draft_copy_is_validated_without_calling_a_model(review_api, draft_from_queue, payload):
+    state = review_api
+    ingest_records(state.connection, opportunities=[_record()], activities=[_reply()])
+    _post(state, "/sync")
+    queue = state.client.get("/v1/workflow/queue", headers=HEADERS).json()["items"]
+    path = (f"/v1/workflow/candidates/{queue[0]['id']}/draft" if draft_from_queue
+            else "/v1/workflow/records/one/draft")
+    response = state.client.post(path, headers=HEADERS, json=payload)
+    assert response.status_code == 422, response.text
+    assert state.calls == []
+    assert state.connection.execute(text("SELECT count(*) FROM drafts")).scalar_one() == 0
+    assert state.connection.execute(text("SELECT count(*) FROM outbox")).scalar_one() == 0
+
+
+def test_queue_drafting_rechecks_stale_state_without_resolving_model(review_api):
+    state = review_api
+    ingest_records(state.connection, opportunities=[_record()], activities=[_reply()])
+    _post(state, "/sync")
+    candidate = state.client.get("/v1/workflow/queue", headers=HEADERS).json()["items"][0]
+    ingest_records(state.connection, opportunities=[_record(status="lost")])
+    response = state.client.post(f"/v1/workflow/candidates/{candidate['id']}/draft", headers=HEADERS,
+                                 json={"body": "Hi Avery, when would you like to speak?"})
+    assert response.status_code == 409 and state.calls == []
+    assert state.connection.execute(text("SELECT count(*) FROM drafts")).scalar_one() == 0
+    assert state.client.get(f"/v1/workflow/drafts/{uuid4()}", headers=HEADERS).status_code == 404
+    assert state.client.post(f"/v1/workflow/candidates/{uuid4()}/draft", headers=HEADERS).status_code == 409
+
+
+def test_openapi_presents_the_shared_workflow_contract():
+    paths = app.openapi()["paths"]
+    assert "/v1/workflow/import" in paths
+    assert "/v1/workflow/queue" in paths
+    assert "/v1/workflow/drafts/{draft_id}" in paths
+    assert not any(path.startswith("/v1/ui/") for path in paths)
+    assert "/v1/outbox/pending" in paths and "/v1/outbox/{outbox_id}/receipt" in paths
