@@ -1,0 +1,22 @@
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+  X-Frame-Options: DENY
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/*
+  Cache-Control: public, max-age=3600, must-revalidate
+
+/media/*
+  Cache-Control: public, max-age=3600, must-revalidate
+
+/downloads/*
+  Cache-Control: public, max-age=3600, must-revalidate
+
+/install.sh
+  Content-Type: text/plain; charset=utf-8
+
+/SHA256SUMS
+  Content-Type: text/plain; charset=utf-8

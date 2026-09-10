@@ -66,3 +66,5 @@ jobs:
         run: uv run --frozen python scripts/build_downloads.py --output dist/website
       - name: Verify the website installer in an isolated prefix
         run: uv run --frozen python scripts/downloads/verify_installer.py --artifacts dist/website
+      - name: Build the static documentation and downloads
+        run: uv run --frozen python site/build.py --distribution dist/website --output site/dist --package-source "$(git rev-parse HEAD)"

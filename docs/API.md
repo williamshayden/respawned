@@ -125,7 +125,7 @@ integration establishes it.
 ## Candidate and review workflow
 
 Use the installed CLI with the same database environment as the server. The
-[installation guide](../README.md#install-and-start) covers the planned website
+[installation guide](../README.md#install-and-start) covers the website
 downloads and PostgreSQL setup; no source checkout is needed for the packaged CLI.
 
 ```bash

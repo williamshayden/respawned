@@ -60,9 +60,8 @@ see the [agent integration examples](AGENT_INTEGRATION.md). The
 
 The preferred package download location is
 [respawned.williamshayden.com](https://respawned.williamshayden.com/).
-**Website hosting is pending**; its installer and package URLs are planned, not
-currently verified public downloads. Follow the [installation guide](../README.md#install-and-start)
-for the prepared installer, Python prerequisites, and separate PostgreSQL setup.
+Follow the [installation guide](../README.md#install-and-start)
+for the installer, Python prerequisites, and separate PostgreSQL setup.
 The packaged app needs no repository clone, Node.js, or npm.
 
 After installing and setting the database environment, run:

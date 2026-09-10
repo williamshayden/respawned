@@ -19,9 +19,8 @@ Workspaces are views within an engine, not separate accounts.
 
 The preferred download location is
 [respawned.williamshayden.com](https://respawned.williamshayden.com/).
-**Hosting is pending.** The installer and versioned packages have been verified
-locally; the website URLs below have not been deployed or verified as public
-downloads. No repository clone will be needed for the packaged app.
+The installer downloads a verified package with the CLI, API, and prebuilt web UI.
+No repository clone is needed.
 
 The shell installer requires Python 3.12+ with `venv` and `ensurepip`, and `curl`.
 It supports Linux, macOS, or WSL; the verified installation environment is
@@ -90,9 +89,8 @@ Normal startup creates no sample records.
 Approval and export do not deliver a message. See the [outbox workflow](docs/WEB_UI.md#import-records-and-use-the-outbox)
 for recording actual outbound activity after manual delivery.
 
-Stop the CLI with Ctrl+C; PostgreSQL is managed separately. Developers can use
-the [source checkout workflow](#developer-source-checkout) below while website
-hosting is pending.
+Stop the CLI with Ctrl+C; PostgreSQL is managed separately. For development, use
+the [source checkout workflow](#developer-source-checkout) below.
 
 ## Model backends
 
@@ -141,22 +139,21 @@ policy-controlled processing and does not grant human approval authority.
 
 ## Direct package installation
 
-After website hosting is enabled, the wheel can also be installed in an
+The wheel can also be installed in an
 existing Python 3.12+ virtual environment:
 
 ```sh
 python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-1.0.0-py3-none-any.whl'
 ```
 
-The planned source archive is
+The source archive is
 `https://respawned.williamshayden.com/downloads/respawned-1.0.0.tar.gz`.
 Both formats include the prebuilt UI. A supplied local wheel also works with
 `python -m pip install /path/to/respawned-1.0.0-py3-none-any.whl`. Set the database
 environment above before running `respawned init` and `respawned ui`.
-The generated checksum manifest is planned at
+The checksum manifest is at
 `https://respawned.williamshayden.com/SHA256SUMS`; the preferred installer verifies
 its pinned wheel digest automatically.
-These planned URLs and package version `1.0.0` are not publication claims.
 
 ## Developer source checkout
 

@@ -1,0 +1,18 @@
+{
+  "name": "respawned-docs",
+  "account_id": "e5d3283ee38efb74c759716178705995",
+  "compatibility_date": "2026-09-10",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    {
+      "pattern": "respawned.williamshayden.com",
+      "custom_domain": true
+    }
+  ]
+}
