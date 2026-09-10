@@ -1,7 +1,7 @@
 """Exercise external HTTP ingestion, review policy, and an unsent draft mirror.
 
 Synthetic source, random loopback servers, disposable PostgreSQL schemas.
-Optional Codex extraction/drafting uses the existing ChatGPT CLI login.
+Optional command-backend extraction/drafting uses operator-configured runtime access.
 """
 
 from __future__ import annotations
@@ -397,7 +397,8 @@ def main():
         result = run_case(url, args.output / mode, mode, codex)
         results.append(result)
         print(f"{mode}: {'PASS' if result['passed'] else result.get('error')}", flush=True)
-    report = {"transport": "real loopback HTTP", "model": codex.version if codex else "scripted",
+    report = {"transport": "real loopback HTTP", "model": "codex_cli" if codex else "scripted",
+              "codex_version": codex.version if codex else None,
               "model_calls": codex.calls if codex else [], "cases": results}
     (args.output / "results.json").write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
     lines = ["# External connector simulation", "", f"Model: {report['model']}", "",

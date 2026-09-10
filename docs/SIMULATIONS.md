@@ -1,4 +1,10 @@
-# Pre-V1 use-case simulations
+# Scripted use-case simulations
+
+The scenarios and results below record the September 8 pre-UI engine. Contactless
+tracking and bounded record context have since been implemented. Keep these
+results as historical evidence; use the [current API contract](API.md) for new
+integrations and the [connected UI walkthrough](WEB_UI.md#run-the-connected-simulation)
+for the application flow.
 
 The simulator exercises the existing contact-based engine with synthetic source
 records, real PostgreSQL commits, the actual HTTP ingestion handler, and the CLI
@@ -7,7 +13,7 @@ repeatable without a provider, credentials for a model, or any sending.
 
 Eight scenarios ran successfully on September 8, 2026 against PostgreSQL 16.15.
 The initial run demonstrated six supported workflows and two product limits.
-The current runner also checks the newly added reply inbox; it still documents
+The runner also checks the reply inbox; this report still documents
 the application-tracking gap explicitly.
 
 | Story | Demonstrated outcome |
@@ -76,6 +82,7 @@ the bounded prompt contains enough context for a useful real response.
 The PostgreSQL 16 volume target, Docker LICENSE copy, and commit-before-response
 handling have been corrected. Focused checks cover transaction response order
 and installation from the Dockerfile's copied files. Full Docker lifecycle and
-backup/restore verification remain outstanding; see [release checks](RELEASE_CHECKS.md).
+backup/restore verification were outside this run; see the subsequent
+[release record](V1_RELEASE.md) and [integration review](INTEGRATION_REVIEW.md).
 A passing simulation is additional behavioral evidence, not a release-readiness
 sign-off. See [agent simulations](AGENT_SIMULATIONS.md) for live agent decisions.

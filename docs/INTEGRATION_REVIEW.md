@@ -1,9 +1,11 @@
 # Respawned UI and integration review — September 9, 2026
 
-This review covers the UI branch after configurable workspaces and connections
-to multiple engines were implemented.
+This review covers the Respawned rename and bundled UI, including configurable
+workspaces and connections to multiple engines. Pull requests #2 and #3 are merged
+into `main` at `1decc372`.
 It supplements the historical V1 and simulation reports; it is not evidence of
 publication, deployment to a public host, or delivery through a real mailbox.
+The release-readiness pass below follows that merged baseline.
 
 ## Application boundary
 
@@ -70,18 +72,18 @@ These were isolated local servers, not a deployed remote host, and no real model
 or delivery provider was called. Evidence lives in
 `/tmp/respawned-two-engine-smoke-20260909/`; it is not packaged as application data.
 
-## Headless Codex
+## Historical optional Codex experiments
 
-The previous headless runner existed only in source simulations. It now lives in
-the Python package as `llm.codex.CodexRunner`; simulations import it, and saved
-`codex_cli` model settings resolve a `CodexDraftingAdapter` in the shared core.
-The browser never submits an executable path or command. See
-[backend setup](WEB_UI.md#connect-a-model-backend) for installation and environment
-variables. The invocation uses the CLI's existing ChatGPT login and structured
-noninteractive output; see [official Codex documentation](https://learn.chatgpt.com/docs/non-interactive-mode).
+The existing `codex_cli` adapter remains an optional experiment behind the shared
+drafting interface. It is not the product definition or a release requirement.
+Respawned does not test Codex login, version, or availability during setup;
+configuration status does not establish connection or inference. An explicitly
+requested draft invokes the selected backend and validates its result. See
+[backend configuration](WEB_UI.md#connect-a-model-backend).
 
-Fresh local qualification used Codex CLI 0.153.4 through WSL calling its Windows
-executable, with a Windows-mounted scratch directory:
+The following earlier experiments used Codex CLI 0.153.4 through WSL calling its
+Windows executable with a Windows-mounted scratch directory. Their evidence is
+retained independently of backend-neutral application qualification:
 
 - Ten actual model calls passed the connector simulation in human and automatic
   modes. Real loopback HTTP and PostgreSQL exercised immutable source replay,
@@ -90,9 +92,10 @@ executable, with a Windows-mounted scratch directory:
 - One additional real call used saved Codex settings through the UI draft API
   and shared validation. Its persisted draft remained `pending`; the outbox had
   zero rows. This confirms the packaged application path, beyond the simulation.
-- Ordinary tests use stubs and cover missing/wrong login, invalid output,
-  unsuccessful turns, prohibited tool events, timeout, and nonzero process exit.
-  Saving settings checks runtime/login availability without making an inference call.
+- The earlier implementation also tested login/runtime preflight probes. Those
+  probes have been removed; current setup tests check configuration without
+  executable or provider calls. Optional adapter unit tests retain controlled
+  coverage of execution output and failure handling.
 - A bounded WSL-to-Windows timeout probe observed the exact native child before
   timeout and confirmed it exited afterward; no draft was accepted.
 
@@ -121,19 +124,69 @@ outcomes. Preserve unresolved associations for correction. Add shared/public
 authentication and tenant boundaries only when that deployment is in scope.
 Current workspaces are organizational views over the same engine and cooldowns.
 
-## Combined validation
+## Qualification before the release-readiness pass
 
 The full local suite passed 578 Python tests, including Docker startup,
 persistence, and backup/restore. After the final CORS startup fix, 44 focused
 checks passed, including two additional CLI startup regressions. The only warning
 is the existing Starlette/httpx deprecation. Frontend validation passed 52 data
 tests and 27 Chromium browser tests; the separate opt-in connected approval test
-was skipped. Actual local session, two-engine, and Codex/API walkthroughs above
-supply additional integration evidence.
+was skipped. The local session and two-engine walkthroughs, plus the separate
+optional adapter experiment above, were recorded with that run.
 
 Typechecking, the locked frontend build, bundled-asset reproducibility, and
 `uv lock --check` passed. Both the wheel and the wheel rebuilt from the source
 distribution installed outside the checkout and passed HTTP asset/CLI/PostgreSQL
-checks without Node.js. The package probe also imports the Codex backend and
-checks `respawned ui --help`. Evidence is recorded locally in
+checks without Node.js. At that time the package probe also imported the optional
+CLI adapter; the generic release probe no longer makes that provider-specific check.
+Evidence is recorded locally in
 `/tmp/respawned-multi-engine-package-20260909/report.json`.
+
+## Release-readiness pass
+
+The release-readiness pass fixed a CLI dependency error: opening an empty queue or reviewing
+an existing draft required model configuration unnecessarily. The CLI now resolves
+the backend only when generating missing copy. Browser setup and workspace requests
+have bounded timeouts, with no automatic write retries and an explicit warning
+when a write's outcome is unknown. Mobile Connections controls no longer clip;
+review spacing, engine labels, and empty-state copy were simplified. Switching
+records resets the review panel's scroll position while preserving unsaved edits.
+Setup now reports saved backend configuration without probing provider runtimes
+or logins; no provider-specific login is a product or release prerequisite. The README
+now separates local launch from Docker setup, and [API.md](API.md) is the canonical
+connector and policy reference.
+
+The connected browser walkthrough starts an empty PostgreSQL schema and uses
+the packaged UI directly. Every application write and state assertion is made
+through browser controls: rejected import without partial records, file import
+and replay, saved model settings across reload, workspace create/edit/watch/remove,
+draft editing, stale second-tab refusal, approval, CSV download of reviewed copy,
+persistent unsent status, and contactless tracking. Desktop and mobile checks
+reported no application runtime errors. Reproduce with the
+[empty-engine test commands](WEB_UI.md#checks). Evidence is in
+`/tmp/respawned-release-pure-ui-backend-neutral/` for the completed final walkthrough.
+
+The first walkthrough attempt exposed a simulation harness database probe that
+ignored its isolated connection override; it now checks the scoped real database.
+The second attempt failed on an outdated test text locator after the copy change.
+Both failed runs remain at `/tmp/respawned-release-pure-ui-1/` and
+`/tmp/respawned-release-pure-ui-2/`.
+
+| Check | Result |
+| --- | --- |
+| Full Python suite | 592 passed with no failures or skips, including Docker, persistence, and recovery checks; one existing Starlette/httpx deprecation warning |
+| Frontend | 55 unit tests, typecheck, and 29 ordinary Chromium tests passed |
+| Connected browser | One additional opt-in empty-engine walkthrough passed against the packaged app and real PostgreSQL |
+| CLI subprocess workflows | Seven scenarios, 45 actual commands, and nine requests to a local model stub passed; includes replay, review without model credentials, provider errors, and concurrent review conflicts |
+| Scripted source workflows | Eight use cases with 99 assertions, plus two HTTP connector modes with 38 checks, passed |
+| Installed distributions | Direct wheel and sdist-built wheel contents match; both passed CLI, HTTP asset, and PostgreSQL checks outside the checkout with no Node.js runtime |
+| Documentation | 102 local links resolved and the canonical JSON example passed the shared ingestion schema |
+
+CLI evidence is in `/tmp/respawned-cli-release-qualification-20260909/`; scripted
+use-case evidence is in `/tmp/respawned-release-usecases-final-20260909/`.
+Final distribution evidence and artifact hashes are in
+`/tmp/respawned-readiness-package-backend-neutral-20260909/report.json`.
+These are local verification
+artifacts. This pass used synthetic input and local model stubs; it made no live
+provider calls and sent no messages. The earlier real Codex checks remain separate
+evidence, not new model runs or a provider reliability benchmark.

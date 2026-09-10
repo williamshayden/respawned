@@ -103,15 +103,15 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
   const databaseReady = status?.database.status === 'ready'
 
   return <div className="setup-view">
-    <div className="setup-intro"><p>Connect this environment, choose a model, and bring in the records you want to follow up.</p>
+    <div className="setup-intro">
       <button className="button small" disabled={loading || savingModel || importing} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={14} className={loading ? 'spin' : ''} />Refresh status</button></div>
     {statusError && <p className="inline-error" role="alert">{statusError}</p>}
 
     <section className="setup-section" aria-labelledby="setup-access-title">
-      <div className="setup-section-heading"><KeyRound size={23} /><div><h2 id="setup-access-title">Review access</h2><p>Your connection to this environment</p></div></div>
+      <div className="setup-section-heading"><KeyRound size={21} /><h2 id="setup-access-title">Review access</h2></div>
       <div className="setup-section-body">
-        <div className="setup-heading-row"><p>{baseUrl ? `Connected engine: ${baseUrl}` : isLocalSession(token) ? 'Connected securely through your local CLI.' : 'Launch with respawned ui to connect automatically, or use a server access token below.'}</p><span className={`setup-state ${connected ? 'is-ready' : ''}`}>{connected ? 'Unlocked' : 'Locked'}</span></div>
-        {connected ? <div className="setup-access-active"><Check size={18} /><p>{isLocalSession(token) ? 'This local connection survives page reloads and expires after 12 hours or when the server stops. Lock access ends it immediately.' : 'Access is active for this browser tab. The manually entered token stays in memory and clears when the page reloads.'}</p><button className="button small" onClick={onDisconnect}>Lock access</button></div> : <>{!baseUrl && <div className="setup-note"><p>On the machine running Respawned, run:</p><pre><code>respawned ui</code></pre><p>It opens this interface with access already connected. In a terminal without a browser, use <code>respawned ui --no-open</code> and open the one-use link it prints on this machine. If port 8000 is occupied, stop the existing server or choose <code>--port 8001</code>.</p></div>}{baseUrl && <p className="setup-note">Enter the review token configured on this remote engine. It is sent directly to that server and stays in this tab’s memory.</p>}<form className="setup-access-form" onSubmit={async event => {
+        <div className="setup-heading-row"><p>{baseUrl ? `Engine: ${baseUrl}` : isLocalSession(token) ? 'Local browser session' : 'Open the link from respawned ui, or enter a server access token.'}</p><span className={`setup-state ${connected ? 'is-ready' : ''}`}>{connected ? 'Unlocked' : 'Locked'}</span></div>
+        {connected ? <div className="setup-access-active"><Check size={18} /><p>{isLocalSession(token) ? 'Your session survives reloads and expires after 12 hours or when the server stops.' : 'Your token stays in this tab’s memory and clears on reload.'}</p><button className="button small" onClick={onDisconnect}>Lock access</button></div> : <>{!baseUrl && <details className="setup-launch-help"><summary>Connect from the CLI</summary><p>Run <code>respawned ui</code> to open an authenticated session. Use <code>respawned ui --no-open</code> to print a one-use link instead. Choose <code>--port 8001</code> if port 8000 is occupied.</p></details>}{baseUrl && <p className="setup-note">Enter the review token configured on this remote engine. It stays in this tab’s memory.</p>}<form className="setup-access-form" onSubmit={async event => {
           event.preventDefault()
           setConnecting(true)
           setAccessError(null)
@@ -135,9 +135,9 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
     </section>
 
     <section className="setup-section" aria-labelledby="setup-model-title">
-      <div className="setup-section-heading"><Server size={23} /><div><h2 id="setup-model-title">Model backend</h2><p>Generate drafts on demand</p></div></div>
+      <div className="setup-section-heading"><Server size={21} /><h2 id="setup-model-title">Model backend</h2></div>
       <div className="setup-section-body">
-        <div className="setup-heading-row"><p>Use your Codex ChatGPT login or connect an OpenAI-compatible API.</p><span className={`setup-state ${status?.model.ready ? 'is-ready' : ''}`}>{!connected ? 'Unlock to configure' : status?.model.ready ? 'Configured' : loading ? 'Checking' : 'Setup needed'}</span></div>
+        <div className="setup-heading-row"><p>Configure the model used to generate drafts.</p><span className={`setup-state ${status?.model.ready ? 'is-ready' : ''}`}>{!connected ? 'Unlock to configure' : status?.model.ready ? 'Configured' : loading ? 'Loading settings' : 'Setup needed'}</span></div>
         {!connected && <p className="setup-note">Unlock review access to view and save the server’s model settings.</p>}
         {status?.model.error && <p className="inline-error">{status.model.error}. Enter valid settings below to replace it.</p>}
         {connected && model && <form onSubmit={async event => {
@@ -156,25 +156,26 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
           finally { if (currentAccess.current === startedWith) setSavingModel(false) }
         }}>
           <fieldset className="setup-form-grid" disabled={savingModel || !databaseReady}>
-            <label className="setup-field-wide">Backend<select value={model.backend ?? 'openai_compatible'} onChange={event => setModel({ ...model, backend: event.target.value as ModelSettings['backend'], model_alias: '', timeout_seconds: event.target.value === 'codex_cli' ? 120 : 60 })}><option value="openai_compatible">OpenAI-compatible API / LiteLLM</option><option value="codex_cli">Codex CLI · ChatGPT login</option></select></label>
+            <label className="setup-field-wide">Backend<select value={model.backend ?? 'openai_compatible'} onChange={event => setModel({ ...model, backend: event.target.value as ModelSettings['backend'], model_alias: '', timeout_seconds: event.target.value === 'codex_cli' ? 120 : 60 })}><option value="openai_compatible">OpenAI-compatible API / LiteLLM</option><option value="codex_cli">Codex CLI</option></select></label>
             {model.backend !== 'codex_cli' && <label className="setup-field-wide">API base URL<input type="url" value={model.base_url} onChange={event => setModel({ ...model, base_url: event.target.value })} placeholder="http://localhost:11434/v1" required /><span>Use the exact API root reachable from the Respawned server. Include /v1 if your backend requires it.</span></label>}
-            <label>{model.backend === 'codex_cli' ? 'Codex model (optional)' : 'Model or proxy alias'}<input value={model.model_alias} onChange={event => setModel({ ...model, model_alias: event.target.value })} placeholder={model.backend === 'codex_cli' ? 'Use the Codex CLI default' : 'Model name accepted by your backend'} required={model.backend !== 'codex_cli'} /></label>
+            <label>{model.backend === 'codex_cli' ? 'Model override (optional)' : 'Model or proxy alias'}<input value={model.model_alias} onChange={event => setModel({ ...model, model_alias: event.target.value })} placeholder={model.backend === 'codex_cli' ? 'Use the adapter default' : 'Model name accepted by your backend'} required={model.backend !== 'codex_cli'} /></label>
             <label>Timeout (seconds)<input type="number" min="0.1" max="300" step="0.1" value={model.timeout_seconds} onChange={event => setModel({ ...model, timeout_seconds: Number(event.target.value) })} required /></label>
             {model.backend !== 'codex_cli' && <label className="setup-field-wide">Server credential variable<select value={model.api_key_env} onChange={event => setModel({ ...model, api_key_env: event.target.value as ModelSettings['api_key_env'] })}><option value="LITELLM_MASTER_KEY">LITELLM_MASTER_KEY</option><option value="RESPAWNED_MODEL_API_KEY">RESPAWNED_MODEL_API_KEY</option></select><span>Set the key in this environment variable on the server and restart it. The key is never entered or returned here.</span></label>}
           </fieldset>
-          <p className="setup-note">{model.backend === 'codex_cli' ? (status?.model.backend === 'codex_cli' && status.model.login_ready ? 'Codex CLI and its ChatGPT login are available on the server.' : 'Run codex login with ChatGPT on the server. Save to check the CLI and login; no API key is needed.') : model.api_key_env !== status?.model.api_key_env ? 'Save to check this credential variable.' : status?.model.key_configured ? 'The selected credential is set on the server.' : 'The selected credential is missing on the server.'} {status?.model.source === 'saved' ? 'Using saved model settings.' : 'Using server environment defaults.'}</p>
+          <p className="setup-note">{model.backend !== 'codex_cli' && (model.api_key_env !== status?.model.api_key_env ? 'Credential variable selection has not been saved. ' : status?.model.key_configured ? 'The selected credential is set on the server. ' : 'The selected credential is missing on the server. ')}{status?.model.source === 'saved' ? 'Using saved model settings.' : 'Using server environment defaults.'}</p>
+          <p className="setup-note">Configured means the required settings are present. Connection and inference are unverified.</p>
           {modelError && <p className="inline-error" role="alert">{modelError}</p>}
           {modelNotice && <p className="setup-success" role="status"><Check size={15} />{modelNotice}</p>}
           <div className="setup-form-actions"><p>Saving makes no model request. Generating a draft sends its drafting context to this backend.</p><button type="submit" className="button primary" disabled={savingModel || !databaseReady}>{savingModel && <LoaderCircle size={16} className="spin" />}Save model settings</button></div>
         </form>}
-        <details className="setup-details"><summary>Which backend settings should I use?</summary><p>Codex uses the CLI installed on the server and its existing ChatGPT login. It runs a bounded text-only task with structured output; the engine still validates the draft and requires approval. If Codex is not on PATH, set <code>RESPAWNED_CODEX_BIN</code> in the server environment. When calling Windows Codex from WSL, also set <code>RESPAWNED_CODEX_SCRATCH_DIR</code> to an existing directory on a mounted Windows drive.</p><p>For a local model server, use its API base URL and the exact model name it serves. For LiteLLM, use the proxy URL, a model alias from its configuration, and <code>LITELLM_MASTER_KEY</code>. A direct provider can use <code>RESPAWNED_MODEL_API_KEY</code>.</p><p>If your local backend needs no authentication, set a local-only value in the selected server credential variable. Respawned’s API client requires a value, even when the backend ignores it.</p></details>
+        {connected && model && <details className="setup-details"><summary>Backend configuration help</summary>{model.backend === 'codex_cli' ? <p>The CLI adapter uses the executable and runtime configured on the server. Set <code>RESPAWNED_CODEX_BIN</code> if the executable is not on PATH. When calling a Windows executable from WSL, set <code>RESPAWNED_CODEX_SCRATCH_DIR</code> to an existing directory on a mounted Windows drive.</p> : <><p>For a local model server, use its API base URL and the exact model name it serves. For LiteLLM, use the proxy URL, a model alias from its configuration, and <code>LITELLM_MASTER_KEY</code>. A direct provider can use <code>RESPAWNED_MODEL_API_KEY</code>.</p><p>If your local backend needs no authentication, set a local-only value in the selected server credential variable. This API adapter requires a value, even when the backend ignores it.</p></>}</details>}
       </div>
     </section>
 
     <section className="setup-section" aria-labelledby="setup-source-title">
-      <div className="setup-section-heading"><Database size={23} /><div><h2 id="setup-source-title">Records & sources</h2><p>Bring your own workflow</p></div></div>
+      <div className="setup-section-heading"><Database size={21} /><h2 id="setup-source-title">Records & sources</h2></div>
       <div className="setup-section-body">
-        <div className="setup-heading-row"><p>Import records and activity from your existing tools. Workspaces organize records by their kind.</p><span className={`setup-state ${databaseReady ? 'is-ready' : ''}`}>{!connected ? 'Unlock to import' : databaseReady ? 'Database ready' : loading ? 'Checking' : 'Database unavailable'}</span></div>
+        <div className="setup-heading-row"><p>Import records and activity from your existing tools.</p><span className={`setup-state ${databaseReady ? 'is-ready' : ''}`}>{!connected ? 'Unlock to import' : databaseReady ? 'Database ready' : loading ? 'Checking' : 'Database unavailable'}</span></div>
         {status && <p className="setup-note">{status.database.message}</p>}
         <form onSubmit={async event => {
           event.preventDefault()
@@ -212,7 +213,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
           {importError && <p className="inline-error" role="alert">{importError}</p>}
           {importNotice && <p className="setup-success" role="status"><Check size={15} />{importNotice}</p>}
           <p className="setup-note">Matching record IDs replace the full saved snapshot, including clearing omitted optional fields. Activity IDs are immutable: resend the same fact, or use a new ID for a new event.</p>
-          <div className="setup-form-actions"><p>Only your submitted data is imported. Importing does not generate drafts or send messages.</p><button className="button primary" type="submit" disabled={!connected || !databaseReady || importing || !preview.payload}>{importing ? <LoaderCircle size={16} className="spin" /> : <Upload size={16} />}Import records</button></div>
+          <div className="setup-form-actions"><p>Importing does not generate drafts or send messages.</p><button className="button primary" type="submit" disabled={!connected || !databaseReady || importing || !preview.payload}>{importing ? <LoaderCircle size={16} className="spin" /> : <Upload size={16} />}Import records</button></div>
         </form>
         <details className="setup-details"><summary>Import format & API integration</summary><p>The API calls tracked records <code>opportunities</code>, regardless of your workflow. Give each record a stable ID and a <code>kind</code> such as <code>generic</code> or your own lowercase identifier. Use real source timestamps. Only add a contact route when you know the recipient.</p>
           <div className="setup-template-actions"><button type="button" className="button small" onClick={downloadTemplate}><Download size={14} />Download template</button><button type="button" className="button small" onClick={async () => {
@@ -227,7 +228,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
     </section>
 
     <section className="setup-section" aria-labelledby="setup-outbox-title">
-      <div className="setup-section-heading"><Mail size={23} /><div><h2 id="setup-outbox-title">Outbox & delivery</h2><p>Review, export, then send</p></div></div>
+      <div className="setup-section-heading"><Mail size={21} /><h2 id="setup-outbox-title">Outbox & delivery</h2></div>
       <div className="setup-section-body"><div className="setup-heading-row"><p>Approving a draft reserves an unsent message in the outbox. Delivery is manual in this version.</p><span className="setup-state">Export only</span></div>
         <ol className="setup-delivery-steps"><li>Review and approve the exact message text.</li><li>Open the outbox and export the approved messages.</li><li>Send through your own mail or messaging tool, then import the actual outbound event.</li></ol>
         <p className="setup-note">No email account, SMS provider, or sending worker is connected. Exporting does not mark a message sent; the UI keeps its recorded outbox status.</p>

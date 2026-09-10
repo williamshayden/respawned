@@ -45,9 +45,9 @@ export function QueueList(props: Props) {
         </button>
       })}
       {!props.records.length && <div className="empty-state queue-empty"><SearchX size={28} /><h2>No records here</h2>
-        <p>{props.query || props.channel !== 'all' ? 'Try another search or channel.' : props.view === 'ready' ? 'You’re up to date. See All tracked for waiting records.' : 'Records will appear here after ingestion.'}</p>
+        <p>{props.query || props.channel !== 'all' ? 'Try another search or channel.' : props.view === 'ready' ? 'No records currently need review. See All tracked for waiting records.' : 'Imported records will appear here.'}</p>
       </div>}
-      <div className="queue-footer">Showing {props.records.length} {props.hasMore ? 'loaded records' : `of ${props.records.length}`}
+      <div className="queue-footer">{props.records.length} {props.hasMore ? 'loaded records' : `record${props.records.length === 1 ? '' : 's'}`}
         {props.hasMore && <button className="text-button" onClick={props.onMore} disabled={props.busy}>Load more ({props.total} total)</button>}
       </div>
     </div>

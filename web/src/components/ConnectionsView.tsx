@@ -33,8 +33,7 @@ export function ConnectionsView({ connections, accessById, activeId, onAdd, onUn
   }
 
   return <div className="connections-view">
-    <div className="connections-intro"><Link2 size={27} /><div><h2>Bring your engines together</h2><p>Connect another Respawned server, then monitor its workspaces alongside your local work.</p></div></div>
-    <p className="connections-boundary">Each engine keeps its own records, settings, and approvals. Opening a workspace sends actions only to the engine that owns it.</p>
+    <p className="connections-intro">Connect another Respawned server to monitor its workspaces. Each engine keeps its own records, settings, and approvals.</p>
     {error && <p className="inline-error" role="alert">{error}</p>}
     {notice && <p className="connections-success" role="status"><Check size={16} />{notice}</p>}
     <div className="connections-grid"><section className="connection-list" aria-label="Saved engines">
@@ -55,7 +54,7 @@ export function ConnectionsView({ connections, accessById, activeId, onAdd, onUn
         </article>
       })}
       <p className="connection-help">Names and URLs are remembered in this browser when storage is available. Remote access tokens stay in this tab’s memory and clear on reload. Removing a connection does not delete anything on its server.</p>
-    </section><section className="connection-add" aria-labelledby="connection-add-title"><h3 id="connection-add-title"><Plus size={18} />Connect an engine</h3><p>Add the root URL of a running Respawned server. We’ll check access before saving the connection.</p>
+    </section><section className="connection-add" aria-labelledby="connection-add-title"><h3 id="connection-add-title"><Plus size={18} />Connect an engine</h3><p>Enter the server’s root URL and review access token.</p>
       <form onSubmit={event => {
         event.preventDefault()
         void perform('add', async () => { await onAdd(name, url, token); setName(''); setUrl(''); setToken(''); setNotice('Engine connected. Open Overview to choose the workspaces you want to monitor.') })

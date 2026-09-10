@@ -79,6 +79,25 @@ test('unsaved copy survives switching records, and saved copy survives reload', 
   await expect(page.getByRole('textbox', { name: 'Draft message' })).toHaveValue(copy)
 })
 
+test('selecting another record starts at its heading without resetting scroll while editing', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 700 })
+  const detail = page.locator('.review-scroll')
+  await detail.hover()
+  await page.mouse.wheel(0, 2000)
+  await expect.poll(() => detail.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+  const copy = 'Hi Maya, is there an update on the next interview?'
+  await page.getByRole('textbox', { name: 'Draft message', exact: true }).fill(copy)
+  await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible()
+  await expect.poll(() => detail.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+  await row(page, 'Jordan Ellis').click()
+  await expect(selectedPanel(page).getByRole('heading', { name: 'Jordan Ellis', exact: true })).toBeInViewport({ ratio: 1 })
+  await expect.poll(() => detail.evaluate(element => element.scrollTop)).toBe(0)
+  await row(page, 'Maya Chen').click()
+  await expect(selectedPanel(page).getByRole('heading', { name: 'Maya Chen', exact: true })).toBeInViewport({ ratio: 1 })
+  await expect(page.getByRole('textbox', { name: 'Draft message', exact: true })).toHaveValue(copy)
+  await page.screenshot({ path: testInfo.outputPath('record-selection-scroll.png') })
+})
+
 test('approval produces one unsent outbox entry and an accurate CSV export', async ({ page }) => {
   const copy = await page.getByRole('textbox', { name: 'Draft message' }).inputValue()
   const serverCsv = `id,draft_id,contact_key,contact_address,contact_name,channel,opportunity_ids,body,status,authorization_mode,created_at,sent_at\r\n1,server-draft,server-contact,maya@northstar.example,Maya,email,[],"${copy}",pending,human,2026-09-09T12:00:00Z,\r\n`
@@ -112,7 +131,7 @@ test('inbox shows human replies during cooldown and navigation resolves to the r
   await expect(selectedPanel(page).getByRole('heading', { name: 'Devon Reed', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Approve to outbox' })).toBeDisabled()
   await navigate(page, 'Activity')
-  await expect(page.getByRole('heading', { name: 'Activity across your records' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Activity', level: 1, exact: true })).toBeVisible()
   await navigate(page, 'Policy')
   await expect(page.getByRole('heading', { name: 'Effective policy' })).toBeVisible()
   await expect(page.getByText('48 hours', { exact: true })).toBeVisible()

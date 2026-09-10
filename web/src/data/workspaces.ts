@@ -15,11 +15,18 @@ export interface WorkspaceList { items: Workspace[]; available_kinds: string[]; 
 
 export async function workspaceRequest<T>(token: ReviewAccess, path = '', method = 'GET', body?: WorkspaceInput, baseUrl = ''): Promise<T> {
   let response: Response
+  const deadline = AbortSignal.timeout(20_000)
   try { response = await fetch(`${baseUrl}/v1/ui/workspaces${path}`, {
     ...engineRequestOptions(token, baseUrl),
+    signal: deadline,
     method, headers: { ...accessHeaders(token), ...(body ? { 'Content-Type': 'application/json' } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
-  }) } catch { throw new Error(engineNetworkError(baseUrl)) }
+  }) } catch {
+    if (deadline.aborted) throw new Error(method === 'GET'
+      ? 'The engine took too long to respond. Check its connection and refresh.'
+      : 'The request timed out. Reload to check whether it completed before retrying.')
+    throw new Error(engineNetworkError(baseUrl))
+  }
   if (response.status === 204) return undefined as T
   const payload = await response.json()
   if (!response.ok) throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Could not save workspace. Check the fields and your connection.')

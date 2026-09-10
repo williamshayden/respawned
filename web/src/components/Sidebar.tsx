@@ -56,10 +56,6 @@ export function Sidebar(props: Props) {
         <button className={`workspace-status ${props.connected ? '' : 'is-disconnected'}`} onClick={props.onConnect}>
           <span className="status-dot" /><span>{props.connected ? 'Engine connected' : 'Setup required'}</span>
         </button>
-        <button className="profile" onClick={props.onConnect} aria-label="Workspace connection settings">
-          <span className="avatar">LO</span>
-          <span>Local operator</span><ChevronDown size={17} />
-        </button>
       </div>
     </aside>
   </>

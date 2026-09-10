@@ -1,109 +1,16 @@
-# Review modes and an external HTTP simulation
+# External HTTP connector simulation
 
-For subsequent packaging, readiness, and Docker verification, see the
-[V1 release record](V1_RELEASE.md).
+This guide reproduces the connector harness and retains its September 8, 2026
+results. It exercises synthetic mailboxes and an unsent external draft mirror,
+not a live provider or message delivery.
 
-Updated September 8, 2026. This is local implementation and synthetic verification,
-not a deployment or a connected real mailbox.
-
-## The product contract
-
-Human review is the default. A trusted operator can select automatic authorization
-in the same policy file used for eligibility and drafting:
-
-```yaml
-review:
-  mode: human  # automatic explicitly permits authorization without a reviewer
-```
-
-Omitting `review` preserves human mode. Unknown modes, extra fields, and boolean
-substitutes fail configuration validation. Email text, ingestion payloads, and
-processing request bodies cannot change this policy.
-
-| Mode | Processing result | Outbox | Audit |
-| --- | --- | --- | --- |
-| `human` | Pending draft for CLI review | No reservation until approval | Manual approval records `human` and a review time |
-| `automatic` | Valid draft automatically authorized | Unsent reservation | Records `automatic`; human review time stays null |
-
-Both authorization paths use the same copy/version checks, contact locks,
-current recipient and opportunity checks, cooldown, and reservation uniqueness.
-Automatic authorization is permission to reserve the validated copy, not proof
-that it is contextually useful. Drafting still receives limited name/tone/count
-context. Neither path sends messages.
-
-The setting applies to each CLI run or HTTP processing request. Changing to
-automatic can authorize existing pending drafts. Changing back to human affects
-later decisions; it does not revoke previously authorized reservations, change
-their provenance, or interrupt an already running batch. Rejected and approved
-history is retained.
-
-Schema initialization adds `outbox.authorization_mode` idempotently. Existing
-rows become `legacy_unknown`, because historical rows do not prove who approved
-them. Their content and other state are preserved. Initialize with the upgraded
-application before invoking its review or outbox services. Back up a persistent
-database before upgrading; this additive change does not migrate the old
-quote-specific prototype schema.
-
-## API and CLI use
-
-Ingestion remains inert: `POST /v1/ingest` only imports canonical data. Processing
-is a separate operator action:
-
-| Endpoint | Purpose |
-| --- | --- |
-| `POST /v1/process` | Sync eligible candidates, generate drafts, then follow the server's review policy |
-| `GET /v1/drafts` | Inspect pending and historical drafts |
-| `GET /v1/outbox` | Inspect reservations, including authorization provenance |
-| `GET /v1/inbox` | Inspect unanswered ingested human replies and their evidence |
-
-Processing is disabled (404) unless the server has a nonempty `RESPAWNED_PROCESS_TOKEN`.
-When enabled, it requires `Authorization: Bearer <operator-token>` (otherwise
-401). Authentication happens before resolving the database or drafting model.
-Keep this credential out of source-reader agents and external message content.
-It permits processing under current server policy; it cannot certify human
-approval. There is no remote human-approval endpoint.
-
-For a host-based development server, set the normal database/model environment,
-set a private random `RESPAWNED_PROCESS_TOKEN`, and select a policy with
-`RESPAWNED_POLICY_PATH=/absolute/path/to/policy.yaml`. Then run:
-
-```bash
-uv run --env-file .env respawned serve --host 127.0.0.1 --port 8000
-```
-
-For a local shell that already has the operator token in its environment:
-
-```bash
-curl --fail-with-body http://localhost:8000/v1/process \
-  -H "Authorization: Bearer $RESPAWNED_PROCESS_TOKEN" \
-  -H 'Content-Type: application/json' -d '{"limit": 10}'
-curl --fail-with-body 'http://localhost:8000/v1/drafts?limit=50&offset=0'
-curl --fail-with-body 'http://localhost:8000/v1/outbox?limit=50&offset=0'
-```
-
-`limit` is the only processing parameter (integer 1–50). Policy, time, and
-authorization actor are controlled by the server. The response reports
-`review_mode`, `candidate_count`, and per-item `pending`, `authorized`, `blocked`,
-or `already_reviewed` outcomes. A 200 response does not mean every item succeeded:
-inspect those outcomes. Expected model failures block individual items. Completed
-steps commit independently, so an unexpected failure can leave earlier progress
-available through the reads; retrying reuses persisted work.
-
-The CLI honors the same policy through `review --policy path/to/policy.yaml`.
-In human mode it presents copy and recipient for approve/reject/edit/skip.
-Automatic mode does not prompt and reports automatic authorizations separately.
-
-Compose passes an optional processing token and model configuration to the app.
-Enable both the `app` and `litellm` profiles for the bundled proxy, or set
-`APP_LITELLM_PROXY_URL` to a proxy reachable from the container. The default
-policy remains bundled and human. To use a custom container policy,
-mount that file read-only and set `RESPAWNED_POLICY_PATH` to its container path in a
-Compose override. The path in the host `.env` alone does not mount a file.
-
-The new reads support `limit` (1–200) and `offset`, returning `items` and `has_more`.
-These are bounded snapshot reads, not a durable change feed, delivery claim, or
-reservation cancellation API. Ingestion and reads remain unauthenticated and
-single-tenant; keep the service on loopback or a trusted private network.
+Use the [API and policy guide](API.md) for the current ingestion, processing,
+review-mode, and outbox contracts. Human policy leaves a draft pending;
+automatic policy can reserve a validated unsent message. Both use the same
+eligibility and review checks. The current application also supports protected
+human review through the bundled UI/API and richer record context than the
+original simulation build. [Integration qualification](INTEGRATION_REVIEW.md)
+records subsequent UI checks and separate optional adapter experiments.
 
 ## What the simulation connects
 
@@ -158,8 +65,8 @@ uv run --frozen python scripts/simulate_connector.py \
 ```
 
 By default, classification and copy are scripted for reproducible boundary checks.
-To use the already supported, logged-in ChatGPT Codex CLI for classification and
-drafting instead:
+The existing Codex runner can optionally supply classification and copy in an
+experiment. This is not an application setup step or release requirement:
 
 ```bash
 uv run --frozen python scripts/simulate_connector.py \
@@ -214,5 +121,6 @@ draft identity, reconciliation after ambiguous outcomes, and rules for user edit
 to exported drafts. An outbox worker additionally needs atomic claims/leases,
 delivery-result recording, cancellation, and eligibility/freshness checks at the
 point of action. No live inbox, native Gmail draft, or send has been exercised.
-Bounded drafting context and trackable records without a recipient remain the
-highest-value product improvements from the previous simulations.
+Bounded drafting context and trackable records without a recipient have since
+been implemented; the unresolved work is provider integration and durable source
+association/freshness, not a separate workflow engine.

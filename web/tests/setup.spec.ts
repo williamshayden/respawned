@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import type { ModelStatus, SetupStatus } from '../src/data/setup'
 
 const access = 'setup-test-review-access'
-const initialModel: ModelStatus = { backend: 'openai_compatible', source: 'environment', base_url: 'http://litellm:4000', model_alias: 'respawned-default', timeout_seconds: 60, api_key_env: 'LITELLM_MASTER_KEY', key_configured: false, login_ready: false, ready: false, verified: false, error: null }
+const initialModel: ModelStatus = { backend: 'openai_compatible', source: 'environment', base_url: 'http://litellm:4000', model_alias: 'respawned-default', timeout_seconds: 60, api_key_env: 'LITELLM_MASTER_KEY', key_configured: false, ready: false, verified: false, error: null }
 
 async function environment(page: Page, databaseReady = true) {
   let model = structuredClone(initialModel)
@@ -30,7 +30,7 @@ async function environment(page: Page, databaseReady = true) {
     if (path === '/v1/ui/setup/model' && method === 'PUT') {
       const payload = request.postDataJSON()
       model = { ...model, ...payload, source: 'saved', ready: true,
-        key_configured: payload.backend !== 'codex_cli', login_ready: payload.backend === 'codex_cli' }
+        key_configured: payload.backend !== 'codex_cli' }
       return route.fulfill({ json: model })
     }
     if (path === '/v1/ui/import' && method === 'POST') {
@@ -123,18 +123,21 @@ test('mobile setup keeps configuration and import controls reachable without ove
   expect(unexpected).toEqual([])
 })
 
-test('saves the Codex CLI backend without an API URL, API key, or inference request', async ({ page }) => {
+test('saves optional CLI adapter settings without claiming runtime or credential verification', async ({ page }) => {
   const { writes, unexpected } = await environment(page)
   await page.goto('/')
   await connect(page)
   const modelSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Model backend', exact: true }) })
+  await expect(modelSection.getByText('Configure the model used to generate drafts.', { exact: true })).toBeVisible()
+  await expect(modelSection.getByText('RESPAWNED_CODEX_BIN', { exact: true })).toHaveCount(0)
   await page.getByRole('combobox', { name: 'Backend', exact: true }).selectOption('codex_cli')
   await expect(page.getByLabel('API base URL')).toHaveCount(0)
   await expect(page.getByLabel('Server credential variable')).toHaveCount(0)
-  await expect(page.getByLabel('Codex model (optional)')).toHaveValue('')
-  await expect(page.getByLabel('Codex model (optional)')).not.toHaveAttribute('required')
+  await expect(page.getByLabel('Model override (optional)')).toHaveValue('')
+  await expect(page.getByLabel('Model override (optional)')).not.toHaveAttribute('required')
   await expect(page.getByLabel('Timeout (seconds)')).toHaveValue('120')
-  await expect(modelSection.getByText(/Run codex login with ChatGPT on the server/)).toBeVisible()
+  await expect(modelSection.getByText('Configured means the required settings are present. Connection and inference are unverified.', { exact: true })).toBeVisible()
+  await expect(modelSection.getByText(/login|Save to check the CLI/i)).toHaveCount(0)
   expect(writes).toEqual([])
 
   await page.getByRole('button', { name: 'Save model settings', exact: true }).click()
@@ -145,7 +148,7 @@ test('saves the Codex CLI backend without an API URL, API key, or inference requ
   } }
   expect(writes).toEqual([expectedWrite])
   await expect(modelSection.getByText('Configured', { exact: true })).toBeVisible()
-  await expect(modelSection.getByText(/Codex CLI and its ChatGPT login are available on the server/)).toBeVisible()
+  await expect(modelSection.getByText('Configured means the required settings are present. Connection and inference are unverified.', { exact: true })).toBeVisible()
   await expect(modelSection.getByText(/Using saved model settings/)).toBeVisible()
 
   await page.getByRole('button', { name: 'Refresh status', exact: true }).click()

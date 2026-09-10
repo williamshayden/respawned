@@ -210,35 +210,11 @@ separate data and settings, while workspaces within an engine remain shared view
 
 Choose a backend under **Setup → Model backend**. Non-secret settings persist in
 PostgreSQL and override environment defaults for browser drafting, API processing,
-and CLI review on the selected engine. Saving makes no model request. Existing drafts remain available
-when a provider is offline. Set your policy's sender/sign-off before real drafting.
-
-### Codex CLI with ChatGPT
-
-Install Codex on the server, run `codex login` with ChatGPT, and select **Codex
-CLI · ChatGPT login**. Leave the optional model blank to use the CLI default,
-or enter an available model. No API key is required. Setup checks the executable
-and login, while draft generation provides the actual inference check.
-
-If Codex is not on PATH, set `RESPAWNED_CODEX_BIN` to its executable and restart
-the server. `RESPAWNED_CODEX_SCRATCH_DIR` optionally selects an existing temporary
-working directory. Calling Windows Codex from WSL requires that directory to be
-on a mounted Windows drive (for example `/mnt/c/...`); these are host settings,
-not paths submitted by the browser. Codex must also be installed and logged in
-inside an application container if that is where the server runs.
-
-The packaged adapter uses `codex exec` with the existing ChatGPT login,
-`--ignore-user-config`, `--ephemeral`, a read-only sandbox, structured JSON output,
-and disabled shell, web, apps, plugins, hooks, and memories. It passes an allowlist
-of runtime/login environment variables, excluding application secrets and API
-billing overrides. Missing login, invalid output, failed turns, tool use, and
-timeouts fail the draft. The engine still validates the returned copy; Codex has
-no approval or delivery operation. The simulation harness imports this same runner.
-
-Without saved settings, select `RESPAWNED_MODEL_BACKEND=codex_cli`, optionally
-`RESPAWNED_CODEX_MODEL`, and `RESPAWNED_CODEX_TIMEOUT_SECONDS` (default 120,
-greater than zero and at most 300). Login/version checks have separate bounded
-timeouts. See the [current integration review](INTEGRATION_REVIEW.md) for evidence.
+and CLI review on the selected engine. Saving validates configuration only; it
+does not run an executable, check a login, or contact a provider. Configured status
+does not confirm connection or inference. The backend is invoked when you explicitly
+generate a draft. Existing drafts remain available without a working provider.
+Set your policy's sender/sign-off before drafting.
 
 ### OpenAI-compatible API or LiteLLM
 
@@ -249,9 +225,38 @@ the server, and restart it. The browser never accepts or returns the secret.
 For an unauthenticated local endpoint, use a local-only placeholder in the selected
 variable because the client requires a nonempty value.
 
-Configured status means a credential is present, not that inference was tested.
 The default environment backend is `openai_compatible`; existing LiteLLM variables
-continue to work. See [provider configuration](../README.md#configure-models-and-providers).
+continue to work. For the optional Compose proxy, configure
+`LITELLM_UPSTREAM_MODEL`, `LITELLM_UPSTREAM_API_KEY`, and private proxy credentials
+in `.env`, then run `docker compose --profile litellm up -d --wait`. A host process
+uses `LITELLM_PROXY_URL`; the app container uses `APP_LITELLM_PROXY_URL` because
+its `localhost` is the container itself. The adapter disables SDK retries and
+uses a per-network-operation timeout.
+
+### Optional experimental CLI adapter
+
+The existing `codex_cli` adapter remains available for opt-in experiments.
+Respawned does not require Codex, a Codex login, or a Codex-specific release check.
+Selecting or saving this backend does not execute login, version, or availability
+probes. Runtime and authentication are managed outside Respawned; a failed explicit
+draft request reports the execution failure without accepting copy.
+
+The server can use `RESPAWNED_CODEX_BIN` for an executable outside PATH and
+`RESPAWNED_CODEX_SCRATCH_DIR` for an existing temporary working directory. Calling
+a Windows executable from WSL requires scratch space on a mounted Windows drive.
+These are server settings, not paths supplied by the browser. The standard app
+image does not install the CLI or inherit host authentication.
+
+Without saved settings, `RESPAWNED_MODEL_BACKEND=codex_cli` selects this adapter;
+`RESPAWNED_CODEX_MODEL` is optional and `RESPAWNED_CODEX_TIMEOUT_SECONDS` defaults
+to 120 (greater than zero and at most 300). Explicit generation runs `codex exec`
+with structured output, an ephemeral read-only sandbox, and native tools disabled.
+Application secrets and API billing overrides are excluded from its environment.
+Invalid output, failed turns, tool use, and timeout reject the draft. The engine
+still validates accepted copy and owns all approval/outbox behavior.
+
+Earlier runs are preserved as [adapter experiments](AGENT_SIMULATIONS.md), not
+product requirements or evidence that Setup verifies a provider.
 
 ## Import records and use the outbox
 
@@ -286,6 +291,17 @@ An outbound event updates reply/cooldown state but does not identify which outbo
 row was delivered. Until a provider integration records an explicit correlated
 delivery result, that row remains an unsent reservation.
 
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| Setup loads but the database is unavailable | Confirm the running server's `DB_*` values, PostgreSQL readiness, and permissions. An installed CLI does not load `.env` automatically. |
+| Local access is locked or expired | Restart `respawned ui` and use its new one-use link. A manually entered token clears on reload. |
+| A remote engine cannot connect | Check the exact URL, HTTPS certificate, network path, reviewer token, and `RESPAWNED_UI_ORIGINS` on that server. The Connections page shows this browser's origin. |
+| Model is configured but drafting fails | Configuration does not prove inference. Check the server's selected backend, model access, credentials, and timeout. Existing drafts can still be reviewed without a model. |
+| A save/import times out | The server may have completed the write. Reconnect or refresh and inspect the saved state before retrying; the browser does not automatically repeat writes. |
+| No follow-ups are ready | Check **All tracked**, record status and recipient, recent contact/outbox cooldown, and the Policy view. Queue refresh evaluates imported facts; it does not fetch source updates. |
+
 ## Run the connected simulation
 
 The simulation exercises the real API and PostgreSQL with fictional records and
@@ -312,83 +328,34 @@ and inspect the persisted unsent outbox. The contactless application remains
 trackable without becoming a drafting candidate. Restart the harness for a fresh
 schema when repeating the complete approval walkthrough.
 
+For a walkthrough that starts from an empty engine, add `--empty`. Import
+[the canonical UI fixture](../web/tests/fixtures/ui-import.json) through
+**Setup → Records & sources**, then create a workspace and complete review in
+the browser. The fixture is synthetic test input, not application startup data.
+The automated connected test below exercises that path through the packaged UI.
+
 ## Record context
 
-Opportunity snapshots accept `kind` (default `generic`), optional `title`, and a
-bounded `context` object. Existing source payloads remain valid. For example:
+The same review layout renders job applications, sales, and arbitrary record
+kinds. Record facts and source-linked activities come from the engine. Track a
+record without a known recipient in **All tracked**, then import its complete
+snapshot with a confirmed contact when one becomes available. A contactless
+record cannot become an outreach candidate.
 
-```json
-{
-  "id": "ats:application-123",
-  "kind": "job_application",
-  "title": "Backend Engineer at Example",
-  "status": "open",
-  "created_at": "2026-09-01T15:00:00Z",
-  "context": {
-    "company": "Example",
-    "role": "Backend Engineer",
-    "stage": "Applied",
-    "summary": "Application received; no human contact is known.",
-    "source_url": "https://example.com/applications/123"
-  }
-}
-```
-
-This record intentionally has neither `contact_key` nor a contact route. Once a
-recipient is confirmed, ingest a complete replacement snapshot with its stable
-contact identity and email or phone route. Company/role labels do not merge
-records or establish contact identity. Multiple applications at the same company
-remain distinct records.
-
-Context accepts only `company`, `role`, `stage`, `summary`, `expected_reply_at`,
-and `source_url`. The expected reply must include a timezone offset; links must
-use HTTP(S). See the [ingestion contract](../README.md#3-add-data) for bounds.
-Omitted snapshot fields are cleared, so resubmit optional facts that should stay.
-
-Activities accept `summary`, `source_url`, and `classification` with values
-`human`, `automated`, or `unknown` (default). Mark an automated confirmation as
-`automated`. Explicit human inbound events count as responses even with a
-source-specific activity type. Legacy `contact_replied` events retain their old
-meaning unless explicitly automated; the reply inbox also requires inbound
-direction. Immutable activity IDs cannot be reused with changed classification
-or content.
-
-Drafting receives only the selected kind, title, company, role, stage, and bounded
-summary alongside the existing contact/tone/sender context. Source links, raw
-activity feeds, expected timestamps, and monetary values are not added to the
-draft payload. Source facts are treated as data, not instructions.
+Use the [canonical record example and field bounds](API.md#ingest-records) for
+imports. Mark automated receipts as `automated` and human inbound correspondence
+as `human`; company labels and receipt addresses do not establish contact identity.
 
 ## Follow-up rules
 
-The bundled policy enables `application_no_update` after 7 calendar days in the
-configured business timezone without a human update or outbound, and
-`promised_update_overdue` after an expected
-reply date with a 1-calendar-day grace period. Strength matures over configurable
-14-day and 7-day horizons respectively. A newer human reply or outbound at or
-after the promised deadline suppresses that old promise. Contact-wide cooldown,
-closed/expired exclusions, and approval checks still apply.
+The UI displays policy and the engine's reason for each follow-up. The server
+owns eligibility, ranking, cooldowns, and review authority; workspaces do not
+override them. Job applications are excluded from monetary ranking. The bundled
+policy includes application-no-update and overdue-promised-reply rules.
 
-Job applications do not participate in monetary ranking or the high-value reason.
-Other existing generic rules remain available. The generic `awaiting_reply`
-evaluator is implemented but disabled by default to preserve existing policy
-behavior. Add an entry under `reasons` in a custom policy to enable it:
-
-```yaml
-reasons:
-  awaiting_reply:
-    evaluator: awaiting_reply
-    base_score: 40
-    tone: courteous and concise
-    params:
-      minimum_days: 7
-      horizon_days: 14
-```
-
-Keep the rest of the policy's required settings and any other desired reasons.
-`minimum_days` controls the wait after outbound with no subsequent human reply;
-`horizon_days` controls signal-strength growth after that threshold. HTTP reads
-the custom policy through `RESPAWNED_POLICY_PATH`; CLI commands accept `--policy`.
-The server owns policy; the UI displays it without accepting policy changes.
+See [policy and drafting context](API.md#policy-and-drafting-context) for defaults,
+custom policy files, the optional `awaiting_reply` rule, and the facts supplied to
+the drafting backend. Configure the sender/sign-off in the policy before drafting.
 
 ## Frontend development and bundled assets
 
@@ -459,17 +426,26 @@ npm run test:e2e
 ```
 
 CI verifies bundle freshness and runs frontend checks with Node.js 22.20.0.
-Ordinary browser tests use controlled HTTP fixtures; the real PostgreSQL browser
-test is skipped unless explicitly enabled. To run it, start a fresh simulation
-on port 8001 as above, stop any existing Vite server on 5173, then run:
+Ordinary browser tests use controlled HTTP fixtures; the connected PostgreSQL
+test is skipped unless explicitly enabled. For that test, first build the bundle
+and start a fresh, empty simulation from the repository root:
 
 ```bash
-RESPAWNED_API_URL=http://127.0.0.1:8001 RESPAWNED_LIVE_UI_TEST=1 \
+uv run python scripts/serve_ui_simulation.py --empty --port 8001 \
+  --postgres-url 'postgresql+psycopg2://user:password@127.0.0.1:5432/test_database'
+```
+
+Then, in a separate shell from `web`:
+
+```bash
+RESPAWNED_LIVE_UI_TEST=1 RESPAWNED_LIVE_UI_URL=http://127.0.0.1:8001 \
   npm run test:e2e -- tests/live-ui.spec.ts
 ```
 
-Playwright starts Vite. That test saves, approves, and verifies one synthetic
-draft in PostgreSQL, so it expects a fresh simulation schema. Screenshots/traces
-go to temporary output paths, not versioned project files. These checks establish
-local behavior; they do not prove mailbox integration, source completeness,
-delivery, or a successful hosted deployment.
+The test connects directly to the packaged app. It imports the shared JSON
+fixture, creates a workspace, reviews a draft, and checks the unsent outbox through
+browser interactions. It uses no API request fixture or SQL shortcut; model
+generation remains stubbed by the harness. Each complete run requires a fresh
+empty schema. Screenshots and traces go to temporary output paths, not versioned
+project files. These checks establish local application behavior; they do not
+prove mailbox integration, source completeness, delivery, or a hosted deployment.

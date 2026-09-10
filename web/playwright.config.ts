@@ -2,6 +2,8 @@ import { defineConfig, devices } from '@playwright/test'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+const liveUrl = process.env.RESPAWNED_LIVE_UI_URL
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
@@ -13,12 +15,12 @@ export default defineConfig({
   reporter: 'list',
   outputDir: process.env.RESPAWNED_TEST_OUTPUT_DIR || join(tmpdir(), 'respawned-playwright'),
   use: {
-    baseURL: 'http://127.0.0.1:5173',
+    baseURL: liveUrl || 'http://127.0.0.1:5173',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1000 } } }],
-  webServer: {
+  webServer: liveUrl ? undefined : {
     command: 'npm run dev',
     url: 'http://127.0.0.1:5173',
     reuseExistingServer: !process.env.CI,

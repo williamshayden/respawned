@@ -36,7 +36,7 @@ async function environment(page: Page) {
     if (url.pathname === '/v1/ui/setup') return json({
       database: { status: 'ready', message: 'PostgreSQL is available' },
       review: { enabled: true, authentication: remote ? 'bearer' : 'local_session', token_env: 'RESPAWNED_REVIEW_TOKEN' },
-      model: { backend: 'codex_cli', source: 'environment', base_url: '', model_alias: '', timeout_seconds: 120, api_key_env: 'LITELLM_MASTER_KEY', key_configured: false, login_ready: true, ready: true, verified: false, error: null },
+      model: { backend: 'openai_compatible', source: 'environment', base_url: 'https://model.example/v1', model_alias: 'configured-model', timeout_seconds: 60, api_key_env: 'LITELLM_MASTER_KEY', key_configured: true, ready: true, verified: false, error: null },
       outbox: { mode: 'export_only', automatic_delivery: false, export_url: '/v1/ui/outbox/export' }, sources: { mode: 'api_import', import_url: '/v1/ui/import' },
     })
     if (url.pathname === '/v1/ui/config') return json({ policy_mode: 'human', cooldown_hours: 48, max_draft_characters: 320, source_freshness: 'unknown' })

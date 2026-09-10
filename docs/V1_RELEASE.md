@@ -1,4 +1,10 @@
-# V1 release record
+# Historical V1 release record — before the bundled UI
+
+This records the September 9 Python qualification at `a0adc80`, before the
+Respawned rename and UI were merged. The artifact names, hashes, counts, and
+limitations below belong to that run. They are retained as evidence; use the
+[integration review](INTEGRATION_REVIEW.md) for the current application and
+[README](../README.md) for installation.
 
 Prepared September 9, 2026. Package version: **1.0.0**. This record prepares a
 local release candidate; it does not announce publication or deployment.

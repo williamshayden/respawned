@@ -1,0 +1,100 @@
+{
+  "opportunities": [
+    {
+      "id": "northstar-backend",
+      "kind": "job_application",
+      "title": "Backend Engineer at Northstar",
+      "status": "open",
+      "created_at": "2026-08-25T14:00:00Z",
+      "contact_key": "simulation:maya",
+      "contact_name": "Maya Chen",
+      "contact_email": "maya@northstar.example",
+      "preferred_channel": "email",
+      "context": {
+        "company": "Northstar",
+        "role": "Backend Engineer",
+        "stage": "Interviewing",
+        "expected_reply_at": "2026-09-05T17:00:00Z",
+        "summary": "Completed the team interview; Maya expected to share next steps on September 5.",
+        "source_url": "https://example.com/simulation/northstar-backend"
+      }
+    },
+    {
+      "id": "evergreen-proposal",
+      "kind": "sales",
+      "title": "Website project for Evergreen",
+      "status": "open",
+      "created_at": "2026-08-28T15:00:00Z",
+      "contact_key": "simulation:alex",
+      "contact_name": "Alex Rivera",
+      "contact_email": "alex@evergreen.example",
+      "preferred_channel": "email",
+      "owner_name": "Jordan",
+      "value": 8400,
+      "context": {
+        "company": "Evergreen",
+        "stage": "Proposal sent",
+        "source_url": "https://example.com/simulation/evergreen-proposal"
+      }
+    },
+    {
+      "id": "northstar-platform",
+      "kind": "job_application",
+      "title": "Platform Engineer at Northstar",
+      "status": "open",
+      "created_at": "2026-09-01T15:00:00Z",
+      "context": {
+        "company": "Northstar",
+        "role": "Platform Engineer",
+        "stage": "Applied",
+        "source_url": "https://example.com/simulation/northstar-platform"
+      }
+    }
+  ],
+  "activities": [
+    {
+      "id": "maya:interview-update",
+      "opportunity_id": "northstar-backend",
+      "type": "contact_replied",
+      "direction": "inbound",
+      "channel": "email",
+      "occurred_at": "2026-09-02T15:30:00Z",
+      "classification": "human",
+      "summary": "Thanks for meeting the team. I expect to share next steps by September 5.",
+      "source_url": "https://example.com/simulation/mail/maya-update"
+    },
+    {
+      "id": "maya:acknowledged",
+      "opportunity_id": "northstar-backend",
+      "type": "message_sent",
+      "direction": "outbound",
+      "channel": "email",
+      "occurred_at": "2026-09-03T14:00:00Z",
+      "classification": "human",
+      "summary": "Thank you, Maya. I enjoyed the discussion and look forward to hearing about next steps.",
+      "source_url": "https://example.com/simulation/mail/maya-thanks"
+    },
+    {
+      "id": "alex:question",
+      "opportunity_id": "evergreen-proposal",
+      "type": "email_received",
+      "direction": "inbound",
+      "channel": "email",
+      "occurred_at": "2026-09-08T16:00:00Z",
+      "classification": "human",
+      "summary": "The proposal looks good. Could we discuss the timeline this week?",
+      "source_url": "https://example.com/simulation/mail/alex-question"
+    },
+    {
+      "id": "platform:receipt",
+      "opportunity_id": "northstar-platform",
+      "type": "application_received",
+      "direction": "inbound",
+      "channel": "email",
+      "occurred_at": "2026-09-01T15:01:00Z",
+      "classification": "automated",
+      "summary": "We received your application. This automated mailbox does not accept replies.",
+      "source_url": "https://example.com/simulation/mail/platform-receipt"
+    }
+  ]
+}

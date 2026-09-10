@@ -3,6 +3,13 @@
 Updated September 8, 2026. These are exploratory local runs with synthetic
 correspondence, not a live-mailbox integration or a reliability benchmark.
 
+The results and proposed next slices below describe that earlier implementation.
+Bounded drafting context and contactless tracking have since been implemented.
+The existing Codex adapter is retained for optional experiments; these runs do
+not define a product dependency or release requirement. Setup does not test a
+Codex runtime or login. See [backend configuration](WEB_UI.md#connect-a-model-backend)
+and the [integration review](INTEGRATION_REVIEW.md) for current behavior.
+
 ## What actually ran
 
 Three agents used headless Codex in a host-mediated tool loop. Each model turn
@@ -74,7 +81,7 @@ It shares the current open/expired exclusions. The CLI supports a selected polic
 HTTP uses the server policy (`RESPAWNED_POLICY_PATH`, or the bundled policy by default). The view reduces existing stored state,
 caps output at 200 routes, and reports truncation without pagination.
 
-## Highest-value next slices
+## Priorities identified by this run
 
 | Priority | Improvement | Small, reviewable acceptance target |
 | --- | --- | --- |
@@ -90,6 +97,7 @@ than the proposed application-tracking product.
 
 ## Reproduce or replay
 
+This is an opt-in experiment, separate from application setup and release checks.
 Use a development checkout with locked dependencies, an existing test PostgreSQL
 database, and a logged-in Codex CLI. Live execution consumes Codex usage. It does
 not use or provision an API key. Set `SIMULATION_POSTGRES_URL` as described in

@@ -15,6 +15,26 @@ def simulation(monkeypatch):
     return importlib.import_module("simulate_agents")
 
 
+@pytest.mark.parametrize("report", [None, {}, {"codex_version": "recorded-runtime-version"}])
+def test_replay_preserves_optional_recorded_metadata_without_runtime_probes(
+    simulation, tmp_path, monkeypatch, report
+):
+    if report is not None:
+        (tmp_path / "results.json").write_text(json.dumps(report), encoding="utf-8")
+    case = tmp_path / "recorded-case"
+    case.mkdir()
+    action = {"tool": "read_messages", "arguments_json": "{}"}
+    (case / "trace.json").write_text(json.dumps([{"action": action}]), encoding="utf-8")
+    monkeypatch.setattr(simulation.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("Unexpected runtime probe"))
+
+    replay = simulation.ReplayCodex(tmp_path)
+    assert replay.version == (report or {}).get("codex_version")
+    assert replay.calls == []
+    result = replay.ask("Replay the saved decision", simulation.Action, case / "turn-1")
+    assert result.model_dump() == action
+    assert replay.calls == [{"replayed": True, "source": str(tmp_path), "step": str(case / "turn-1")}]
+
+
 @pytest.mark.parametrize("shift_timestamp", [False, True])
 def test_oracle_accepts_equal_instants_but_rejects_changed_source_time(
     simulation, postgres_engine, tmp_path, shift_timestamp
@@ -51,7 +71,7 @@ def test_oracle_accepts_equal_instants_but_rejects_changed_source_time(
 def test_codex_failure_rejects_even_a_valid_output_file(
     simulation, tmp_path, monkeypatch, failure
 ):
-    # Avoid authentication entirely: this checks subprocess failure handling only.
+    # Construct directly to isolate explicit subprocess failure handling.
     runner = simulation.Codex.__new__(simulation.Codex)
     runner.binary, runner.scratch, runner.timeout = "codex", tmp_path, 1
     runner.env, runner.calls = {}, []

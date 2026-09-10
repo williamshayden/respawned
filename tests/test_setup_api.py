@@ -126,7 +126,7 @@ def test_saved_model_configuration_is_shared_and_never_returns_secrets(setup_api
     monkeypatch.setenv("RESPAWNED_MODEL_API_KEY", "private-selected-key")
     response = client.put("/v1/ui/setup/model", headers=HEADERS, json=MODEL)
     assert response.status_code == 200, response.text
-    assert response.json() == {**MODEL, "backend": "openai_compatible", "login_ready": False, "source": "saved", "key_configured": True,
+    assert response.json() == {**MODEL, "backend": "openai_compatible", "source": "saved", "key_configured": True,
                                "ready": True, "verified": False, "error": None}
     assert "private" not in response.text
     status = client.get("/v1/ui/setup", headers=HEADERS).json()
@@ -150,6 +150,27 @@ def test_saved_model_configuration_is_shared_and_never_returns_secrets(setup_api
         configured_adapter(connection)
 
 
+def test_command_backend_setup_saves_configuration_without_constructing_or_probing_runtime(setup_api, monkeypatch):
+    from respawned.llm import codex
+
+    client, _connection = setup_api
+    monkeypatch.setenv("RESPAWNED_CODEX_BIN", "/missing/optional-command")
+    monkeypatch.setenv("RESPAWNED_CODEX_SCRATCH_DIR", "/missing/optional-scratch")
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Setup must not construct or execute an optional model backend")
+
+    monkeypatch.setattr(codex, "CodexRunner", forbidden)
+    monkeypatch.setattr(codex.subprocess, "run", forbidden)
+    response = client.put("/v1/ui/setup/model", headers=HEADERS, json={"backend": "codex_cli"})
+    assert response.status_code == 200, response.text
+    status = response.json()
+    assert status["ready"] is True and status["verified"] is False
+    assert status["key_configured"] is False and status["error"] is None
+    assert "login_ready" not in status
+    assert client.get("/v1/ui/setup", headers=HEADERS).json()["model"] == status
+
+
 def test_api_and_cli_use_shared_saved_settings(setup_api, monkeypatch):
     client, connection = setup_api
     monkeypatch.setenv("RESPAWNED_MODEL_API_KEY", "local-placeholder")
@@ -165,15 +186,30 @@ def test_api_and_cli_use_shared_saved_settings(setup_api, monkeypatch):
         assert api_module.get_workflow_adapter().model_alias == MODEL["model_alias"]
     monkeypatch.setattr(review, "get_engine", lambda: engine)
     monkeypatch.setattr(review, "create_tables", lambda _engine: None)
-    captured = []
+    resolutions, completions = [], []
+    messages = [{"role": "user", "content": "Draft from the saved backend"}]
+    updated_model = {**MODEL, "model_alias": "generation-time-model"}
+
+    def resolve_at_generation(current_connection):
+        resolutions.append(current_connection)
+        adapter = configured_adapter(current_connection)
+        return replace(adapter, completion_fn=lambda **kwargs: (
+            completions.append(kwargs) or {"choices": [{"message": {"content": "Configured copy"}}]}
+        ))
+
+    monkeypatch.setattr(review, "configured_adapter", resolve_at_generation)
 
     def run(_engine, **kwargs):
-        captured.append(kwargs["adapter"])
+        assert resolutions == completions == []  # Opening review needs no model configuration.
+        assert client.put("/v1/ui/setup/model", headers=HEADERS, json=updated_model).status_code == 200
+        assert kwargs["adapter"].complete(messages) == "Configured copy"
         return review.ReviewSummary()
 
     monkeypatch.setattr(review, "run_review", run)
     assert review.main([]) == 0
-    assert captured[0].model_alias == MODEL["model_alias"]
+    assert resolutions == [connection]
+    assert completions == [{"model": updated_model["model_alias"], "messages": messages,
+                            "base_url": MODEL["base_url"], "api_key": "local-placeholder"}]
 
 
 def test_environment_fallback_preserves_existing_cli_configuration(setup_api, monkeypatch):

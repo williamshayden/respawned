@@ -1,9 +1,10 @@
 # V1 release checks and existing-database migration
 
-Updated September 9, 2026. The release target is a local Respawned with
-human review by default and explicit operator-selected automatic authorization. The outbox records reservations; it does not deliver messages. This file
-is the migration procedure. The current [release record](V1_RELEASE.md) separates
-completed qualification from publication and from migration of an existing installation.
+This is the database storage migration procedure, with repair evidence recorded
+September 9, 2026. It applies to existing installations independently of the
+current feature set. Use the [README](../README.md) for a fresh installation and
+the [integration review](INTEGRATION_REVIEW.md) for current qualification. The
+[pre-UI release record](V1_RELEASE.md) preserves earlier artifacts and hashes.
 
 ## Repairs and verification boundaries
 
@@ -134,8 +135,9 @@ They are operator-run steps, not an automatic migration script.
 
 ## Qualification and publication
 
-The reusable verification commands and actual results are in the
-[release record](V1_RELEASE.md). Qualify a clean Docker build, process liveness
+The current application evidence is in the [integration review](INTEGRATION_REVIEW.md);
+earlier artifact results remain in the [release record](V1_RELEASE.md).
+Qualify a clean Docker build, process liveness
 and database readiness, the installed wheel and sdist, source replay, container
 replacement persistence, and dump/restore before publishing the local V1.
 
@@ -148,8 +150,9 @@ column while preserving existing outbox content; historical rows become
 `legacy_unknown`. Review and export changes should be used only after applying
 the current canonical schema with `init` or normal API startup.
 
-Remote access remains outside the local V1 promise. Successful synthetic tests
-do not establish a live mailbox integration, automatic scheduling, contextual
+Remote UI connections require the [documented reviewer access and origin setup](WEB_UI.md#add-an-engine-connection).
+Legacy API routes still need a trusted network or authenticated proxy. Successful
+synthetic tests do not establish a live mailbox integration, automatic scheduling, contextual
 model quality, or actual provider delivery. Publication must target the exact
 reviewed commit and artifacts; do not tag an older `main` revision merely because
 its package metadata also says `1.0.0`.
