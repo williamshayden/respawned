@@ -141,7 +141,7 @@ def shell(title: str, body: str, path: str, sections: list[tuple[str, str]], rev
 <title>{escape(title)} · Respawned</title><meta name="description" content="Install Respawned and use its browser, CLI, and API to organize follow-up records, review drafts, and export approved messages.">
 <link rel="canonical" href="{ORIGIN}{escape(path)}"><link rel="stylesheet" href="/assets/docs.css"><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><script src="/assets/docs.js" defer></script>
 </head><body><a class="skip-link" href="#content">Skip to content</a>
-<header class="site-header"><a class="brand" href="/">Respawned</a><nav aria-label="External links"><a href="{REPO}">GitHub <span aria-hidden="true">↗</span></a><a href="/install.sh">View installer</a></nav></header>
+<header class="site-header"><a class="brand" href="/">Respawned</a><nav aria-label="External links"><a href="https://williamshayden.com/" aria-label="Back to williamshayden.com" title="Back to williamshayden.com">← Portfolio</a><a href="{REPO}">GitHub <span aria-hidden="true">↗</span></a><a href="/install.sh">View installer</a></nav></header>
 <div class="layout">{sidebar}<div class="reading-column">{mobile}<main id="content">{body}</main>
 <footer><a href="{REPO}/tree/{revision}">Documentation source · {revision[:7]}</a><a href="/release.json">Package provenance</a></footer></div></div>
 </body></html>'''
