@@ -15,31 +15,61 @@ Respawned does not connect a mailbox, schedule source updates, or send messages.
 Some legacy API routes are unauthenticated, so use loopback or a trusted network.
 Workspaces are views within an engine, not separate accounts.
 
-## Quickstart
+## Install and start
 
-You need Python 3.12+, [uv](https://docs.astral.sh/uv/), and PostgreSQL.
-The commands below start PostgreSQL with Docker Compose v2; an existing database
-also works. The qualified environment is Linux, including WSL2 with Docker Desktop.
+The preferred download location is
+[respawned.williamshayden.com](https://respawned.williamshayden.com/).
+**Hosting is pending.** The installer and versioned packages have been verified
+locally; the website URLs below have not been deployed or verified as public
+downloads. No repository clone will be needed for the packaged app.
+
+The shell installer requires Python 3.12+ with `venv` and `ensurepip`, and `curl`.
+It supports Linux, macOS, or WSL; the verified installation environment is
+Ubuntu/WSL with Python 3.12.3. PostgreSQL is a separate prerequisite.
+
+After the files are hosted, download the installer for review and run it:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsS \
+  https://respawned.williamshayden.com/install.sh -o install-respawned.sh
+# Read install-respawned.sh before running it.
+sh install-respawned.sh
+export PATH="$HOME/.local/bin:$PATH"
+respawned --version
+```
+
+For a one-line installation after reviewing the script:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsS https://respawned.williamshayden.com/install.sh | sh
+```
+
+The installer verifies the pinned wheel's SHA-256 digest, creates a private
+environment at `~/.local/share/respawned/1.0.0`, and adds
+`~/.local/bin/respawned`. It refuses to overwrite unrelated commands or directories
+and does not edit shell startup files. Use `sh install-respawned.sh --prefix
+/absolute/path` for another location. The package includes the CLI, HTTP API,
+and built browser UI; Node.js, npm, and sudo are not needed. Python dependencies
+are resolved from PyPI using the wheel's declarations.
+
+Create a PostgreSQL database and user, then set its connection values in the
+terminal that will run Respawned:
+
+```sh
+export DB_HOST=127.0.0.1
+export DB_PORT=5432
+export DB_NAME=respawned
+export DB_USER=respawned
+export DB_PASSWORD='your-database-password'
+respawned init
+respawned ui
+```
+
+Replace the example credentials with your database's values. The CLI does not
+automatically load `.env`; retain these settings in your shell or service
+configuration. Back up existing data before upgrading and follow the
+[database migration guide](docs/RELEASE_CHECKS.md) for older installations.
 No model credentials are needed to start, import records, or inspect work.
-
-From the repository root:
-
-```bash
-cp .env.example .env
-uv sync --frozen
-```
-
-In PowerShell, use `Copy-Item .env.example .env`. Edit the database values in
-`.env`, including `DB_PASSWORD`. For an existing database, use its current
-credentials, database name, and port. Before recreating an older Compose
-installation, follow the [database migration guide](docs/RELEASE_CHECKS.md).
-
-Start only the database, then launch the local app:
-
-```bash
-docker compose --profile postgres up -d --wait db
-uv run --env-file .env respawned ui
-```
 
 `respawned ui` opens the bundled app at <http://127.0.0.1:8000> with review access
 connected. No manual token is needed. Use `--port 8001` if the port is occupied,
@@ -60,37 +90,17 @@ Normal startup creates no sample records.
 Approval and export do not deliver a message. See the [outbox workflow](docs/WEB_UI.md#import-records-and-use-the-outbox)
 for recording actual outbound activity after manual delivery.
 
-Stop the CLI with Ctrl+C. Stop the database with
-`docker compose --profile postgres down`; named volumes remain. Do not add
-`--volumes` when shutting down an installation you intend to keep.
-
-### Run the application in Docker instead
-
-Choose this instead of the local `respawned ui` process; both default to port
-8000. In `.env`, set `RESPAWNED_REVIEW_TOKEN` to a random operator password. You
-can generate a value with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
-Then:
-
-```bash
-docker compose --profile app up -d --build --wait
-curl --fail http://127.0.0.1:8000/readyz
-```
-
-Open <http://127.0.0.1:8000> and enter that token in **Setup → Review access**.
-Manual tokens stay in tab memory and clear on reload. An empty review token
-keeps the protected UI operations disabled in ordinary server mode.
-The image already contains the UI. The optional model service is separate.
-
-`/readyz` checks the database, schema, and policy; `/healthz` checks process
-liveness. Neither proves model availability or fresh source data. Stop services
-with `docker compose --profile app --profile litellm down`, preserving volumes.
+Stop the CLI with Ctrl+C; PostgreSQL is managed separately. Developers can use
+the [source checkout workflow](#developer-source-checkout) below while website
+hosting is pending.
 
 ## Model backends
 
 In **Setup → Model backend**, configure your chosen drafting service. The default
 adapter accepts an OpenAI-compatible API URL, model or proxy alias, timeout, and
-credential environment variable. LiteLLM is optional; the `litellm` Compose profile
-supplies a proxy after its upstream model and key are configured in `.env`.
+credential environment variable. LiteLLM is optional. For source checkouts, the
+`litellm` Compose profile supplies a proxy after its upstream model and key are
+configured in `.env`.
 
 Saved model settings apply to the browser, CLI, and API on that engine. Credentials
 remain on the server. Saving validates configuration only; it does not test a
@@ -101,15 +111,15 @@ for the available adapters, including the optional experimental CLI adapter.
 
 ## CLI and API
 
-Use the same database environment as the app. The CLI does not load `.env`
-automatically; `uv run --env-file .env` does that in these checkout examples:
+Use the same database environment as the app. The CLI connects directly to
+PostgreSQL and does not load `.env` automatically:
 
 ```bash
-uv run --env-file .env respawned sync --dry-run
-uv run --env-file .env respawned sync --limit 10
-uv run --env-file .env respawned review
-uv run --env-file .env respawned inbox --json
-uv run --env-file .env respawned outbox --path exports/outbox.csv
+respawned sync --dry-run
+respawned sync --limit 10
+respawned review
+respawned inbox --json
+respawned outbox --path exports/outbox.csv
 ```
 
 `sync` publishes eligible candidates without drafting. `review` generates missing
@@ -122,30 +132,75 @@ review versions, pagination, and retry behavior.
 For an API server without the browser interface:
 
 ```bash
-uv run --env-file .env respawned serve --api-only
+respawned serve --api-only
 ```
 
 Interactive endpoint schemas are at <http://127.0.0.1:8000/docs>. Protected review
 routes use `RESPAWNED_REVIEW_TOKEN`; the separate `RESPAWNED_PROCESS_TOKEN` enables
 policy-controlled processing and does not grant human approval authority.
 
-## Install a built artifact
+## Direct package installation
 
-With Python 3.12+, install a downloaded or locally built wheel into a virtual
-environment, set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD`, then
-run the app:
+After website hosting is enabled, the pinned wheel can also be installed in an
+existing Python 3.12+ virtual environment:
 
-```bash
-python -m venv .venv
-# Activate .venv for your shell before the following commands.
-python -m pip install /path/to/respawned-1.0.0-py3-none-any.whl
-respawned init
-respawned ui
+```sh
+python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-1.0.0-py3-none-any.whl#sha256=d96057181619f71bfff3e99430a0111f7f86a26ecf130c4fd1a887e71d52ac03'
 ```
 
-The source distribution also includes prebuilt assets; installation does not run
-npm. Package version `1.0.0` is not a claim that an artifact has been published.
-See [integration qualification](docs/INTEGRATION_REVIEW.md) for recorded checks.
+The planned source archive is
+`https://respawned.williamshayden.com/downloads/respawned-1.0.0.tar.gz`.
+Both formats include the prebuilt UI. A supplied local wheel also works with
+`python -m pip install /path/to/respawned-1.0.0-py3-none-any.whl`. Set the database
+environment above before running `respawned init` and `respawned ui`.
+These planned URLs and package version `1.0.0` are not publication claims.
+
+## Developer source checkout
+
+Cloning is for development or source-based operation. With repository access,
+Python 3.12+, [uv](https://docs.astral.sh/uv/), and Docker Compose v2:
+
+```bash
+git clone https://github.com/williamshayden/respawned.git
+cd respawned
+cp .env.example .env
+uv sync --frozen
+```
+
+Reuse an existing checkout and `.env` if present. In PowerShell, use
+`Copy-Item .env.example .env`. Set the database values in `.env`, including
+`DB_PASSWORD`. Start only the database, then the local app:
+
+```bash
+docker compose --profile postgres up -d --wait db
+uv run --env-file .env respawned ui
+```
+
+For an existing PostgreSQL server, use its credentials and skip the Compose
+command. Prefix other checkout CLI commands with `uv run --env-file .env` to
+load that environment. Stop the database with `docker compose --profile postgres
+down`; named volumes remain. Do not add `--volumes` when preserving data.
+
+### Run the checkout in Docker
+
+Use this instead of the local `respawned ui` process; both default to port 8000.
+Set `RESPAWNED_REVIEW_TOKEN` in `.env` to a random operator password, for example
+one generated with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+Then:
+
+```bash
+docker compose --profile app up -d --build --wait
+curl --fail http://127.0.0.1:8000/readyz
+```
+
+Open <http://127.0.0.1:8000> and enter the token in **Setup → Review access**.
+Manual tokens stay in tab memory and clear on reload. An empty review token
+keeps protected UI operations disabled in ordinary server mode. The image
+contains the UI; the optional model service is separate.
+
+`/readyz` checks the database, schema, and policy; `/healthz` checks process
+liveness. Neither proves model availability or fresh source data. Stop services
+with `docker compose --profile app --profile litellm down`, preserving volumes.
 
 ### Upgrade from Follow-up Engine
 
@@ -158,7 +213,8 @@ renaming a checkout directory, preserve its Compose project name with
 Back up before upgrading, run `respawned init`, then `respawned sync` to publish a
 fresh queue. Canonical upgrades add schema fields without rewriting old messages;
 the quote-specific prototype requires [separate migration](docs/RELEASE_CHECKS.md).
-The GitHub repository URL and historical evidence names retain their old spelling.
+The repository is now [williamshayden/respawned](https://github.com/williamshayden/respawned).
+Historical evidence names retain their original spelling.
 
 ## Documentation and development
 

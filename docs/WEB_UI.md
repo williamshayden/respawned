@@ -54,18 +54,25 @@ test utilities and are not imported by the application entry point.
 
 ## Start the application
 
-Configure PostgreSQL using the [root quickstart](../README.md#quickstart), then:
+The preferred package download location is
+[respawned.williamshayden.com](https://respawned.williamshayden.com/).
+**Website hosting is pending**; its installer and package URLs are planned, not
+currently verified public downloads. Follow the [installation guide](../README.md#install-and-start)
+for the prepared installer, Python prerequisites, and separate PostgreSQL setup.
+The packaged app needs no repository clone, Node.js, or npm.
+
+After installing and setting the database environment, run:
 
 ```bash
-uv sync --frozen
-uv run --env-file .env respawned ui
+respawned ui
 ```
 
-After installing a wheel or source distribution, set the database environment
-and run `respawned ui` directly. The CLI binds `127.0.0.1:8000` and opens the
-bundled UI with an authenticated session. No review token needs to be generated
-or copied. Use `--port 8001` for another port, or `--no-open` to print a link
-for a browser on this machine. The launcher checks the port before printing it.
+The CLI binds `127.0.0.1:8000` and opens the bundled UI with an authenticated
+session. No review token needs to be generated or copied. Use `--port 8001` for
+another port, or `--no-open` to print a link for a browser on this machine. The
+launcher checks the port before printing it. The CLI does not automatically load
+`.env`; developers using a [source checkout](../README.md#developer-source-checkout)
+can run `uv run --env-file .env respawned ui` instead.
 
 The one-use link expires after five minutes. The browser immediately removes
 its secret fragment and exchanges it for an HttpOnly, SameSite=Strict cookie.
@@ -277,8 +284,9 @@ connect a mailbox or establish source freshness.
 
 Review the record, generate a draft when eligible, edit and save it as needed,
 then choose **Approve to outbox**. The **Outbox** shows the resulting unsent
-reservation. Download CSV or JSON from the outbox, or export CSV with
-`respawned outbox --path outbox.csv`. Browser, API, and CLI use the same 12-field
+reservation. Download CSV from the outbox, or export CSV with
+`respawned outbox --path outbox.csv`. The authenticated HTTP export also supports
+JSON. Browser, API, and CLI use the same 12-field
 CSV formatter. CSV prefixes cells that could be interpreted as spreadsheet
 formulas; use JSON to preserve the exact original strings. Authenticated clients
 can use `GET /v1/outbox/export?format=json|csv`; the UI alias is

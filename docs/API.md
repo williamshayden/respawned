@@ -124,11 +124,18 @@ integration establishes it.
 
 ## Candidate and review workflow
 
+Use the installed CLI with the same database environment as the server. The
+[installation guide](../README.md#install-and-start) covers the planned website
+downloads and PostgreSQL setup; no source checkout is needed for the packaged CLI.
+
 ```bash
-uv run --env-file .env respawned sync --dry-run
-uv run --env-file .env respawned sync --limit 10
-uv run --env-file .env respawned review
+respawned sync --dry-run
+respawned sync --limit 10
+respawned review
 ```
+
+The CLI connects directly to PostgreSQL and does not load `.env` automatically.
+For a developer checkout, prefix these commands with `uv run --env-file .env`.
 
 Dry-run sync does not write candidates or a sync run. Real sync publishes up to
 ten eligible contact groups by default. Reviewed history and active outbox
