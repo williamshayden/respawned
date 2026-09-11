@@ -4,13 +4,13 @@ Track follow-ups, review drafts, and record confirmed sends from your own tools.
 
 The browser, CLI, and Python SDK call the same HTTP API. The engine stores records in PostgreSQL and owns policy, validation, review, and outbox state. Your agent can supply draft text or request a configured model.
 
-[Documentation](https://respawned.williamshayden.com/) · [Agent guide](docs/AGENT_INTEGRATION.md) · [Agent prompt](docs/agent-prompt.txt) · [API reference](docs/API.md)
+[Documentation](https://respawned.williamshayden.com/) · [Agent guide](https://respawned.williamshayden.com/agent-integration/) · [Agent prompt](https://respawned.williamshayden.com/agent-prompt.txt) · [API reference](https://respawned.williamshayden.com/api/)
 
 ## Install and start
 
 The package includes the CLI, API, SDK, and prebuilt browser UI. The installer needs `curl`, a POSIX shell, and Python 3.12+ with `venv` and `ensurepip`. It supports Linux, macOS, and WSL; release qualification runs on Linux. PostgreSQL is a separate engine requirement.
 
-[View installer](https://respawned.williamshayden.com/install.sh) · [Download package](https://respawned.williamshayden.com/downloads/respawned-2.0.0-py3-none-any.whl) · [Checksums](https://respawned.williamshayden.com/SHA256SUMS)
+[View installer](https://respawned.williamshayden.com/install.sh) · [Download package](https://respawned.williamshayden.com/downloads/respawned-2.1.0-py3-none-any.whl) · [Checksums](https://respawned.williamshayden.com/SHA256SUMS)
 
 ```sh
 curl -fsS https://respawned.williamshayden.com/install.sh | sh
@@ -25,7 +25,7 @@ curl -fsS https://respawned.williamshayden.com/install.sh -o install.sh
 sh install.sh
 ```
 
-The installer verifies the wheel checksum, installs into `~/.local/share/respawned/2.0.0`, and adds `~/.local/bin/respawned`. It leaves shell startup files unchanged and refuses to overwrite unrelated commands. Use `sh install.sh --prefix /absolute/path` for another prefix.
+The installer verifies the wheel checksum, installs into `~/.local/share/respawned/2.1.0`, and adds `~/.local/bin/respawned`. It leaves shell startup files unchanged and refuses to overwrite unrelated commands. Use `sh install.sh --prefix /absolute/path` for another prefix.
 
 Create a PostgreSQL database and user on the engine host, then set its connection values:
 
@@ -49,7 +49,19 @@ Use `--port 8001` for another port or `--no-open` to print a browser link. Set `
 
 ## CLI and API
 
-With the local engine running, use another terminal:
+Check the installed client and running engine from another terminal:
+
+```sh
+respawned --version
+respawned status
+respawned status --json
+```
+
+`--version` prints the installed client version without contacting an engine. `status` reports the client and running-engine versions and checks engine readiness; `status --json` provides the same result for scripts. See [status and exit codes](https://respawned.williamshayden.com/api/#engine-status-and-versions).
+
+The version check accepts minor and patch differences within the same major version. The exact 2.1.0 client and engine pair is the qualified combination. A 2.0 engine's health response omits its version, so `status` reports an unknown version until that engine is upgraded and restarted.
+
+With the engine ready, import records and prepare a draft:
 
 ```bash
 respawned import --file records.json
@@ -58,13 +70,13 @@ respawned review
 respawned outbox --pending --json
 ```
 
-Use the [record contract](docs/API.md#ingest-records) for `records.json` and plain text for `draft.txt`. Supplied copy is validated without configuring an engine model. Omit `--body-file` to request the engine's backend.
+Use the [record contract](https://respawned.williamshayden.com/api/#ingest-records) for `records.json` and plain text for `draft.txt`. Supplied copy is validated without configuring an engine model. Omit `--body-file` to request the engine's backend.
 
 `review` evaluates a bounded queue and always asks for human decisions. `sync --dry-run` previews eligibility. `process --limit 10` explicitly processes a batch under the server's review policy, which defaults to human review.
 
 `inbox --json` reads unanswered human replies. `outbox --path outbox.csv` exports a spreadsheet. Reads and exports do not mark messages sent.
 
-For a remote engine, set `RESPAWNED_API_URL` and `RESPAWNED_REVIEW_TOKEN` in the client environment. Workflow commands and `RespawnedClient.from_env()` use the same connection. See [Agent integration](docs/AGENT_INTEGRATION.md) for CLI, SDK, and HTTP examples.
+For a remote engine, set `RESPAWNED_API_URL` and `RESPAWNED_REVIEW_TOKEN` in the client environment. Workflow commands and `RespawnedClient.from_env()` use the same connection. See [Agent integration](https://respawned.williamshayden.com/agent-integration/) for CLI, SDK, and HTTP examples.
 
 The API reference is available on the engine at `/docs` and `/openapi.json`. Canonical operator routes use `/v1/workflow`. Local `respawned serve` starts the engine without opening a browser; `--api-only` disables the bundled UI.
 
@@ -77,13 +89,13 @@ The API reference is available on the engine at `/docs` and `/openapi.json`. Can
 
 **Refresh** reads the current view; **Evaluate queue** applies policy to stored facts. Neither refreshes an external source. **All tracked** includes waiting, closed, and contactless records.
 
-Workspaces share an engine's policy, contacts, credentials, and outbox. Use separate engines for separate data or authority. The [browser guide](docs/WEB_UI.md) covers configuration and remote connections.
+Workspaces share an engine's policy, contacts, credentials, and outbox. Use separate engines for separate data or authority. The [browser guide](https://respawned.williamshayden.com/) covers configuration and remote connections.
 
 ## Model backends
 
 Configure **Setup → Model backend** only when the engine should generate new text. Choose an OpenAI-compatible API, an optional LiteLLM proxy, or the optional Codex CLI adapter.
 
-Credentials stay on the engine host. Saving settings does not invoke the backend; explicit generation does. Supplied text and existing drafts need no model configuration. See [backend setup](docs/WEB_UI.md#connect-a-model-backend).
+Credentials stay on the engine host. Saving settings does not invoke the backend; explicit generation does. Supplied text and existing drafts need no model configuration. See [backend setup](https://respawned.williamshayden.com/#configure-a-drafting-backend).
 
 ## Outbox integration
 
@@ -95,32 +107,34 @@ A sending service fetches approved messages, sends through its own provider, and
 
 Use a dedicated `RESPAWNED_OUTBOX_TOKEN` for the connector. It does not grant drafting or approval authority. Provider idempotency and durable coordination belong to the sender.
 
-The [outbox reference](docs/API.md#outbox-integration) includes request fields and retries. A [standalone Python client](examples/outbox_client.py) needs no third-party packages or source checkout.
+The [outbox reference](https://respawned.williamshayden.com/api/#outbox-integration) includes request fields and retries. A [standalone Python client](https://respawned.williamshayden.com/examples/outbox_client.py) needs no third-party packages or source checkout.
 
 ## Direct package installation
 
 Install the wheel into an existing Python 3.12+ environment:
 
 ```sh
-python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-2.0.0-py3-none-any.whl'
+python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-2.1.0-py3-none-any.whl'
 ```
 
-The [source archive](https://respawned.williamshayden.com/downloads/respawned-2.0.0.tar.gz) also includes the prebuilt UI and connector example. Package installation does not run a frontend build.
+The [source archive](https://respawned.williamshayden.com/downloads/respawned-2.1.0.tar.gz) also includes the prebuilt UI and connector example. Package installation does not run a frontend build.
 
-## Upgrading to 2.0
+## Upgrading to 2.1
 
 1. Stop the engine before upgrading; use Ctrl+C for a foreground `ui` or `serve` process. Keep PostgreSQL running for backup.
 2. Back up the existing database and preserve the engine environment and any custom policy file.
 3. Download the current website installer again using [Install and start](#install-and-start), then run it with the same prefix. A previously downloaded installer remains pinned to its original release. For a direct Python installation, update the wheel in that same environment using [Direct package installation](#direct-package-installation).
-4. On the engine host, check `respawned --version`, run `respawned init` with the existing database settings, and restart with the usual `ui` or `serve` command. Reload the browser and reconnect clients.
+4. On the engine host, check `respawned --version`, run `respawned init` with the existing database settings, and restart with the usual `ui` or `serve` command. Run `respawned status` from another terminal to check the running engine, then reload the browser and reconnect clients.
 
-Use the 2.0.0 CLI and Python SDK with the 2.0.0 engine; this is the qualified combination. Update separately installed client environments to the same release. The matching browser UI is bundled with the engine.
-
-Workflow commands now call the API and no longer read PostgreSQL settings or accept `--now` and `--policy`. Configure policy on the server and use fixed time only in simulations.
-
-Data routes now require operator authentication. Existing `/v1/ui` aliases remain available; new clients use `/v1/workflow`. Outbox connector routes and receipt semantics are unchanged. See [migration details](docs/API.md#upgrading-to-20).
+Use the 2.1.0 CLI and Python SDK with the 2.1.0 engine for the qualified combination. Update separately installed client environments to the same release. The matching browser UI is bundled with the engine.
 
 The installer retains earlier version environments and has no uninstall command. To remove an installer-managed copy, stop the engine and remove its `bin/respawned` symlink and `share/respawned` program directory under the chosen prefix, after confirming they belong to this installation. Preserve PostgreSQL, its backups, and external configuration when removing program files.
+
+### Upgrading to 2.0
+
+When migrating from 1.1 to 2.0 or later, workflow commands call the API and no longer read PostgreSQL settings or accept `--now` and `--policy`. Configure policy on the server and use fixed time only in simulations.
+
+The 2.0 API introduced operator authentication for data routes. Existing `/v1/ui` aliases remain available; new clients use `/v1/workflow`. Outbox connector routes and receipt semantics are unchanged. See [1.1-to-2.0 migration details](https://respawned.williamshayden.com/api/#upgrading-to-20).
 
 ## Developer source checkout
 
@@ -161,21 +175,21 @@ Open `http://127.0.0.1:8000` and enter the token under **Setup → Engine access
 
 The package, imports, and CLI are `respawned`. Project-specific `FUE_` environment variables now use `RESPAWNED_`. Keep existing database names, credentials, and storage.
 
-If renaming a checkout, preserve its Compose project name with `docker compose -p <existing-project>`. The quote-specific prototype schema requires [separate migration](docs/RELEASE_CHECKS.md). Historical evidence retains its original names.
+If renaming a checkout, preserve its Compose project name with `docker compose -p <existing-project>`. The quote-specific prototype schema requires [separate migration](https://github.com/williamshayden/respawned/blob/main/docs/RELEASE_CHECKS.md). Historical evidence retains its original names.
 
 ## Documentation and development
 
 | Task | Guide |
 | --- | --- |
-| Browser setup, workspaces, and remote engines | [Browser guide](docs/WEB_UI.md) |
-| Connect an agent | [Agent guide](docs/AGENT_INTEGRATION.md), [prompt](docs/agent-prompt.txt) |
-| API schemas, policy, and retries | [API reference](docs/API.md) |
-| Demo and recording provenance | [Demo notes](docs/DEMO.md) |
-| Build the UI and run browser checks | [Frontend development](docs/WEB_UI.md#frontend-development-and-bundled-assets) |
-| Preserve existing data | [Database migration](docs/RELEASE_CHECKS.md) |
-| Run isolated fixtures | [Simulations](docs/SIMULATIONS.md), [agent experiments](docs/AGENT_SIMULATIONS.md), [connector simulation](docs/CONNECTOR_SIMULATION.md) |
-| Build and verify documentation downloads | [Documentation site](site/README.md) |
-| Changes | [Changelog](CHANGELOG.md) |
+| Browser setup, workspaces, and remote engines | [Browser guide](https://respawned.williamshayden.com/) |
+| Connect an agent | [Agent guide](https://respawned.williamshayden.com/agent-integration/), [prompt](https://respawned.williamshayden.com/agent-prompt.txt) |
+| API schemas, policy, and retries | [API reference](https://respawned.williamshayden.com/api/) |
+| Demo and recording provenance | [Demo notes](https://github.com/williamshayden/respawned/blob/main/docs/DEMO.md) |
+| Build the UI and run browser checks | [Frontend development](https://github.com/williamshayden/respawned/blob/main/docs/WEB_UI.md#frontend-development-and-bundled-assets) |
+| Preserve existing data | [Database migration](https://github.com/williamshayden/respawned/blob/main/docs/RELEASE_CHECKS.md) |
+| Run isolated fixtures | [Simulations](https://github.com/williamshayden/respawned/blob/main/docs/SIMULATIONS.md), [agent experiments](https://github.com/williamshayden/respawned/blob/main/docs/AGENT_SIMULATIONS.md), [connector simulation](https://github.com/williamshayden/respawned/blob/main/docs/CONNECTOR_SIMULATION.md) |
+| Build and verify documentation downloads | [Documentation site](https://github.com/williamshayden/respawned/blob/main/site/README.md) |
+| Changes | [Changelog](https://github.com/williamshayden/respawned/blob/main/CHANGELOG.md) |
 
 Run the Python suite with Docker available:
 
@@ -188,6 +202,6 @@ With an existing test database, use `--postgres-url <test-url>` and `--ignore=te
 
 In `web`, use `npm ci`, `npm test`, `npm run test:e2e`, and `npm run bundle:check`. After UI edits, regenerate and commit packaged assets with `npm run bundle`.
 
-Earlier [design proposals](docs/PROPOSALS.md), [quality review](docs/QUALITY_REVIEW.md), and [pre-UI release record](docs/V1_RELEASE.md) are historical evidence.
+Earlier [design proposals](https://github.com/williamshayden/respawned/blob/8b20e3b75dfd750483c31f192a17faf665bb6ee9/docs/PROPOSALS.md), [quality review](https://github.com/williamshayden/respawned/blob/8b20e3b75dfd750483c31f192a17faf665bb6ee9/docs/QUALITY_REVIEW.md), and [pre-UI release record](https://github.com/williamshayden/respawned/blob/8b20e3b75dfd750483c31f192a17faf665bb6ee9/docs/V1_RELEASE.md) are historical evidence.
 
-Licensed under the [MIT License](LICENSE).
+Licensed under the [MIT License](https://github.com/williamshayden/respawned/blob/main/LICENSE).

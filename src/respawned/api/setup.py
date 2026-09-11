@@ -94,6 +94,7 @@ def create_setup_routers(connection_dependency) -> tuple[APIRouter, APIRouter]:
         return {
             "review_enabled": local_session(request) is not None or bool(os.environ.get("RESPAWNED_REVIEW_TOKEN", "").strip()),
             "workflow_api_prefix": WORKFLOW_PREFIX,
+            "engine_version": request.app.version,
         }
 
     @protected.get("/setup")

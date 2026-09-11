@@ -1,6 +1,7 @@
 import json
 import subprocess
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -73,7 +74,7 @@ def test_app_health_endpoint_is_reachable(app_stack):
         payload = json.load(response)
 
     assert response.status == 200
-    assert payload == {"status": "ok"}
+    assert payload == {"status": "ok", "engine_version": version("respawned")}
 
 
 def test_app_readiness_checks_database_and_processing_requires_operator_access(app_stack):

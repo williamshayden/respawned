@@ -6,7 +6,7 @@ Start with [Agent integration](AGENT_INTEGRATION.md). The running engine serves 
 
 ## API access
 
-In Respawned 2.0, data and workflow routes require authentication. Use HTTPS for remote connections.
+Since Respawned 2.0, data and workflow routes require authentication. Use HTTPS for remote connections.
 
 | Credential | Access |
 | --- | --- |
@@ -19,9 +19,57 @@ HTTP clients send `Authorization: Bearer <credential>`. Set secrets in the serve
 
 `respawned ui` creates local browser and CLI access automatically. Remote CLI and SDK clients use `RESPAWNED_API_URL` and `RESPAWNED_REVIEW_TOKEN`. See [engine access](WEB_UI.md#server-and-api-access) for setup.
 
-`/healthz`, `/readyz`, schema routes, and session/bootstrap discovery expose no record data. `GET /v1/setup/bootstrap` advertises `workflow_api_prefix: "/v1/workflow"`. New clients use this canonical prefix; `/v1/ui` remains a compatibility alias.
+`/healthz`, `/readyz`, schema routes, and session/bootstrap discovery expose no record data. Starting with 2.1, `/healthz` and `GET /v1/setup/bootstrap` report `engine_version` from the installed package. Bootstrap also advertises `workflow_api_prefix: "/v1/workflow"`. New clients use this canonical prefix; `/v1/ui` remains a compatibility alias.
 
 A draft's `review_token` identifies the version being reviewed. It is not an access credential.
+
+## Engine status and versions
+
+`respawned --version` reports the installed client version. With an engine running, inspect its version and readiness:
+
+```bash
+respawned status
+respawned status --json
+```
+
+Status reads public `GET /healthz` and `GET /readyz` without sending an access credential. The client needs no database settings and invokes no model. `/healthz` checks process liveness; `/readyz` checks the engine's database, schema, and policy. A successful status check does not establish workflow authorization.
+
+Set `RESPAWNED_API_URL` or use `respawned status --api-url https://engine.example.com --timeout 5` to check another engine. The timeout applies separately to each HTTP request; requests are not retried.
+
+The report includes client and engine versions, readiness, and major-version compatibility. Different minor or patch versions within the same major are displayed and accepted by the status check. The qualified client/SDK and engine pair for this release is 2.1.0. `/v1` identifies the HTTP route contract and is separate from the package version.
+
+The `--json` output and SDK return dictionary contain:
+
+| Field | Value |
+| --- | --- |
+| `api_url` | Normalized engine URL |
+| `client_version`, `engine_version` | Package versions; engine version is null when unavailable or invalid |
+| `compatibility` | `same_major`, `different_major`, or `unknown` |
+| `compatibility_detail` | Explanation for the version result |
+| `health.status` | `ok`, `error`, or `unreachable` |
+| `readiness.status` | `ready`, `not_ready`, or `not_checked` when health failed |
+| `health.detail`, `readiness.detail` | Error explanation or null |
+| `workflow_access` | `not_checked` |
+
+| CLI exit code | Meaning |
+| --- | --- |
+| 0 | Engine is ready and the client and engine major versions match |
+| 1 | Engine is unreachable or not ready |
+| 3 | Client and engine major versions differ |
+| 4 | Engine version is missing or invalid, including older 2.0 health responses |
+
+When several checks fail, the order is health, major-version mismatch, readiness, then unknown version.
+
+`RespawnedClient.status()` provides the same report for Python callers:
+
+```python
+from respawned.client import RespawnedClient
+
+status = RespawnedClient("http://127.0.0.1:8000", timeout=5).status()
+print(status["engine_version"], status["readiness"]["status"])
+```
+
+See the [agent guide](AGENT_INTEGRATION.md#connect) for connection setup before making authenticated workflow calls.
 
 ## Ingest records
 
@@ -291,13 +339,13 @@ Drafting receives bounded record, contact, tone, and sender context. The engine 
 
 ## Upgrading to 2.0
 
-- The 2.0 CLI requires a 2.0 engine. Workflow commands now call the API; remove database credentials from client-only environments. `init`, `serve`, and `ui` remain engine lifecycle commands.
+- The 2.0 release moved workflow commands to the API; remove database credentials from client-only environments. `init`, `serve`, and `ui` remain engine lifecycle commands.
 - Local `ui`, or loopback `serve` without an operator token, creates private CLI access. Remote clients use `RESPAWNED_API_URL` and an operator credential.
 - `--now` and `--policy` are no longer workflow-client options. Policy belongs on the server; fixed time belongs in simulation setup.
 - Data routes `/v1/ingest`, `/v1/inbox`, `/v1/drafts`, and `/v1/outbox` now require operator authentication. Their response shapes are preserved.
 - New integrations use `/v1/workflow`. Existing `/v1/ui` routes remain compatibility aliases. The separate `/v1/outbox` connector routes are unchanged.
 - `review` always asks for human decisions. Use explicit `process` for server-policy processing.
 
-The 2.0.0 CLI and Python SDK are qualified with the 2.0.0 engine. The browser UI ships with that engine release. `/v1` identifies the HTTP route contract; it is separate from the package version.
+The 2.0.0 CLI and Python SDK were qualified with the 2.0.0 engine. The browser UI ships with its engine release. For current version checks and compatibility, see [Engine status and versions](#engine-status-and-versions).
 
 Stop the engine and back up PostgreSQL before upgrading. Install the current package, run `respawned init` on the engine host, restart the engine, and reconnect clients. See the [installation guide](../README.md#install-and-start) for the current installer.

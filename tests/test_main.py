@@ -48,7 +48,7 @@ def test_no_command_and_help_list_all_workflow_and_lifecycle_commands(capsys):
         entrypoint.main(["--help"])
     assert failure.value.code == 0
     output = capsys.readouterr().out
-    for command in ("init", "serve", "ui", "import", "demo", "sync", "draft", "review", "inbox", "outbox", "process"):
+    for command in ("init", "serve", "ui", "status", "import", "demo", "sync", "draft", "review", "inbox", "outbox", "process"):
         assert command in output
 
 
@@ -89,6 +89,7 @@ def test_connection_options_work_before_or_after_the_command(arguments, url, tim
     ("review", ["--limit", "4"], ["--limit", "4"]),
     ("inbox", ["--limit", "3", "--json"], ["--limit", "3", "--json"]),
     ("process", ["--limit", "2"], ["--limit", "2"]),
+    ("status", ["--json"], ["--json"]),
     ("outbox", ["--pending", "--json", "--limit", "3"], ["--json", "--pending", "--limit", "3"]),
 ])
 def test_client_commands_forward_options_and_return_errors(monkeypatch, command, arguments, forwarded):

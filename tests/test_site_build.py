@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("respawned_site_build", ROOT / "site/build.py")
 site_build = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(site_build)
+CURRENT_VERSION = site_build.PACKAGE_VERSION
 
 
 def sha(data):
@@ -82,23 +83,24 @@ def source(monkeypatch, tmp_path):
     return root
 
 
-def test_build_preserves_two_older_releases_and_allowlisted_downloads(source, tmp_path):
-    current = distribution(tmp_path / "current", "2.0.0", "a" * 40)
+def test_build_preserves_older_releases_and_allowlisted_downloads(source, tmp_path):
+    current = distribution(tmp_path / "current", CURRENT_VERSION, "a" * 40)
     first = distribution(tmp_path / "first", "1.0.0", "b" * 40)
     second = distribution(tmp_path / "second", "1.1.0", "c" * 40)
+    third = distribution(tmp_path / "third", "2.0.0", "e" * 40)
     output = tmp_path / "public"
     site_build.build(current, output, "a" * 40, True,
-                     archive_distribution=[first, second],
-                     archive_source=["b" * 40, "c" * 40])
+                     archive_distribution=[first, second, third],
+                     archive_source=["b" * 40, "c" * 40, "e" * 40])
     manifest = json.loads((output / "site-manifest.json").read_text())
     assert manifest["docs_source_clean"] is False
-    assert [item["version"] for item in manifest["archived_distributions"]] == ["1.0.0", "1.1.0"]
-    for directory, version in ((current, "2.0.0"), (first, "1.0.0"), (second, "1.1.0")):
+    assert [item["version"] for item in manifest["archived_distributions"]] == ["1.0.0", "1.1.0", "2.0.0"]
+    for directory, version in ((current, CURRENT_VERSION), (first, "1.0.0"), (second, "1.1.0"), (third, "2.0.0")):
         for name in site_build.distribution_files(version)[1:]:
             assert (output / name).read_bytes() == (directory / name).read_bytes()
     assert (output / "install.sh").read_bytes() == (current / "install.sh").read_bytes()
     release = json.loads((output / "release.json").read_text())
-    assert release["version"] == "2.0.0" and "published" not in release
+    assert release["version"] == CURRENT_VERSION and "published" not in release
     assert release["validation"] == {"installer_execution_verified": True}
     for original, target in site_build.TEXT_DOWNLOADS.items():
         assert (output / target).read_bytes() == (source / original).read_bytes()
@@ -112,11 +114,11 @@ def test_build_preserves_two_older_releases_and_allowlisted_downloads(source, tm
 
 @pytest.mark.parametrize("versions,match", [
     (["1.1.0", "1.1.0"], "duplicates"),
-    (["2.0.0"], "duplicates"),
+    ([CURRENT_VERSION], "duplicates"),
     (["3.0.0"], "older"),
 ])
 def test_archive_versions_cannot_replace_or_duplicate_downloads(source, tmp_path, versions, match):
-    current = distribution(tmp_path / "current", "2.0.0", "a" * 40)
+    current = distribution(tmp_path / "current", CURRENT_VERSION, "a" * 40)
     archives = [distribution(tmp_path / f"archive-{index}", version, "b" * 40)
                 for index, version in enumerate(versions)]
     output = tmp_path / "rejected"
@@ -127,7 +129,7 @@ def test_archive_versions_cannot_replace_or_duplicate_downloads(source, tmp_path
 
 
 def test_archive_sources_must_match_every_input(source, tmp_path):
-    current = distribution(tmp_path / "current", "2.0.0", "a" * 40)
+    current = distribution(tmp_path / "current", CURRENT_VERSION, "a" * 40)
     first = distribution(tmp_path / "first", "1.0.0", "b" * 40)
     with pytest.raises(ValueError, match="supplied together"):
         site_build.build(current, tmp_path / "missing", "a" * 40, True,
@@ -138,16 +140,16 @@ def test_archive_sources_must_match_every_input(source, tmp_path):
 
 
 def test_unset_source_pin_and_wrong_current_version_fail_closed(tmp_path):
-    current = distribution(tmp_path / "current", "2.0.0", "a" * 40)
+    current = distribution(tmp_path / "current", CURRENT_VERSION, "a" * 40)
     with pytest.raises(ValueError, match="explicit full"):
         site_build.validate_distribution(current, None)
     previous = distribution(tmp_path / "previous", "1.1.0", "b" * 40)
-    with pytest.raises(ValueError, match="2.0.0"):
+    with pytest.raises(ValueError, match=CURRENT_VERSION):
         site_build.validate_distribution(previous, "b" * 40)
 
 
 def test_symlink_download_is_rejected_before_output(source, tmp_path):
-    current = distribution(tmp_path / "current", "2.0.0", "a" * 40)
+    current = distribution(tmp_path / "current", CURRENT_VERSION, "a" * 40)
     prompt = source / "docs/agent-prompt.txt"
     prompt.unlink()
     external = tmp_path / "private.txt"

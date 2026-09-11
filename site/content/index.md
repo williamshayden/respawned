@@ -10,14 +10,16 @@ The browser, CLI, and Python SDK call the same API. The engine owns policy, vali
 
 The installer needs `curl`, a POSIX shell, and Python 3.12+ with `venv` and `ensurepip`. It supports Linux, macOS, and WSL; release qualification runs on Linux. PostgreSQL is a separate server requirement.
 
-[View installer](/install.sh) · [Download package](/downloads/respawned-2.0.0-py3-none-any.whl) · [Checksums](/SHA256SUMS)
+[View installer](/install.sh) · [Download package](/downloads/respawned-2.1.0-py3-none-any.whl) · [Checksums](/SHA256SUMS)
+
+[GitHub release](https://github.com/williamshayden/respawned/releases/tag/v2.1.0) includes the same wheel and source archive, installer, checksums, and package provenance.
 
 ```bash
 curl -fsS https://respawned.williamshayden.com/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The installer verifies the package checksum, installs it in `~/.local/share/respawned/2.0.0`, and adds `~/.local/bin/respawned`. The package includes the CLI, API, SDK, and built browser UI. No repository clone or Node.js is needed.
+The installer verifies the package checksum, installs it in `~/.local/share/respawned/2.1.0`, and adds `~/.local/bin/respawned`. The package includes the CLI, API, SDK, and built browser UI. No repository clone or Node.js is needed.
 
 To inspect the installer first:
 
@@ -27,7 +29,7 @@ curl -fsS https://respawned.williamshayden.com/install.sh -o install.sh
 sh install.sh
 ```
 
-Use `sh install.sh --prefix /absolute/path` for another prefix. A [source archive](/downloads/respawned-2.0.0.tar.gz), [package provenance](/release.json), and [site manifest](/site-manifest.json) are also available.
+Use `sh install.sh --prefix /absolute/path` for another prefix. A [source archive](/downloads/respawned-2.1.0.tar.gz), [package provenance](/release.json), and [site manifest](/site-manifest.json) are also available.
 
 ### Configure PostgreSQL
 
@@ -50,6 +52,8 @@ Engine commands do not automatically read `.env`. Keep `DB_*` values and model c
 PostgreSQL holds records, activities, drafts, outbox reservations and receipts, workspace definitions, and saved model settings. The installation directory holds program files and dependencies. Preserve the engine environment and any custom policy file separately from database backups.
 
 Use `respawned ui --port 8001` for another port or `--no-open` to print the browser link. Set `RESPAWNED_API_URL` to that loopback URL in CLI terminals using a custom port. Leave the engine running while using clients. Stop it with Ctrl+C; PostgreSQL remains separate.
+
+In another terminal, run `respawned status` to check the running engine's version and readiness. `respawned --version` reports the installed client version; `status --json` gives a machine-readable report. See [status and version checks](/api/#engine-status-and-versions).
 
 ## CLI and agents
 
@@ -148,28 +152,31 @@ Remote URLs require HTTPS; loopback HTTP is allowed. Browser requests carry only
 
 The [API reference](/api/) covers routes, payloads, errors, and retries. The running engine serves schemas at `/docs` and `/openapi.json`. Use `respawned serve --api-only` for an engine without the bundled interface.
 
-`/healthz` checks process liveness. `/readyz` checks database, schema, and policy; it does not test a model.
+`respawned status` reads public health and readiness endpoints without an access credential. `/healthz` reports the engine version and process liveness. `/readyz` checks database, schema, and policy; it does not test a model. The status client needs no database settings.
 
 | Symptom | Check |
 | --- | --- |
 | Database unavailable | Engine-host `DB_*` values and PostgreSQL readiness |
 | CLI cannot connect | Engine process, API URL, and local or remote access |
+| Status cannot determine the engine version | Older 2.0 health responses lack version metadata; update and restart the engine |
 | Nothing ready for review | **All tracked**, confirmed recipient, status, policy, and cooldown |
 | Draft generation fails | Backend, model access, server credential, and timeout |
 | Write timed out | Read saved state before repeating the action |
 | Remote UI fails | HTTPS URL, engine credential, and exact allowed origin |
 
-## Upgrading to 2.0
+## Update the engine and clients
 
 1. Stop the engine before upgrading; use Ctrl+C for a foreground `ui` or `serve` process. Keep PostgreSQL running for backup.
 2. Back up the existing database and preserve the engine environment and any custom policy file.
-3. Download the current [website installer](/install.sh) again and run it with the same prefix, following [Install and start locally](#install-and-start-locally). A previously downloaded installer remains pinned to its original release. If you installed the wheel directly, update the [2.0.0 wheel](/downloads/respawned-2.0.0-py3-none-any.whl) in that same Python environment.
-4. On the engine host, check `respawned --version`, run `respawned init` with the existing database settings, and restart with the usual `ui` or `serve` command. Reload the browser and reconnect clients.
+3. Download the current [website installer](/install.sh) again and run it with the same prefix, following [Install and start locally](#install-and-start-locally). A previously downloaded installer remains pinned to its original release. If you installed the wheel directly, update the [2.1.0 wheel](/downloads/respawned-2.1.0-py3-none-any.whl) in that same Python environment.
+4. On the engine host, check `respawned --version`, run `respawned init` with the existing database settings, and restart with the usual `ui` or `serve` command. Run `respawned status` from another terminal, then reload the browser and reconnect clients.
 
-Use the 2.0.0 CLI and Python SDK with the 2.0.0 engine; this is the qualified combination. Update separately installed client environments to the same release. The matching browser UI is bundled with the engine.
-
-Workflow CLI commands now use the API. Remove database settings from client-only environments, and configure remote clients with the engine URL and credential. `--now` and `--policy` are server/simulation concerns, not workflow-client options.
-
-All data routes now require authentication. New clients use `/v1/workflow`; existing `/v1/ui` aliases remain available. See the [migration reference](/api/#upgrading-to-20).
+Use the 2.1.0 CLI and Python SDK with the 2.1.0 engine for the qualified combination. Status displays and accepts other minor or patch versions within the same major. Update separately installed client environments with the engine; the matching browser UI is bundled with it.
 
 The installer retains earlier version environments and has no uninstall command. To remove an installer-managed copy, stop the engine and remove its `bin/respawned` symlink and `share/respawned` program directory under the chosen prefix, after confirming they belong to this installation. Preserve PostgreSQL, its backups, and external configuration when removing program files.
+
+### Upgrading to 2.0
+
+When upgrading from 1.1 or earlier, workflow CLI commands move to the API. Remove database settings from client-only environments, and configure remote clients with the engine URL and credential. `--now` and `--policy` are server/simulation concerns, not workflow-client options.
+
+Data routes require authentication starting with 2.0. New clients use `/v1/workflow`; existing `/v1/ui` aliases remain available. See the [migration reference](/api/#upgrading-to-20).

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.0
+
+Show the running engine version and readiness with `respawned status` or the Python SDK. The command uses HTTP without database or model access, reports a client/engine version mismatch, and supports JSON output for scripts.
+
+Repeat installation now validates the existing package, dependencies, and bundled UI before activating it. A damaged environment leaves the current launcher unchanged and reports how to repair the installation.
+
+Add a qualified GitHub release workflow and optional PyPI Trusted Publishing. The website, GitHub, and registry use the same wheel and source archive. Package documentation uses links that work outside a repository checkout.
+
 ## 2.0.0
 
 - Browser, CLI, and Python SDK use the same authenticated workflow API.

@@ -47,7 +47,7 @@ def setup_api(postgres_connection, dependencies, monkeypatch):
         yield client, postgres_connection
 
 
-def test_bootstrap_only_reports_review_enabled_without_resolving_dependencies(dependencies, monkeypatch):
+def test_bootstrap_reports_public_metadata_without_resolving_dependencies(dependencies, monkeypatch):
     def forbidden():
         pytest.fail("bootstrap resolved a protected dependency")
 
@@ -55,9 +55,13 @@ def test_bootstrap_only_reports_review_enabled_without_resolving_dependencies(de
     api_module.app.dependency_overrides[api_module.get_api_engine] = forbidden
     monkeypatch.setenv("LITELLM_MASTER_KEY", "private-provider-secret")
     with TestClient(api_module.app) as client:
-        assert client.get("/v1/setup/bootstrap").json() == {"review_enabled": True, "workflow_api_prefix": "/v1/workflow"}
+        assert client.get("/v1/setup/bootstrap").json() == {
+            "review_enabled": True, "workflow_api_prefix": "/v1/workflow", "engine_version": api_module.app.version,
+        }
         monkeypatch.delenv("RESPAWNED_REVIEW_TOKEN")
-        assert client.get("/v1/setup/bootstrap").json() == {"review_enabled": False, "workflow_api_prefix": "/v1/workflow"}
+        assert client.get("/v1/setup/bootstrap").json() == {
+            "review_enabled": False, "workflow_api_prefix": "/v1/workflow", "engine_version": api_module.app.version,
+        }
 
 
 @pytest.mark.parametrize("method,path,payload", [

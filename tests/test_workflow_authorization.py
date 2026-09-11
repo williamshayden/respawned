@@ -32,4 +32,5 @@ def test_legacy_business_routes_require_operator_before_database(monkeypatch, me
         assert client.get("/healthz").status_code == 200
         assert client.get("/v1/setup/bootstrap").json() == {
             "review_enabled": True, "workflow_api_prefix": "/v1/workflow",
+            "engine_version": api_module.app.version,
         }

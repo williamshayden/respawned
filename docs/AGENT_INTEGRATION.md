@@ -10,6 +10,14 @@ Start the local engine with `respawned ui`. It opens the browser and creates pri
 
 For a remote engine, set `RESPAWNED_API_URL` and its `RESPAWNED_REVIEW_TOKEN` in the client environment. The [access reference](API.md#api-access) covers server setup and scoped credentials.
 
+Check the running engine before importing records:
+
+```bash
+respawned status --json
+```
+
+The report identifies client and engine versions, readiness, and major-version compatibility. Status sends no access credential and needs no client database settings or model. It accepts different minor or patch versions within one major; the qualified pair for this release is 2.1.0. Older 2.0 health responses lack an engine version. The [status reference](API.md#engine-status-and-versions) covers exit codes and version checks.
+
 ## 1. Import facts
 
 Have your agent produce `records.json` using the [record contract](API.md#ingest-records). Keep source IDs stable and include complete record snapshots.
@@ -73,7 +81,7 @@ saved = client.get_draft(draft["id"])
 print(saved["status"])
 ```
 
-Local access is discovered automatically. Remote connections use `RESPAWNED_API_URL` and an environment credential. The SDK also provides `sync()`, `inbox()`, `pending_outbox()`, and `record_receipt()`.
+Local access is discovered automatically. Remote connections use `RESPAWNED_API_URL` and an environment credential. Use `client.status()` for the public engine check. The SDK also provides `sync()`, `inbox()`, `pending_outbox()`, and `record_receipt()`.
 
 ## HTTP
 

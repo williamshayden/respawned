@@ -95,7 +95,7 @@ class AssetLinks(HTMLParser):
             self.paths.append(values[key])
 
 
-def verify_http(prefix, *, environment=None, api_only=False, exercise=None):
+def verify_http(prefix, *, environment=None, api_only=False, exercise=None, expected_ready=False):
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
@@ -116,6 +116,29 @@ def verify_http(prefix, *, environment=None, api_only=False, exercise=None):
                     if process.poll() is not None or time.monotonic() >= deadline:
                         raise AssertionError("Installed server did not become ready; see http-server.log")
                     time.sleep(0.1)
+            try:
+                with urlopen(base + "/readyz", timeout=10) as response:
+                    assert response.status == 200
+                    assert json.load(response) == {"status": "ready"}
+                    actual_ready = True
+            except HTTPError as error:
+                assert error.code == 503
+                actual_ready = False
+            assert actual_ready is expected_ready
+            status_environment = dict(environment if environment is not None else os.environ,
+                                      DB_HOST="never-connect.invalid", DB_PORT="not-a-client-port",
+                                      DB_PASSWORD="distribution-password-sentinel",
+                                      RESPAWNED_REVIEW_TOKEN="invalid\nstatus-test-token")
+            expected_status_exit = 0 if actual_ready else 1
+            report = json.loads(invoke([console], "--api-url", base, "status", "--json", "--timeout", "10",
+                                       environment=status_environment, expected=expected_status_exit))
+            assert commands[-1]["exit_code"] == expected_status_exit
+            assert report["api_url"] == base
+            assert report["client_version"] == report["engine_version"] == version("respawned")
+            assert report["compatibility"] == "same_major"
+            assert report["health"] == {"status": "ok", "detail": None}
+            assert report["readiness"]["status"] == ("ready" if actual_ready else "not_ready")
+            assert report["workflow_access"] == "not_checked"
             if api_only:
                 try:
                     urlopen(base + "/", timeout=5)
@@ -187,8 +210,9 @@ def invoke(prefix, *args, environment=None, expected=0, stdin=""):
 
 for prefix in ([console], module):
     assert "respawned " + version("respawned") in invoke(prefix, "--version")
-    assert "demo" in invoke(prefix, "--help")
-    for command in ("init", "demo", "serve", "ui", "import", "sync", "draft", "review", "inbox", "outbox", "process"):
+    help_output = invoke(prefix, "--help")
+    assert "demo" in help_output and "status" in help_output
+    for command in ("init", "demo", "serve", "ui", "status", "import", "sync", "draft", "review", "inbox", "outbox", "process"):
         invoke(prefix, command, "--help")
     invoke(prefix, "--api-url", "http://127.0.0.1:0", "sync", expected=1)
     unavailable = dict(os.environ, DB_HOST="127.0.0.1", DB_PORT="0",
@@ -295,7 +319,7 @@ if url:
             assert repeated == {"opportunities_upserted": 30, "activities_inserted": 0}, repeated
 
         assert verify_http([console, "serve"], environment=environment,
-                           exercise=exercise_workflow) == bundled_http_assets
+                           exercise=exercise_workflow, expected_ready=True) == bundled_http_assets
         with database.connect() as connection:
             counts = connection.execute(text(
                 f'SELECT (SELECT count(*) FROM "{schema}".opportunities), '
@@ -303,7 +327,7 @@ if url:
                 f'(SELECT count(*) FROM "{schema}".outbox)'
             )).one()
         assert tuple(counts) == (31, 84, 1), counts
-        verify_http([console, "serve"], environment=environment, api_only=True)
+        verify_http([console, "serve"], environment=environment, api_only=True, expected_ready=True)
         cli_http_verified = True
         database_verified = True
     finally:
