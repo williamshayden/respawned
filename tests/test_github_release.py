@@ -284,3 +284,97 @@ def test_conflicting_published_asset_preserves_release_without_mutations(publish
     assert github.document() == before
     assert not any(operation in {"create", "upload", "publish"} for operation, _name in github.events)
     assert not any(call[:2] == ("release", "edit") for call in github.calls)
+
+
+def test_successful_writes_can_precede_release_and_asset_visibility(publisher, monkeypatch):
+    files, github = publisher
+    pending_views = []
+    delayed_reads = []
+    sleeps = []
+
+    def eventually_visible(*arguments, **kwargs):
+        previous = github.document()
+        response = github(*arguments, **kwargs)
+        if arguments[:2] in {("release", "create"), ("release", "upload"), ("release", "edit")}:
+            pending_views.extend((None, previous))
+        elif arguments[:2] == ("api", f"repos/{release.REPOSITORY}/releases?per_page=100") and pending_views:
+            stale = pending_views.pop(0)
+            delayed_reads.append(stale)
+            return json.dumps([[stale] if stale is not None else []])
+        return response
+
+    monkeypatch.setattr(release, "gh", eventually_visible)
+    monkeypatch.setattr(release.time, "sleep", sleeps.append)
+
+    assert release.publish(github.tag, VERSION, SOURCE, files) == github.url
+
+    assert github.assets == files and github.record["draft"] is False
+    assert len(delayed_reads) == 2 * (len(files) + 2)
+    assert sleeps == [1, 2] * (len(files) + 2)
+    assert github.events.count(("create", None)) == 1
+    assert github.events.count(("publish", None)) == 1
+    assert all(github.events.count(("upload", name)) == 1 for name in files)
+    assert github.downloads == set(files)
+
+
+@pytest.mark.parametrize("operation,message", [
+    ("create", "GitHub did not return the new draft"),
+    ("upload", "GitHub did not return the uploaded asset"),
+    ("edit", "GitHub did not confirm a complete published release"),
+])
+def test_visibility_timeout_retries_only_reads_and_preserves_successful_write(publisher, monkeypatch, operation, message):
+    files, github = publisher
+    pending = False
+    confirmation_reads = []
+    sleeps = []
+
+    def never_visible(*arguments, **kwargs):
+        nonlocal pending
+        response = github(*arguments, **kwargs)
+        if arguments[:2] == ("release", operation):
+            pending = True
+        elif pending and arguments[:2] == ("api", f"repos/{release.REPOSITORY}/releases?per_page=100"):
+            confirmation_reads.append(arguments)
+            return "[[]]"
+        return response
+
+    monkeypatch.setattr(release, "gh", never_visible)
+    monkeypatch.setattr(release.time, "sleep", sleeps.append)
+
+    with pytest.raises(ValueError, match=message):
+        release.publish(github.tag, VERSION, SOURCE, files)
+
+    assert len(confirmation_reads) == 5 and sleeps == [1, 2, 4, 8]
+    assert sum(call[:2] == ("release", operation) for call in github.calls) == 1
+    assert github.record is not None
+    if operation == "create":
+        assert github.record["draft"] is True and github.assets == {}
+    elif operation == "upload":
+        assert github.record["draft"] is True and github.assets == {sorted(files)[0]: files[sorted(files)[0]]}
+        assert github.downloads == set()
+    else:
+        assert github.record["draft"] is False and github.assets == files
+        assert github.downloads == set(files)
+
+
+@pytest.mark.parametrize("operation", ["create", "upload", "edit"])
+def test_uncertain_mutation_failure_is_not_retried_or_confirmed(publisher, monkeypatch, operation):
+    files, github = publisher
+    sleeps = []
+
+    def lost_mutation_response(*arguments, **kwargs):
+        response = github(*arguments, **kwargs)
+        if arguments[:2] == ("release", operation):
+            # The remote write happened, but gh failed before confirming success.
+            raise RuntimeError("GitHub operation failed: connection lost")
+        return response
+
+    monkeypatch.setattr(release, "gh", lost_mutation_response)
+    monkeypatch.setattr(release.time, "sleep", sleeps.append)
+
+    with pytest.raises(RuntimeError, match="connection lost"):
+        release.publish(github.tag, VERSION, SOURCE, files)
+
+    assert sleeps == []
+    assert github.calls[-1][:2] == ("release", operation)
+    assert sum(call[:2] == ("release", operation) for call in github.calls) == 1

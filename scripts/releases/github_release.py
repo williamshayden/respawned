@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import copy
 from email.parser import BytesParser
 import hashlib
@@ -12,6 +13,7 @@ import re
 import subprocess
 import tarfile
 import tempfile
+import time
 import tomllib
 from urllib.parse import quote
 import zipfile
@@ -163,6 +165,17 @@ def release_view(tag: str) -> dict | None:
     return matches[0] if matches else None
 
 
+def confirm_release(tag: str, expected: Callable[[dict], bool], message: str) -> dict:
+    """Allow a successful write to become visible without repeating the write."""
+    for delay in (0, 1, 2, 4, 8):
+        if delay:
+            time.sleep(delay)
+        observed = release_view(tag)
+        if observed is not None and expected(observed):
+            return observed
+    raise ValueError(message)
+
+
 def verify_remote_tag(tag: str, source: str) -> None:
     reference = json.loads(gh("api", f"repos/{REPOSITORY}/git/ref/tags/{quote(tag, safe='')}"))["object"]
     if reference["type"] == "tag":
@@ -186,8 +199,10 @@ def publish(tag: str, version: str, source: str, files: dict[str, bytes]) -> str
         if existing is None:
             gh("release", "create", tag, "--repo", REPOSITORY, "--draft", "--verify-tag",
                "--target", source, "--title", title, "--notes-file", str(notes_file))
-            existing = release_view(tag)
-            require(existing is not None and existing["draft"], "GitHub did not return the new draft")
+            existing = confirm_release(tag, lambda record: record["draft"],
+                                       "GitHub did not return the new draft")
+            require(existing["body"].strip() == notes.strip() and existing["name"] == title,
+                    "An unrelated draft release already uses this tag")
         assets = {entry["name"] for entry in existing["assets"]}
         require(len(assets) == len(existing["assets"]) and assets <= files.keys(),
                 "Existing release has unexpected or duplicate assets")
@@ -200,14 +215,25 @@ def publish(tag: str, version: str, source: str, files: dict[str, bytes]) -> str
                     f"Existing release asset differs; refusing replacement: {name}")
         for name in sorted(files.keys() - assets):
             gh("release", "upload", tag, str(staging / name), "--repo", REPOSITORY)
+            assets.add(name)
+            confirm_release(tag, lambda record: record["id"] == existing["id"] and record["draft"] and
+                            {entry["name"] for entry in record["assets"]} == assets,
+                            f"GitHub did not return the uploaded asset: {name}")
             gh("release", "download", tag, "--repo", REPOSITORY, "--pattern", name, "--dir", str(downloaded))
             require(read_regular(downloaded, name) == files[name], f"Uploaded asset differs: {name}")
         verify_remote_tag(tag, source)
+
+        def complete(record: dict) -> bool:
+            return (record["id"] == existing["id"] and not record["draft"] and
+                    {entry["name"] for entry in record["assets"]} == files.keys())
+
+        message = "GitHub did not confirm a complete published release"
         if existing["draft"]:
             gh("release", "edit", tag, "--repo", REPOSITORY, "--draft=false")
-        final = release_view(tag)
-        require(final is not None and not final["draft"] and {entry["name"] for entry in final["assets"]} == files.keys(),
-                "GitHub did not confirm a complete published release")
+            final = confirm_release(tag, complete, message)
+        else:
+            final = release_view(tag)
+            require(final is not None and complete(final), message)
         return final["html_url"]
 
 
