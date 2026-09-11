@@ -34,6 +34,7 @@ class IngestResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
+    engine_version: str
 
 
 class ReadinessResponse(BaseModel):

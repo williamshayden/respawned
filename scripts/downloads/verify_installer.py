@@ -147,12 +147,64 @@ def main():
             assert Artifacts.requests == requests_before
             record('repeat install is idempotent without another download')
 
+            python = prefix / 'share' / 'respawned' / VERSION / 'bin' / 'python'
+            package_paths = json.loads(subprocess.check_output([str(python), '-I', '-B', '-c',
+                "import json; from importlib.metadata import distribution; "
+                "from importlib.resources import files; package=distribution('respawned'); "
+                "metadata=next(item for item in package.files if str(item).endswith('.dist-info/METADATA')); "
+                "print(json.dumps({'package': str(files('respawned')), 'metadata': str(package.locate_file(metadata))}))"],
+                cwd=workspace, env=env, text=True))
+            retained_state = prefix / 'retained-user-state.json'
+            retained_state.write_text('{"preserve": true}\n')
+            install_receipt = python.parent.parent / 'respawned-install.json'
+
+            def damaged_repeat(name, path, message, replacement=None):
+                original, mode = path.read_bytes(), path.stat().st_mode & 0o7777
+                launcher_before = (os.readlink(command), command.lstat().st_ino)
+                receipt_before = install_receipt.read_bytes()
+                requests_before = Artifacts.requests
+                if replacement is None:
+                    path.unlink()
+                else:
+                    path.write_bytes(replacement)
+                try:
+                    rejected = install(name, expected=1)
+                    assert message in rejected.stderr
+                    assert 'current launcher were left unchanged' in rejected.stderr
+                    assert 'different --prefix' in rejected.stderr
+                    assert 'already installed' not in rejected.stdout
+                    assert (os.readlink(command), command.lstat().st_ino) == launcher_before
+                    assert install_receipt.read_bytes() == receipt_before
+                    assert retained_state.read_text() == '{"preserve": true}\n'
+                    assert Artifacts.requests == requests_before
+                    assert not (python.parent.parent.parent / '.install-lock').exists()
+                    if replacement is None:
+                        assert not path.exists()
+                    else:
+                        assert path.read_bytes() == replacement
+                finally:
+                    # Restore only the temporary verification environment's test damage.
+                    path.write_bytes(original)
+                    path.chmod(mode)
+                record(name + ' preserves retained installation and launcher without download')
+
+            metadata_path = Path(package_paths['metadata'])
+            damaged_repeat('repeat-missing-dependency', metadata_path, 'Dependency check failed',
+                           metadata_path.read_bytes().split(b'\n\n', 1)[0]
+                           + b'\nRequires-Dist: respawned-installer-missing-dependency==0.0.0\n\n')
+            ui_path = Path(package_paths['package']) / 'web_assets'
+            javascript = next(name.removeprefix('respawned/web_assets/') for name in assets if name.endswith('.js'))
+            for name, relative in [('index', 'index.html'), ('manifest', 'bundle-manifest.json'), ('javascript', javascript)]:
+                damaged_repeat('repeat-missing-ui-' + name, ui_path / relative, 'Bundled UI file is missing')
+            damaged_repeat('repeat-changed-ui-javascript', ui_path / javascript,
+                           'Bundled UI file does not match', b'damaged bundled JavaScript\n')
+
             requests_before = Artifacts.requests
             download = subprocess.Popen(['curl', '--fail', '--silent', '--show-error', origin + '/install.sh'],
                                         cwd=workspace, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             piped = subprocess.run(['sh', '-s', '--', '--prefix', str(prefix), '--test-base-url', origin],
                                    cwd=workspace, env=env, stdin=download.stdout,
-                                   capture_output=True, text=True, timeout=60)
+                                   capture_output=True, text=True, timeout=120)
             download.stdout.close()
             download.wait(timeout=10)
             (LOGS / 'curl-pipe-install.log').write_text(piped.stdout + piped.stderr)
@@ -179,7 +231,6 @@ def main():
                     assert completed.stdout.strip() == 'respawned ' + VERSION
             record('installed CLI version and command help work outside checkout', commands=5)
 
-            python = prefix / 'share' / 'respawned' / VERSION / 'bin' / 'python'
             installed_path = subprocess.check_output([str(python), '-c', 'import respawned; print(respawned.__path__[0])'],
                                                      cwd=workspace, env=env, text=True).strip()
             assert Path(installed_path).is_relative_to(prefix)

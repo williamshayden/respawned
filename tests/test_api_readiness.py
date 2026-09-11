@@ -1,6 +1,7 @@
 """Readiness observes current dependencies without exposing their diagnostics."""
 
 from contextlib import contextmanager
+from importlib.metadata import version
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -9,6 +10,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from respawned.api import app as api_module
+from respawned.client import RespawnedClient
+from http_engine import serve_http
 
 
 @pytest.fixture
@@ -25,7 +28,39 @@ def test_liveness_does_not_require_database_policy_or_model(overrides):
     ):
         overrides(dependency, lambda: pytest.fail("liveness resolved dependency"))
     with TestClient(api_module.app) as client:
-        assert client.get("/healthz").json() == {"status": "ok"}
+        assert client.get("/healthz").json() == {"status": "ok", "engine_version": version("respawned")}
+        assert client.get("/openapi.json").json()["info"]["version"] == version("respawned")
+
+
+def test_status_client_reports_the_running_api_metadata_and_readiness(overrides):
+    failing = [False]
+
+    class Connection:
+        def exec_driver_sql(self, _statement):
+            if failing[0]:
+                raise OperationalError("private SQL", {}, RuntimeError("offline"))
+
+    @contextmanager
+    def transaction():
+        yield Connection()
+
+    overrides(api_module.get_api_engine, lambda: SimpleNamespace(begin=transaction))
+    overrides(api_module.get_workflow_policy, lambda: object())
+    overrides(api_module.get_workflow_adapter, lambda: pytest.fail("status invoked model"))
+    requests = []
+    with serve_http(api_module.app, requests) as url:
+        client = RespawnedClient(url, timeout=2)
+        ready = client.status()
+        assert ready["engine_version"] == ready["client_version"] == version("respawned")
+        assert ready["health"]["status"] == "ok"
+        assert ready["readiness"]["status"] == "ready"
+        failing[0] = True
+        unavailable = client.status()
+        assert unavailable["health"]["status"] == "ok"
+        assert unavailable["readiness"] == {"status": "not_ready", "detail": "HTTP 503: Database unavailable"}
+    assert [(item["method"], item["path"]) for item in requests] == [
+        ("GET", "/healthz"), ("GET", "/readyz"), ("GET", "/healthz"), ("GET", "/readyz"),
+    ]
 
 
 def test_readiness_database_failure_is_503_and_recovers_without_restart(overrides):

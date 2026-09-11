@@ -20,9 +20,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SITE = ROOT / "site"
 ORIGIN = "https://respawned.williamshayden.com"
 REPO = "https://github.com/williamshayden/respawned"
-# Qualified source for the 2.0.0 wheel and source archive.
-PACKAGE_COMMIT: str | None = "1f33f8f17762ad6fde3e528261cc9d6aa4630d85"
-PACKAGE_VERSION = "2.0.0"
+# Set the source pin only after the 2.1.0 artifacts pass qualification.
+PACKAGE_COMMIT: str | None = None
+PACKAGE_VERSION = "2.1.0"
 ASSETS = ("docs.css", "docs.js", "favicon.svg")
 SITE_SOURCES = ("build.py", "README.md", "requirements.txt", "_headers", "content/index.md")
 TEXT_DOWNLOADS = {

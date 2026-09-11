@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import http.client
+from importlib.metadata import version as package_version
 import ipaddress
 import json
 import math
 import os
+import re
 import socket
 from threading import Timer
 import time
@@ -79,6 +81,17 @@ def _identifier(value: str | int) -> str:
     return quote(str(value), safe="").replace(".", "%2E")
 
 
+def _version_major(value: Any) -> int | None:
+    if not isinstance(value, str) or len(value) > 64:
+        return None
+    match = re.fullmatch(
+        r"([0-9]+)(?:\.[0-9]+)*(?:(?:a|b|rc)[0-9]+)?"
+        r"(?:\.post[0-9]+)?(?:\.dev[0-9]+)?(?:\+[a-z0-9]+(?:[.-][a-z0-9]+)*)?",
+        value, re.IGNORECASE,
+    )
+    return int(match[1]) if match else None
+
+
 class RespawnedClient:
     """Explicit HTTP operations. No redirects, automatic retries, or provider sends."""
 
@@ -116,6 +129,65 @@ class RespawnedClient:
 
     def import_records(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", WORKFLOW_PREFIX + "/import", payload)
+
+    def status(self) -> dict[str, Any]:
+        """Report public engine health and readiness without sending credentials.
+
+        Compatibility checks package major versions; it does not certify an
+        exact client/server pair or verify workflow permissions or a model.
+        Each HTTP request uses this client's timeout and is never retried.
+        """
+        client_version = package_version("respawned")
+        result = {
+            "api_url": self.api_url,
+            "client_version": client_version,
+            "engine_version": None,
+            "compatibility": "unknown",
+            "compatibility_detail": "Engine version could not be checked.",
+            "health": {"status": "unreachable", "detail": None},
+            "readiness": {"status": "not_checked", "detail": None},
+            "workflow_access": "not_checked",
+        }
+        try:
+            health = self._request("GET", "/healthz", public=True)
+            if health.get("status") != "ok":
+                raise APIError("Health response did not report status 'ok'. Check the engine URL.", 200)
+        except APIError as exc:
+            result["health"] = {
+                "status": "unreachable" if exc.status_code is None else "error",
+                "detail": str(exc),
+            }
+            return result
+
+        result["health"] = {"status": "ok", "detail": None}
+        engine_version = health.get("engine_version")
+        client_major, engine_major = _version_major(client_version), _version_major(engine_version)
+        if engine_major is not None:
+            result["engine_version"] = engine_version
+        if engine_major is None:
+            result["compatibility_detail"] = (
+                "The engine did not report a supported version. Older 2.0 engines omit it; "
+                "check respawned --version on the engine host and upgrade the engine to report its version."
+            )
+        elif client_major is None:
+            result["compatibility_detail"] = "The installed client version is unsupported. Reinstall the client package."
+        elif client_major != engine_major:
+            result["compatibility"] = "different_major"
+            result["compatibility_detail"] = (
+                "Client and engine major versions differ. Update the client or engine to the same major before using workflows."
+            )
+        else:
+            result["compatibility"] = "same_major"
+            result["compatibility_detail"] = "Client and engine satisfy the same-major compatibility policy."
+
+        try:
+            readiness = self._request("GET", "/readyz", public=True)
+            if readiness.get("status") != "ready":
+                raise APIError("Readiness response did not report status 'ready'. Check the engine URL.", 200)
+            result["readiness"] = {"status": "ready", "detail": None}
+        except APIError as exc:
+            result["readiness"] = {"status": "not_ready", "detail": str(exc)}
+        return result
 
     def sync(self, limit: int = 10, dry_run: bool = False) -> dict[str, Any]:
         return self._request("POST", WORKFLOW_PREFIX + "/sync", {"limit": limit, "dry_run": dry_run})
@@ -193,8 +265,10 @@ class RespawnedClient:
         return " ".join(value.split())[:240]
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None,
-                 *, scope: str = "workflow", csv: bool = False) -> Any:
-        token = self._authority(scope)
+                 *, scope: str = "workflow", csv: bool = False, public: bool = False) -> Any:
+        if public and (method != "GET" or path not in {"/healthz", "/readyz"} or payload is not None):
+            raise APIError("Public client requests are restricted to health and readiness reads.")
+        token = None if public else self._authority(scope)
         mutation = method not in {"GET", "HEAD"}
         body = None
         if payload is not None:
@@ -209,7 +283,9 @@ class RespawnedClient:
         target = self._base_path + path
         if len(target.encode("utf-8")) > MAX_URL_BYTES:
             raise APIError("Request URL is too long. Use a shorter record or workspace ID.")
-        headers = {"Authorization": f"Bearer {token}", "Accept": "text/csv" if csv else "application/json", "Accept-Encoding": "identity"}
+        headers = {"Accept": "text/csv" if csv else "application/json", "Accept-Encoding": "identity"}
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
         if body is not None:
             headers["Content-Type"] = "application/json"
         kind = http.client.HTTPSConnection if self._scheme == "https" else http.client.HTTPConnection

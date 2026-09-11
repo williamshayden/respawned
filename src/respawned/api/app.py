@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import lru_cache
 import hmac
+from importlib.metadata import version
 import os
 from threading import Lock
 from typing import Annotated
@@ -144,7 +145,7 @@ async def lifespan(_app: FastAPI):
             engine.dispose()
 
 
-app = FastAPI(title="Respawned", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="Respawned", version=version("respawned"), lifespan=lifespan)
 
 # Validate before Uvicorn starts. A middleware-construction exception is otherwise
 # mistaken for unsupported ASGI lifespan under Uvicorn's default auto detection,
@@ -181,7 +182,7 @@ async def database_unavailable(_request: Request, _exc: Exception) -> JSONRespon
 @app.get("/healthz", response_model=HealthResponse)
 def health() -> HealthResponse:
     """Liveness only; does not open a database connection or call a model."""
-    return HealthResponse()
+    return HealthResponse(engine_version=app.version)
 
 
 @app.get("/readyz", response_model=ReadinessResponse)

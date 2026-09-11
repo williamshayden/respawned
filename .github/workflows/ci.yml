@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    outputs:
+      distribution-artifact-id:
+        description: Qualified installer, wheel, source archive, checksums, and release metadata
+        value: ${{ jobs.qualify.outputs.distribution-artifact-id }}
 
 permissions:
   contents: read
@@ -23,6 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
@@ -45,9 +51,12 @@ jobs:
   qualify:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      distribution-artifact-id: ${{ steps.distribution.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
@@ -64,7 +73,23 @@ jobs:
         run: uv run --frozen python scripts/verify_distribution.py --output dist/qualification
       - name: Prepare website download packages
         run: uv run --frozen python scripts/build_downloads.py --output dist/website
+      - name: Check package metadata and registry README rendering
+        run: uvx --from twine==7.0.0 twine check --strict dist/website/downloads/*
       - name: Verify the website installer in an isolated prefix
         run: uv run --frozen python scripts/downloads/verify_installer.py --artifacts dist/website
       - name: Build the static documentation and downloads
         run: uv run --frozen python site/build.py --distribution dist/website --output site/dist --package-source "$(git rev-parse HEAD)"
+      - name: Preserve the qualified distribution for release
+        if: github.event_name == 'workflow_dispatch'
+        id: distribution
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: respawned-distribution-${{ github.sha }}
+          path: |
+            dist/website/install.sh
+            dist/website/downloads/*.whl
+            dist/website/downloads/*.tar.gz
+            dist/website/SHA256SUMS
+            dist/website/release.json
+          if-no-files-found: error
+          retention-days: 7

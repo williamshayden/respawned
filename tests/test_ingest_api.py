@@ -470,7 +470,7 @@ def test_concurrent_activity_conflict_is_rechecked(engine, monkeypatch, same_pay
 
 
 def test_http_ingestion_supports_email_and_dependency_override(engine, client):
-    assert client.get("/healthz").json() == {"status": "ok"}
+    assert client.get("/healthz").json() == {"status": "ok", "engine_version": app.version}
     response = client.post(
         "/v1/ingest",
         json={

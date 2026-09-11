@@ -13,7 +13,7 @@ from typing import Any
 from respawned.cli.http import client_from_args, configure_connection, print_json, run
 
 DEFAULT_SEED_DIR = Path(__file__).with_name("demo_data")
-CLIENT_COMMANDS = {"import", "demo", "sync", "draft", "review", "inbox", "outbox", "process"}
+CLIENT_COMMANDS = {"import", "demo", "sync", "draft", "review", "inbox", "outbox", "process", "status"}
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,7 @@ COMMANDS = (
     CommandSpec("init", "Initialize this engine's database"),
     CommandSpec("serve", "Start an engine"),
     CommandSpec("ui", "Start a local engine and open its UI"),
+    CommandSpec("status", "Check engine health, readiness, and version compatibility"),
     CommandSpec("import", "Import records through the engine API"),
     CommandSpec("demo", "Import bundled sample records"),
     CommandSpec("sync", "Refresh or preview the engine's queue"),
@@ -60,6 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
         elif command.name == "draft":
             child.add_argument("record_id", help="Stable record ID")
             child.add_argument("--body-file", help="UTF-8 draft text file, or - for standard input")
+        elif command.name == "status":
+            child.add_argument("--json", action="store_true", dest="json_output")
         elif command.name in {"sync", "review", "inbox", "process"}:
             child.add_argument("--limit", type=int, default=None)
             if command.name == "sync":
@@ -145,6 +148,9 @@ def _client_command(args) -> int:
             forwarded += ["--pending"]
         if args.limit is not None:
             forwarded += ["--limit", str(args.limit)]
+    elif args.command == "status":
+        if args.json_output:
+            forwarded += ["--json"]
     else:
         if args.limit is not None:
             forwarded += ["--limit", str(args.limit)]

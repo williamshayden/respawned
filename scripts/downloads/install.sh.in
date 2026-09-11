@@ -33,6 +33,67 @@ def run(args, **kwargs):
     return subprocess.run(args, check=True, **kwargs)
 
 
+def validate_installation(release, executable, env):
+    """Validate either a new or retained environment before activating its launcher."""
+    python = release / 'bin' / 'python'
+
+    def check(label, command):
+        try:
+            return run(command, env=env, capture_output=True, text=True, timeout=30)
+        except subprocess.CalledProcessError as exc:
+            detail = ((exc.stdout or '') + (exc.stderr or '')).strip()
+            fail(label + ' failed for ' + str(release) + ':\n' + (detail or str(exc)))
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            fail(label + ' failed for ' + str(release) + ': ' + str(exc))
+
+    check('Dependency check', [str(python), '-I', '-B', '-m', 'pip', '--isolated',
+                              '--disable-pip-version-check', 'check'])
+    result = check('Command version check', [str(executable), '--version'])
+    if result.stdout.strip() != 'respawned ' + VERSION:
+        fail('Command version check failed for ' + str(release) + ': expected respawned ' + VERSION)
+    check('Package and bundled UI check', [str(python), '-I', '-B', '-c', '''
+import base64
+import csv
+import hashlib
+from importlib.metadata import distribution
+from importlib.resources import files
+import io
+from pathlib import Path
+import sys
+
+release = Path(sys.argv[1]).resolve()
+if Path(sys.prefix).resolve() != release:
+    raise RuntimeError('Python does not belong to the private environment')
+package = distribution('respawned')
+if package.version != sys.argv[2]:
+    raise RuntimeError('Installed package metadata has the wrong version')
+ui = Path(files('respawned').joinpath('web_assets')).resolve()
+if not ui.is_relative_to(release):
+    raise RuntimeError('Bundled UI does not belong to the private environment')
+# Read RECORD directly: distribution.files can omit files that have gone missing.
+inventory = csv.reader(io.StringIO(package.read_text('RECORD') or ''))
+assets = [row for row in inventory if row and row[0].startswith('respawned/web_assets/')]
+required = {'respawned/web_assets/index.html', 'respawned/web_assets/bundle-manifest.json'}
+if not required <= {row[0] for row in assets}:
+    raise RuntimeError('Installed package has no complete bundled UI inventory')
+for row in assets:
+    if len(row) != 3:
+        raise RuntimeError('Installed package has an invalid bundled UI inventory')
+    asset, recorded_hash, _size = row
+    path = Path(package.locate_file(asset))
+    if not path.is_file() or not path.resolve().is_relative_to(ui):
+        raise RuntimeError('Bundled UI file is missing or outside the package: ' + str(asset))
+    algorithm, separator, expected = recorded_hash.partition('=')
+    if not separator or not algorithm or not expected:
+        raise RuntimeError('Bundled UI file has no installed hash: ' + str(asset))
+    with path.open('rb') as stream:
+        digest = hashlib.file_digest(stream, algorithm).digest()
+    actual = base64.urlsafe_b64encode(digest).rstrip(b'=').decode('ascii')
+    if actual != expected:
+        raise RuntimeError('Bundled UI file does not match the installed package: ' + str(asset))
+''', str(release), VERSION])
+
+
 def main():
     parser = argparse.ArgumentParser(prog='install.sh', description='Install Respawned into a private virtual environment.')
     parser.add_argument('--prefix', type=Path, default=Path.home() / '.local',
@@ -71,6 +132,9 @@ def main():
     lock = root / '.install-lock'
     receipt = release / 'respawned-install.json'
     expected = {'installer': OWNER, 'version': VERSION, 'wheel': WHEEL, 'sha256': SHA256}
+    env = os.environ.copy()
+    env['PIP_CONFIG_FILE'] = os.devnull
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
 
     def owned_launcher():
         if not launcher.is_symlink():
@@ -99,10 +163,6 @@ def main():
         if release.exists() or release.is_symlink():
             if release.is_symlink() or not receipt.is_file() or json.loads(receipt.read_text()) != expected:
                 fail('Refusing to overwrite an unrecognized version directory: ' + str(release))
-            result = run([str(executable), '--version'], capture_output=True, text=True, timeout=30)
-            if result.stdout.strip() != 'respawned ' + VERSION:
-                fail('The existing installation did not report the expected version: ' + str(release))
-            print('Respawned ' + VERSION + ' is already installed.', flush=True)
         else:
             with tempfile.TemporaryDirectory(prefix='respawned-download-') as temp:
                 wheel = Path(temp) / WHEEL
@@ -121,20 +181,22 @@ def main():
                 print('Creating private environment at ' + str(release), flush=True)
                 run([sys.executable, '-m', 'venv', str(release)], timeout=120)
                 python = release / 'bin' / 'python'
-                env = os.environ.copy()
-                env['PIP_CONFIG_FILE'] = os.devnull
                 run([str(python), '-m', 'pip', '--isolated', '--disable-pip-version-check',
                      '--no-cache-dir', 'install', '--index-url', 'https://pypi.org/simple',
                      '--timeout', '30', '--retries', '1', str(wheel)], env=env, timeout=600)
-                run([str(python), '-m', 'pip', '--disable-pip-version-check', 'check'], env=env, timeout=30)
-                result = run([str(executable), '--version'], capture_output=True, text=True, timeout=30)
-                if result.stdout.strip() != 'respawned ' + VERSION:
-                    fail('Installed command did not report the expected version.')
-                run([str(python), '-c',
-                     "from importlib.resources import files; p=files('respawned').joinpath('web_assets'); "
-                     "assert p.joinpath('index.html').is_file(); assert p.joinpath('bundle-manifest.json').is_file()"],
-                    timeout=30)
-                receipt.write_text(json.dumps(expected, indent=2) + '\n')
+
+        try:
+            validate_installation(release, executable, env)
+        except RuntimeError as exc:
+            if not created_release:
+                fail(str(exc) + '\nThe existing version directory and current launcher were left unchanged. '
+                     'Repair this environment manually, or rerun the installer with a different --prefix '
+                     'to create a separate installation. No files were repaired or removed.')
+            raise
+        if created_release:
+            receipt.write_text(json.dumps(expected, indent=2) + '\n')
+        else:
+            print('Respawned ' + VERSION + ' is already installed and passed validation.', flush=True)
 
         launcher.parent.mkdir(parents=True, exist_ok=True)
         if launcher.exists() or launcher.is_symlink():
