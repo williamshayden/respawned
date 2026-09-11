@@ -12,6 +12,8 @@ The installer needs `curl`, a POSIX shell, and Python 3.12+ with `venv` and `ens
 
 [View installer](/install.sh) · [Download package](/downloads/respawned-2.1.0-py3-none-any.whl) · [Checksums](/SHA256SUMS)
 
+[GitHub release](https://github.com/williamshayden/respawned/releases/tag/v2.1.0) includes the same wheel and source archive, installer, checksums, and package provenance.
+
 ```bash
 curl -fsS https://respawned.williamshayden.com/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
