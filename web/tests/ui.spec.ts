@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
-import { connect, mockEngine, navigate } from './mock-engine'
+import { connect, mockEngine, navigate, setWorkspace } from './mock-engine'
 import { createFixtures } from '../src/data/fixtures'
 
 const selectedPanel = (page: Page) => page.getByRole('region', { name: 'Selected record' })
@@ -172,6 +172,25 @@ test('a live request failure stays live and never replaces records with the demo
 
 test.describe('mobile review', () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+
+  test('returns to records after approving the last reviewable draft', async ({ page }) => {
+    await setWorkspace(page, 'community_partnership')
+    await expect(page.locator('.record-row')).toHaveCount(1)
+    await row(page, 'Robin Bell').click()
+    await selectedPanel(page).getByRole('button', { name: 'Generate draft', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Approve to outbox', exact: true })).toBeEnabled()
+    await page.getByRole('button', { name: 'Approve to outbox', exact: true }).click()
+    await expect(page.getByRole('status')).toContainText('Added to outbox. Your message is unsent.')
+    await expect(page.getByRole('heading', { name: 'No record selected', exact: true })).toBeVisible()
+    await expect(page.locator('.queue-pane')).toBeHidden()
+    await expect(page.getByRole('button', { name: 'Back to records', exact: true })).toBeInViewport({ ratio: 1 })
+    await page.getByRole('button', { name: 'Back to records', exact: true }).click()
+    await expect(page.locator('.queue-pane')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Nothing ready for review', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'View all tracked', exact: true }).click()
+    await expect(row(page, 'Robin Bell')).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  })
 
   test('moves between queue, detail and navigation without horizontal overflow', async ({ page }, testInfo) => {
     await expect(row(page, 'Maya Chen')).toBeVisible()

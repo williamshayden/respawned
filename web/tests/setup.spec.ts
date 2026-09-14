@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import type { ModelStatus, SetupStatus } from '../src/data/setup'
+import { mockEngine } from './mock-engine'
 
 const access = 'setup-test-review-access'
 const initialModel: ModelStatus = { backend: 'openai_compatible', source: 'environment', base_url: 'http://litellm:4000', model_alias: 'respawned-default', timeout_seconds: 60, api_key_env: 'LITELLM_MASTER_KEY', key_configured: false, ready: false, verified: false, error: null }
@@ -246,14 +247,25 @@ for (const prefix of ['/v1/ui', '/v1/workflow']) {
 
 test('keeps engine identity visible while navigating at laptop height', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 })
-  await environment(page)
+  const { writes } = await mockEngine(page, { canonical: true, empty: true })
   await page.goto('/')
   await connect(page)
   await expect(page.getByLabel('Or paste your import JSON')).toBeInViewport()
   await page.getByRole('button', { name: 'Open review queue', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Start with one record', exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Respawned', exact: true })).toBeInViewport({ ratio: 1 })
+  await expect(page.getByRole('textbox', { name: 'Find a record', exact: true })).toHaveCount(0)
+  expect(writes).toEqual([])
+  await page.getByRole('button', { name: 'Import records', exact: true }).click()
+  await page.getByLabel('Or paste your import JSON').fill(JSON.stringify({ opportunities: [{ id: 'job-aster-platform' }], activities: [] }))
+  await page.getByRole('button', { name: 'Import records', exact: true }).click()
+  await page.getByRole('button', { name: 'Review imported records', exact: true }).click()
+  await expect(page.locator('.record-row').filter({ hasText: 'Jordan Ellis' })).toBeVisible()
+  expect(writes).toEqual([{ path: '/import', body: { opportunities: [{ id: 'job-aster-platform' }], activities: [] } }])
   await page.getByRole('button', { name: 'All tracked', exact: true }).click()
   await page.getByRole('textbox', { name: 'Find a record', exact: true }).focus()
+  await expect(page.getByRole('textbox', { name: 'Find a record', exact: true })).toBeFocused()
+  await expect(page.getByRole('link', { name: 'Respawned', exact: true })).toBeInViewport({ ratio: 1 })
   const position = await page.evaluate(() => ({ scroll: window.scrollY, top: document.querySelector('.brand')!.getBoundingClientRect().top, overflow: document.documentElement.scrollWidth > innerWidth }))
   expect(position).toMatchObject({ scroll: 0, overflow: false })
   expect(position.top).toBeGreaterThanOrEqual(0)

@@ -22,7 +22,8 @@ export function ReviewPanel(props: Props) {
   useLayoutEffect(() => {
     if (writing && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight
   }, [record?.id, writing])
-  if (!record) return <section className="review-pane empty-detail"><div className="empty-state"><CircleCheck size={36} />
+  if (!record) return <section className="review-pane empty-detail"><div className="empty-state">
+    <button className="text-button mobile-back" onClick={props.onBack}><ArrowLeft size={17} />Back to records</button><CircleCheck size={36} />
     <h2>No record selected</h2><p>Select a record to review its context and next action.</p></div></section>
   const draft = record.draft
   const newDraftConflict = writing && !!draft
