@@ -2,32 +2,24 @@
 
 Track follow-ups, review drafts, and record confirmed sends from your own tools. Respawned supports job applications, sales, and other record types through one workflow.
 
-The browser, CLI, and Python SDK call the same HTTP API. The engine stores records in PostgreSQL and owns policy, validation, review, and outbox state. Your agent can supply draft text or request a configured model.
+An agent or person prepares a draft. A person reviews it and approves it to the unsent outbox. A sending integration delivers the approved text and records the confirmed receipt.
+
+The browser, CLI, and Python SDK call the same HTTP API. The engine owns PostgreSQL storage, policy, validation, review, and outbox state.
 
 [Documentation](https://respawned.williamshayden.com/) · [Agent guide](https://respawned.williamshayden.com/agent-integration/) · [Agent prompt](https://respawned.williamshayden.com/agent-prompt.txt) · [API reference](https://respawned.williamshayden.com/api/)
 
 ## Install and start
 
-The package includes the CLI, API, SDK, and prebuilt browser UI. The installer needs `curl`, a POSIX shell, and Python 3.12+ with `venv` and `ensurepip`. It supports Linux, macOS, and WSL; release qualification runs on Linux. PostgreSQL is a separate engine requirement.
-
-[View installer](https://respawned.williamshayden.com/install.sh) · [Download package](https://respawned.williamshayden.com/downloads/respawned-2.1.0-py3-none-any.whl) · [Checksums](https://respawned.williamshayden.com/SHA256SUMS)
+You need `curl`, a POSIX shell, Python 3.12+ with `venv` and `ensurepip`, and a PostgreSQL database. The installer supports Linux, macOS, and WSL; release qualification runs on Linux.
 
 ```sh
 curl -fsS https://respawned.williamshayden.com/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-To inspect the script first:
+The package includes the CLI, API, SDK, and prebuilt browser UI. [View the installer](https://respawned.williamshayden.com/install.sh) or see [installation options](#installation-options).
 
-```sh
-curl -fsS https://respawned.williamshayden.com/install.sh -o install.sh
-# Read install.sh, then run it.
-sh install.sh
-```
-
-The installer verifies the wheel checksum, installs into `~/.local/share/respawned/2.1.0`, and adds `~/.local/bin/respawned`. It leaves shell startup files unchanged and refuses to overwrite unrelated commands. Use `sh install.sh --prefix /absolute/path` for another prefix.
-
-Create a PostgreSQL database and user on the engine host, then set its connection values:
+Create a PostgreSQL database and user on the engine host, then set their actual connection values and start the app:
 
 ```sh
 export DB_HOST=127.0.0.1
@@ -35,100 +27,145 @@ export DB_PORT=5432
 export DB_NAME=respawned
 export DB_USER=respawned
 export DB_PASSWORD='your-database-password'
-respawned init
 respawned ui
 ```
 
-The app opens at `http://127.0.0.1:8000` with browser access connected. The launcher also creates private CLI access for other terminals on that machine. No token copying or model credentials are needed to start.
+The engine initializes its schema and checks database and policy readiness. The launcher reports readiness and opens `http://127.0.0.1:8000` with browser access connected. Leave it running while using the app. Startup creates no sample records and needs no model credentials.
 
-Engine commands do not automatically load `.env`. Keep `DB_*` values and model credentials in the engine's shell or service configuration. For a custom policy, set `RESPAWNED_POLICY_PATH` to a file outside the installation directory. Client-only environments use the engine URL, an access credential or local discovery, and an optional request timeout.
+## Browser workflow
 
-PostgreSQL holds records, activities, drafts, outbox reservations and receipts, workspace definitions, and saved model settings. The installation directory holds program files and dependencies. Preserve the engine environment and any custom policy file separately from database backups.
+Start with one real record and your own draft text. No workspace or model setup is required.
 
-Use `--port 8001` for another port or `--no-open` to print a browser link. Set `RESPAWNED_API_URL` to the chosen loopback URL in CLI terminals using a custom port. Leave the engine running while using clients. Ctrl+C stops the engine; PostgreSQL remains separate.
+1. Open **Setup → Records & sources**. Paste the JSON below or select a JSON file. Replace the example identity, date, and recipient with confirmed source facts, then select **Import records**.
+2. Choose **Review imported records**, open the record, and inspect its reason and history. Choose **Write draft**, enter your text, and **Save draft**.
+3. A person checks the saved text, recipient, and evidence, then chooses **Approve to outbox**. The approved message is now visible in **Outbox**, still unsent.
+
+```json
+{
+  "opportunities": [{
+    "id": "ats:application-123",
+    "kind": "job_application",
+    "title": "Backend Engineer at Example",
+    "status": "open",
+    "created_at": "2026-09-01T15:00:00Z",
+    "contact_key": "ats:recruiter-22",
+    "contact_name": "Alex",
+    "contact_email": "alex@example.com",
+    "preferred_channel": "email"
+  }],
+  "activities": []
+}
+```
+
+Save the same payload as `records.json` if using the CLI. Records are complete snapshots; omitted optional fields are cleared. Use stable IDs and actual source timestamps. The [record contract](https://respawned.williamshayden.com/api/#ingest-records) covers activities and other fields.
+
+For `draft.txt` or the browser editor, replace this example with your own copy:
+
+```text
+Hi Alex, I am following up on my application for the Backend Engineer role at Example. Is there an update you can share?
+```
+
+Saving validates the copy and current eligibility. Approval rechecks the displayed version, recipient, facts, and contact-wide cooldown. If a record is waiting, inspect its reason in **All tracked**; importing facts does not make every record eligible. **Refresh** reads stored state without fetching source updates.
 
 ## CLI and API
 
-Check the installed client and running engine from another terminal:
+The local launcher also creates private CLI access for other terminals on that machine. Workflow clients do not need database settings or token copying. Optionally run `respawned status` from the client terminal to check its connection and engine readiness.
 
-```sh
-respawned --version
-respawned status
-respawned status --json
-```
-
-`--version` prints the installed client version without contacting an engine. `status` reports the client and running-engine versions and checks engine readiness; `status --json` provides the same result for scripts. See [status and exit codes](https://respawned.williamshayden.com/api/#engine-status-and-versions).
-
-The version check accepts minor and patch differences within the same major version. The exact 2.1.0 client and engine pair is the qualified combination. A 2.0 engine's health response omits its version, so `status` reports an unknown version until that engine is upgraded and restarted.
-
-With the engine ready, import records and prepare a draft:
+An agent prepares the record and draft:
 
 ```bash
 respawned import --file records.json
 respawned draft ats:application-123 --body-file draft.txt
-respawned review
-respawned outbox --pending --json
 ```
 
-Use the [record contract](https://respawned.williamshayden.com/api/#ingest-records) for `records.json` and plain text for `draft.txt`. Supplied copy is validated without configuring an engine model. Omit `--body-file` to request the engine's backend.
+Use the successful response to report the saved draft's ID and status. Supplied text needs no engine model. Import only new or changed source facts; no separate queue evaluation is needed to draft a record.
 
-`review` evaluates a bounded queue and always asks for human decisions. `sync --dry-run` previews eligibility. `process --limit 10` explicitly processes a batch under the server's review policy, which defaults to human review.
+A person then reviews that saved draft:
 
-`inbox --json` reads unanswered human replies. `outbox --path outbox.csv` exports a spreadsheet. Reads and exports do not mark messages sent.
+```bash
+respawned review ats:application-123
+```
 
-For a remote engine, set `RESPAWNED_API_URL` and `RESPAWNED_REVIEW_TOKEN` in the client environment. Workflow commands and `RespawnedClient.from_env()` use the same connection. See [Agent integration](https://respawned.williamshayden.com/agent-integration/) for CLI, SDK, and HTTP examples.
+This opens the selected record's current saved draft and prompts for a human decision. It does not generate copy or evaluate the queue. The engine performs the same review checks as the browser.
 
-The API reference is available on the engine at `/docs` and `/openapi.json`. Canonical operator routes use `/v1/workflow`. Local `respawned serve` starts the engine without opening a browser; `--api-only` disables the bundled UI.
-
-## Browser workflow
-
-1. **Setup → Records & sources:** import canonical JSON. **Review imported records** opens the queue.
-2. **Workspaces:** save views for selected record kinds or include all kinds.
-3. **Review queue:** evaluate the queue, inspect evidence, generate or review a draft, then approve it to the outbox.
-4. **Overview:** watch several workspaces. **Connections** adds other engines.
-
-**Refresh** reads the current view; **Evaluate queue** applies policy to stored facts. Neither refreshes an external source. **All tracked** includes waiting, closed, and contactless records.
-
-Workspaces share an engine's policy, contacts, credentials, and outbox. Use separate engines for separate data or authority. The [browser guide](https://respawned.williamshayden.com/) covers configuration and remote connections.
-
-## Model backends
-
-Configure **Setup → Model backend** only when the engine should generate new text. Choose an OpenAI-compatible API, an optional LiteLLM proxy, or the optional Codex CLI adapter.
-
-Credentials stay on the engine host. Saving settings does not invoke the backend; explicit generation does. Supplied text and existing drafts need no model configuration. See [backend setup](https://respawned.williamshayden.com/#configure-a-drafting-backend).
+See [Agent integration](https://respawned.williamshayden.com/agent-integration/) for SDK and HTTP alternatives, uncertain-write recovery, and the downloadable prompt.
 
 ## Outbox integration
 
-A sending service fetches approved messages, sends through its own provider, and records the confirmed result:
+Approval reserves an unsent message. A sending integration reads approved recipients and exact text, sends through its own provider, then records the confirmed result:
 
 - `GET /v1/outbox/pending` reads approved pending messages.
 - `GET /v1/outbox/{id}` reads a message and its receipt.
 - `POST /v1/outbox/{id}/receipt` records a confirmed send.
 
-Use a dedicated `RESPAWNED_OUTBOX_TOKEN` for the connector. It does not grant drafting or approval authority. Provider idempotency and durable coordination belong to the sender.
+Use a dedicated `RESPAWNED_OUTBOX_TOKEN` for the connector. It grants neither drafting nor approval authority. The sender owns provider idempotency and durable coordination; reconcile an uncertain send with the provider before retrying.
 
-The [outbox reference](https://respawned.williamshayden.com/api/#outbox-integration) includes request fields and retries. A [standalone Python client](https://respawned.williamshayden.com/examples/outbox_client.py) needs no third-party packages or source checkout.
+`respawned outbox --pending --json` reads approved exact text. `outbox --path outbox.csv` exports spreadsheet-safe cells. Reads and exports do not mark messages sent.
 
-## Direct package installation
+The [outbox reference](https://respawned.williamshayden.com/api/#outbox-integration) covers fields and retries. A [standalone Python client](https://respawned.williamshayden.com/examples/outbox_client.py) needs no third-party packages.
+
+## Workspaces and other workflows
+
+Workspaces are optional saved views for selected record types. **Overview** monitors several views, and **Connections** adds other engines. Workspaces share an engine's policy, contacts, credentials, and outbox. Use separate engines for separate data or authority.
+
+`respawned inbox --json` reads unanswered human replies. Bare `respawned review` evaluates a bounded queue and prompts for human decisions, generating copy when a draft is missing. `sync --dry-run` previews eligibility. `process --limit 10` explicitly processes a batch under server policy, which defaults to human review. These operations use stored source facts.
+
+The API reference is available on the engine at `/docs` and `/openapi.json`. Canonical operator routes use `/v1/workflow`. See the [browser guide](https://respawned.williamshayden.com/) and [API reference](https://respawned.williamshayden.com/api/).
+
+## Model backends
+
+Configure **Setup → Model backend** only when the engine should generate new text. Choose an OpenAI-compatible API, an optional LiteLLM proxy, or the optional Codex CLI adapter.
+
+Credentials stay on the engine host. Saving settings does not invoke the backend; **Generate draft** or `respawned draft RECORD_ID` without `--body-file` does. Writing your own text and reviewing saved drafts need no model. See [backend setup](https://respawned.williamshayden.com/#configure-a-drafting-backend).
+
+## Engine configuration and remote clients
+
+Engine commands do not automatically load `.env`. Keep `DB_*` values and model credentials in the engine's shell or service configuration. For a custom policy, set `RESPAWNED_POLICY_PATH` to a file outside the installation directory. `respawned init` is an optional explicit database/schema check before startup.
+
+Use `respawned ui --port 8001` for another port or `--no-open` to print a browser link. Set `RESPAWNED_API_URL` to that loopback URL in CLI terminals using a custom port. Local `respawned serve` starts the engine without opening a browser; `--api-only` disables the bundled UI. Ctrl+C stops a foreground engine; PostgreSQL remains separate.
+
+Remote CLI and SDK clients use `RESPAWNED_API_URL` and `RESPAWNED_REVIEW_TOKEN`. The same connection is used by `RespawnedClient.from_env()`. Workflow clients need only the URL, access credential or local discovery, and optional timeout. See [engine access](https://respawned.williamshayden.com/#access-and-draft-version-tokens).
+
+PostgreSQL holds records, activities, drafts, outbox reservations and receipts, workspace definitions, and saved model settings. Preserve the engine environment and any custom policy file separately from database backups.
+
+## Installation options
+
+To inspect the script before running it:
+
+```sh
+curl -fsS https://respawned.williamshayden.com/install.sh -o install.sh
+# Read install.sh, then run it.
+sh install.sh
+```
+
+The installer verifies the wheel checksum, installs into `~/.local/share/respawned/2.2.0`, and adds `~/.local/bin/respawned`. It leaves shell startup files unchanged and refuses to overwrite unrelated commands. Use `sh install.sh --prefix /absolute/path` for another prefix.
+
+[Download package](https://respawned.williamshayden.com/downloads/respawned-2.2.0-py3-none-any.whl) · [Checksums](https://respawned.williamshayden.com/SHA256SUMS)
+
+### Direct package installation
 
 Install the wheel into an existing Python 3.12+ environment:
 
 ```sh
-python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-2.1.0-py3-none-any.whl'
+python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-2.2.0-py3-none-any.whl'
 ```
 
-The [source archive](https://respawned.williamshayden.com/downloads/respawned-2.1.0.tar.gz) also includes the prebuilt UI and connector example. Package installation does not run a frontend build.
+The [source archive](https://respawned.williamshayden.com/downloads/respawned-2.2.0.tar.gz) also includes the prebuilt UI and connector example. Package installation does not run a frontend build.
 
-## Upgrading to 2.1
+## Upgrading to 2.2
 
 1. Stop the engine before upgrading; use Ctrl+C for a foreground `ui` or `serve` process. Keep PostgreSQL running for backup.
 2. Back up the existing database and preserve the engine environment and any custom policy file.
 3. Download the current website installer again using [Install and start](#install-and-start), then run it with the same prefix. A previously downloaded installer remains pinned to its original release. For a direct Python installation, update the wheel in that same environment using [Direct package installation](#direct-package-installation).
-4. On the engine host, check `respawned --version`, run `respawned init` with the existing database settings, and restart with the usual `ui` or `serve` command. Run `respawned status` from another terminal to check the running engine, then reload the browser and reconnect clients.
+4. Restart with the usual `ui` or `serve` command and existing database settings. Check readiness, then reload the browser and reconnect clients. Separately installed clients can use `respawned status` to check the running engine.
 
-Use the 2.1.0 CLI and Python SDK with the 2.1.0 engine for the qualified combination. Update separately installed client environments to the same release. The matching browser UI is bundled with the engine.
+Use matching 2.2.0 client and engine installations for this release. The browser UI ships with the engine.
 
 The installer retains earlier version environments and has no uninstall command. To remove an installer-managed copy, stop the engine and remove its `bin/respawned` symlink and `share/respawned` program directory under the chosen prefix, after confirming they belong to this installation. Preserve PostgreSQL, its backups, and external configuration when removing program files.
+
+### Upgrading to 2.1
+
+The `status` command introduced in 2.1 reports client and engine versions and readiness. Use `status --json` for scripts or `--version` to read the installed client version offline. Status accepts minor and patch differences within the same major; it does not prove every client/engine pair has been tested. Older 2.0 health responses omit the engine version. See [status and exit codes](https://respawned.williamshayden.com/api/#engine-status-and-versions).
 
 ### Upgrading to 2.0
 

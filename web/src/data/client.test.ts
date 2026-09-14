@@ -17,6 +17,20 @@ function memoryStorage(): StorageLike {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('synthetic review client', () => {
+  it('keeps manual copy exact and pending, and never overwrites a competing draft', async () => {
+    const client = createDemoClient(null)
+    expect(await client.supportsManualDraft()).toBe(true)
+    const copy = 'Hi Jordan, Thursday afternoon works for me.'
+    const draft = await client.draft('job-aster-platform', copy)
+    expect(draft).toMatchObject({ body: copy, status: 'pending', outbox_id: null })
+    expect(await client.listOutbox()).toEqual([])
+    expect(await client.draft('job-aster-platform', `  ${copy}  `)).toEqual(draft)
+    await expect(client.draft('job-aster-platform', 'A competing message.')).rejects.toMatchObject({ status: 409 })
+    expect(await client.draft('job-aster-platform')).toEqual(draft)
+    await expect(client.draft('job-meridian-design', '')).rejects.toMatchObject({ status: 422 })
+    expect((await client.getRecord('job-meridian-design')).draft).toBeUndefined()
+  })
+
   it('is explicit, frozen, source-neutral, and never fetches', async () => {
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)

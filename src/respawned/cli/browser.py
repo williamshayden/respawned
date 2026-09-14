@@ -3,6 +3,7 @@ import asyncio
 import socket
 import webbrowser
 
+from respawned.client import RespawnedClient
 from respawned.local_connection import publish_local_token
 
 
@@ -23,9 +24,21 @@ def launch_ui(port: int, *, open_browser: bool = True, show_ui_link: bool = True
             while not server.started and not server.should_exit:
                 await asyncio.sleep(0.05)
             if server.started:
-                print(f"Respawned engine: {manager.origin}\nLocal CLI access is ready.", flush=True)
+                print(f"Respawned engine: {manager.origin}\nLocal CLI access: connected.", flush=True)
                 if port != 8000:
                     print(f"For this engine: respawned --api-url {manager.origin} <command>", flush=True)
+                # Public diagnostics send no credentials or model requests. Use a
+                # worker so this server can answer while the launcher waits.
+                result = await asyncio.to_thread(RespawnedClient(manager.origin, timeout=5).status)
+                readiness = result["readiness"]
+                if readiness["status"] == "ready":
+                    print("Engine readiness: ready (database and policy).", flush=True)
+                else:
+                    print("Engine readiness: not ready.", flush=True)
+                    detail = readiness["detail"] or result["health"]["detail"]
+                    if detail:
+                        print(detail, flush=True)
+                    print("Check the engine's database settings and RESPAWNED_POLICY_PATH.", flush=True)
                 if show_ui_link:
                     print(f"Browser link (one use, valid for 5 minutes):\n{manager.launch_url}", flush=True)
                 if open_browser:

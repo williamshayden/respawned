@@ -232,8 +232,8 @@ def test_model_failures_are_server_results_and_supplied_copy_recovers(cli):
     assert "1 skipped" in cli.run("review", input="s\n").stdout
 
 
-def start_review_at_prompt(cli):
-    arguments = [sys.executable, "-m", "respawned", "review"]
+def start_review_at_prompt(cli, record_id=None):
+    arguments = [sys.executable, "-m", "respawned", "review", *([record_id] if record_id is not None else [])]
     process = subprocess.Popen(arguments, cwd=cli.directory, env=cli.environment,
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     cli.processes.append(process)
@@ -257,11 +257,12 @@ def start_review_at_prompt(cli):
 
 
 @pytest.mark.parametrize("change", ["recipient", "closed", "cooldown", "concurrent-edit"])
-def test_cli_review_never_reapproves_after_stale_display(cli, change):
+@pytest.mark.parametrize("targeted", [False, True])
+def test_cli_review_never_reapproves_after_stale_display(cli, change, targeted):
     original = record()
     cli.ingest([original], [event()])
     draft = cli.draft("one", "Hi Avery, would Thursday work?")
-    process, displayed = start_review_at_prompt(cli)
+    process, displayed = start_review_at_prompt(cli, "one" if targeted else None)
     assert b"one@example.com" in displayed
     if change == "recipient":
         cli.ingest([original | {"contact_email": "another@example.com"}], [event()])
@@ -279,6 +280,55 @@ def test_cli_review_never_reapproves_after_stale_display(cli, change):
     approvals = [item for item in cli.requests if item["path"].endswith("/approve")]
     assert len(approvals) == 1
     assert json.loads(approvals[0]["body"])["review_token"] == draft["review_token"]
+    assert cli.model_resolutions == 0
+
+
+def test_record_review_approves_only_supplied_copy_without_sync_or_model_configuration(cli):
+    selected = "source/selected-record"
+    cli.ingest([record(selected), record("unrelated")], [event(selected), event("unrelated")])
+    saved = cli.draft(selected, "Hi Avery, can we meet Thursday?")
+    before = {table: cli.rows(table) for table in ("sync_runs", "candidates", "drafts")}
+    requests_before = len(cli.requests)
+    cli.policy = replace(cli.policy, review=ReviewPolicy("automatic"))
+    edited = "Hi Avery, café on Friday?"
+
+    output = cli.run("review", selected, input=f"e\n{edited}\na\n").stdout
+
+    assert "1 approved" in output and "0 blocked" in output
+    assert "Unsent" in output and "Automatically authorized" not in output
+    assert cli.model_resolutions == 0 and cli.model_calls == []
+    assert cli.rows("sync_runs") == before["sync_runs"]
+    assert cli.rows("candidates") == before["candidates"]
+    assert len(cli.rows("drafts")) == len(before["drafts"]) == 1
+    assert cli.rows("drafts")[0]["id"] == before["drafts"][0]["id"]
+    requests = cli.requests[requests_before:]
+    assert [(item["method"], item["path"]) for item in requests] == [
+        ("GET", f"/v1/workflow/records/{selected}"),
+        ("GET", f"/v1/workflow/drafts/{saved['id']}"),
+        ("POST", f"/v1/workflow/drafts/{saved['id']}/edit"),
+        ("POST", f"/v1/workflow/drafts/{saved['id']}/approve"),
+    ]
+    outbox = cli.rows("outbox")
+    assert len(outbox) == 1 and outbox[0]["body"] == edited
+    assert outbox[0]["authorization_mode"] == "human" and outbox[0]["status"] == "pending"
+    assert outbox[0]["opportunity_ids"] == [selected]
+    pending = json.loads(cli.run("outbox", "--pending", "--json").stdout)
+    assert len(pending["items"]) == 1 and pending["items"][0]["body"] == edited
+    already_reviewed = cli.run("review", selected).stdout
+    assert "already approved" in already_reviewed and "Action:" not in already_reviewed
+    assert cli.rows("outbox") == outbox
+
+
+def test_record_review_missing_saved_draft_never_generates(cli):
+    cli.ingest([record()], [event()])
+    before = len(cli.requests)
+    missing = cli.run("review", "one", expected=1)
+    assert "No saved draft" in missing.stdout and "--body-file" in missing.stdout
+    assert "Action:" not in missing.stdout
+    unknown = cli.run("review", "missing-record", expected=1)
+    assert "HTTP 404" in unknown.stderr and "Action:" not in unknown.stdout
+    assert all(item["method"] == "GET" for item in cli.requests[before:])
+    assert cli.rows("sync_runs") == cli.rows("drafts") == cli.rows("outbox") == []
     assert cli.model_resolutions == 0
 
 

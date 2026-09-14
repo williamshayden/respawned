@@ -4,9 +4,9 @@ import type { Workspace } from '../data/workspaces'
 import type { EngineConnection } from '../data/connections'
 
 const destinations = [
-  { name: 'Overview', icon: LayoutDashboard }, { name: 'Connections', icon: Network },
   { name: 'Review queue', icon: NotebookText }, { name: 'Reply inbox', icon: Mail },
-  { name: 'Outbox', icon: Send }, { name: 'Activity', icon: BarChart3 }, { name: 'Policy', icon: ShieldCheck },
+  { name: 'Outbox', icon: Send }, { name: 'Activity', icon: BarChart3 },
+  { name: 'Overview', icon: LayoutDashboard }, { name: 'Connections', icon: Network }, { name: 'Policy', icon: ShieldCheck },
   { name: 'Setup', icon: Settings2 },
 ] as const
 
@@ -28,19 +28,19 @@ export function Sidebar(props: Props) {
       </a>
       <button className="icon-button mobile-close" aria-label="Close navigation" onClick={props.onClose}><X /></button>
       <div className="workspace-selector">
-        <label htmlFor="engine-connection">Engine</label>
+        {props.connections.length > 1 ? <><label htmlFor="engine-connection">Engine</label>
         <div className="select-wrap">
           <select id="engine-connection" value={props.activeConnectionId} onChange={event => props.onConnection(event.target.value)}>
             {props.connections.map(connection => <option key={connection.id} value={connection.id}>{connection.name}</option>)}
           </select><ChevronDown size={16} aria-hidden="true" />
-        </div>
-        <label htmlFor="context-scope">Workspace</label>
+        </div></> : <p className="workspace-identity">{props.connections[0]?.name ?? 'Local engine'}</p>}
+        {props.workspaces.length > 0 ? <><label htmlFor="context-scope">Workspace</label>
         <div className="select-wrap">
           <select id="context-scope" value={props.scope} onChange={event => props.onScope(event.target.value)}>
             <option value="all">All work</option>
             {props.workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
           </select><ChevronDown size={16} aria-hidden="true" />
-        </div>
+        </div></> : <p className="workspace-scope">All work</p>}
         <button className="text-button manage-workspaces" aria-current={props.page === 'Workspaces' ? 'page' : undefined} onClick={() => props.onNavigate('Workspaces')}><FolderCog size={16} />Manage workspaces</button>
       </div>
       <nav aria-label="Main navigation">

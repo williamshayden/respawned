@@ -9,7 +9,7 @@ import pytest
 from rich.console import Console
 
 from respawned.client import APIError
-from respawned.cli.review import ReviewSummary, run_review
+from respawned.cli.review import ReviewSummary, run_record_review, run_review
 from respawned.cli.ui import prompt_choice
 
 
@@ -53,6 +53,15 @@ class Client:
     def draft_candidate(self, identity):
         self.call("draft", identity)
         return deepcopy(self.drafts[identity])
+
+    def get_record(self, identity):
+        self.call("get_record", identity)
+        saved = next((value for value in self.drafts.values() if value["primary_opportunity_id"] == identity), None)
+        return {"id": identity, "draft": deepcopy(saved)}
+
+    def get_draft(self, identity):
+        self.call("get_draft", identity)
+        return deepcopy(next(value for value in self.drafts.values() if value["id"] == identity))
 
     def edit_draft(self, identity, body, review_token):
         self.call("edit", identity, body, review_token)
@@ -178,3 +187,72 @@ def test_interrupted_review_skips_without_writing(during_edit, interruption):
                          message_prompt=cancel)
     assert summary == ReviewSummary(presented=1, skipped=1)
     assert not [call for call in client.calls if call[0] in {"edit", "approve", "reject"}]
+
+
+def test_record_review_uses_the_fresh_saved_snapshot_and_no_drafting():
+    client, output = Client([candidate("one"), candidate("two")]), console()
+    selected = next(value for value in client.drafts.values() if value["primary_opportunity_id"] == "one")
+    original_get = client.get_draft
+
+    def updated_snapshot(identity):
+        return {**original_get(identity), "body": "Hi Jamie, updated saved copy.", "review_token": "c" * 64}
+
+    client.get_draft = updated_snapshot
+
+    def approve(*_args, **_kwargs):
+        assert "updated saved copy" in output.export_text()
+        return "a"
+
+    result = run_record_review(client, "one", console=output, action_prompt=approve)
+
+    assert result == ReviewSummary(presented=1, approved=1)
+    assert client.calls == [("get_record", "one"), ("get_draft", selected["id"]),
+                            ("approve", selected["id"], "c" * 64)]
+    assert "Record: two" not in output.export_text()
+
+
+def test_record_review_without_saved_copy_stops_before_prompting_or_generating():
+    client, output = Client([]), console()
+    result = run_record_review(client, "one", console=output,
+                               action_prompt=lambda *_args, **_kwargs: pytest.fail("No saved draft prompted"))
+    assert result == ReviewSummary(blocked=1)
+    assert client.calls == [("get_record", "one")]
+    rendered = output.export_text()
+    assert "No saved draft" in rendered and "--body-file" in rendered
+
+
+@pytest.mark.parametrize("status", ["approved", "rejected"])
+def test_record_review_reports_an_already_reviewed_draft_without_another_decision(status):
+    client, output = Client(), console()
+    saved = next(iter(client.drafts.values()))
+    saved.update(status=status, outbox_id=17 if status == "approved" else None)
+    result = run_record_review(client, "one", console=output,
+                               action_prompt=lambda *_args, **_kwargs: pytest.fail("Completed draft prompted"))
+    assert result == ReviewSummary()
+    assert client.calls == [("get_record", "one"), ("get_draft", saved["id"])]
+    rendered = output.export_text()
+    assert f"already {status}" in rendered
+    assert "Unsent" not in rendered
+
+
+def test_record_review_refuses_a_draft_for_another_record():
+    client = Client()
+    original_get = client.get_draft
+    client.get_draft = lambda identity: {**original_get(identity), "primary_opportunity_id": "another"}
+    with pytest.raises(APIError, match="does not match this record"):
+        run_record_review(client, "one", console=console(),
+                          action_prompt=lambda *_args, **_kwargs: pytest.fail("Mismatched draft prompted"))
+    assert [call[0] for call in client.calls] == ["get_record", "get_draft"]
+
+
+@pytest.mark.parametrize("operation", ["edit", "approve"])
+def test_record_review_stops_after_an_unknown_mutation_result(operation):
+    client = Client()
+    client.failures[operation] = APIError("Lost response", ambiguous=True)
+    actions = iter(("e", "a") if operation == "edit" else ("a",))
+    result = run_record_review(client, "one", console=console(),
+                               action_prompt=lambda *_args, **_kwargs: next(actions),
+                               message_prompt=lambda *_args: "Updated saved copy")
+    assert result == ReviewSummary(presented=1, blocked=1)
+    assert len([call for call in client.calls if call[0] == operation]) == 1
+    assert client.calls[-1][0] == operation

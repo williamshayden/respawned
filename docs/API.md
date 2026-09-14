@@ -2,7 +2,7 @@
 
 The browser, CLI, and Python client call the same HTTP API. The engine stores records, evaluates policy, validates drafts, and records review and delivery results.
 
-Start with [Agent integration](AGENT_INTEGRATION.md). The running engine serves interactive schemas at `/docs` and machine-readable schemas at `/openapi.json`.
+For a first result, import confirmed facts, submit draft text, and have a person approve the saved draft to the unsent outbox. A sending integration delivers approved text and records the confirmed receipt. Start with [Agent integration](AGENT_INTEGRATION.md). The running engine serves interactive schemas at `/docs` and machine-readable schemas at `/openapi.json`.
 
 ## API access
 
@@ -29,14 +29,13 @@ A draft's `review_token` identifies the version being reviewed. It is not an acc
 
 ```bash
 respawned status
-respawned status --json
 ```
 
-Status reads public `GET /healthz` and `GET /readyz` without sending an access credential. The client needs no database settings and invokes no model. `/healthz` checks process liveness; `/readyz` checks the engine's database, schema, and policy. A successful status check does not establish workflow authorization.
+Use `status --json` for the same report in scripts. Status reads public `GET /healthz` and `GET /readyz` without sending an access credential. The client needs no database settings and invokes no model. `/healthz` checks process liveness; `/readyz` checks the engine's database, schema, and policy. A successful status check does not establish workflow authorization.
 
 Set `RESPAWNED_API_URL` or use `respawned status --api-url https://engine.example.com --timeout 5` to check another engine. The timeout applies separately to each HTTP request; requests are not retried.
 
-The report includes client and engine versions, readiness, and major-version compatibility. Different minor or patch versions within the same major are displayed and accepted by the status check. The qualified client/SDK and engine pair for this release is 2.1.0. `/v1` identifies the HTTP route contract and is separate from the package version.
+The report includes client and engine versions, readiness, and major-version compatibility. Different minor or patch versions within the same major are displayed and accepted by the status check. Use matching 2.2.0 client/SDK and engine installations for this release. `/v1` identifies the HTTP route contract and is separate from the package version.
 
 The `--json` output and SDK return dictionary contain:
 
@@ -172,7 +171,7 @@ curl --fail-with-body \
 
 Here `draft.json` contains `{"body":"your draft text"}`. Submit `{}` to use the engine's configured backend.
 
-Draft responses include `id`, `body`, `status`, `review_token`, `validation_errors`, and nullable `outbox_id`. Draft-detail and candidate-draft responses also include candidate and record IDs, saved contact details, channel, and timestamps.
+Successful draft responses describe committed state and include `id`, `body`, `status`, `review_token`, `validation_errors`, and nullable `outbox_id`. Use that response to report a saved draft; an additional read is needed when recovering from an uncertain write or fetching fresh state for a later edit or review. Draft-detail and candidate-draft responses also include candidate and record IDs, saved contact details, channel, and timestamps.
 
 Identical existing copy is reused. Different text returns 409; read the current draft and use its version token to edit. Record-level drafting evaluates current eligibility without replacing the published queue.
 
@@ -180,7 +179,9 @@ Identical existing copy is reused. Different text returns 409; read the current 
 
 Edits, approvals, and rejections submit the displayed `review_token`. A stale version returns 409; reopen the current draft. Approval also rechecks the recipient, referenced records, and contact-wide cooldown before reserving one outbox item.
 
-`respawned review` evaluates a bounded queue and always asks for human decisions. Enter skips. New copy is generated only when a draft is missing. Existing drafts can be reviewed without a model.
+In 2.2, `respawned review RECORD_ID` reads that record and its current saved draft, then prompts for a human decision. It does not sync the queue or generate copy. A missing saved draft returns guidance to prepare one first; an already reviewed draft is reported without another decision prompt. `--limit` cannot be combined with a record ID.
+
+Bare `respawned review` retains batch behavior: it evaluates a bounded queue and prompts for human decisions, generating copy only when a draft is missing. Enter skips. Existing drafts need no model.
 
 Explicit review records human authorization even when automatic processing is configured. Rejection suppresses unchanged candidate evidence; relevant record, route, or evidence changes can produce a new candidate.
 
@@ -348,4 +349,4 @@ Drafting receives bounded record, contact, tone, and sender context. The engine 
 
 The 2.0.0 CLI and Python SDK were qualified with the 2.0.0 engine. The browser UI ships with its engine release. For current version checks and compatibility, see [Engine status and versions](#engine-status-and-versions).
 
-Stop the engine and back up PostgreSQL before upgrading. Install the current package, run `respawned init` on the engine host, restart the engine, and reconnect clients. See the [installation guide](../README.md#install-and-start) for the current installer.
+Stop the engine and back up PostgreSQL before upgrading. Install the current package, restart the engine with the existing database settings, and reconnect clients. Startup initializes the schema; `respawned init` remains an optional explicit check. See the [installation guide](../README.md#install-and-start) for the current installer.

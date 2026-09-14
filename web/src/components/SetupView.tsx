@@ -107,13 +107,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
   const databaseReady = status?.database.status === 'ready'
   const outboxIntegration = status?.outbox.mode === 'api_and_export' ? status.outbox : null
 
-  return <div className="setup-view">
-    <div className="setup-intro">
-      {connected && <div className="setup-template-actions"><button className="button primary" disabled={savingModel || importing} onClick={onOpenReview}>Open review queue<ArrowUpRight size={16} /></button><button className="button" disabled={savingModel || importing} onClick={() => sourceSection.current?.scrollIntoView({ block: 'start' })}>Go to import</button></div>}
-      <button className="button small" disabled={loading || savingModel || importing} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={14} className={loading ? 'spin' : ''} />Refresh status</button></div>
-    {statusError && <p className="inline-error" role="alert">{statusError}</p>}
-
-    <section className="setup-section" aria-labelledby="setup-access-title">
+  const accessSection = <section className="setup-section" aria-labelledby="setup-access-title">
       <div className="setup-section-heading"><KeyRound size={21} /><h2 id="setup-access-title">Engine access</h2></div>
       <div className="setup-section-body">
         <div className="setup-heading-row"><p>{baseUrl ? `Engine: ${baseUrl}` : isLocalSession(token) ? 'Local browser session' : 'Open the link from respawned ui, or enter a server access token.'}</p><span className={`setup-state ${connected ? 'is-ready' : ''}`}>{connected ? 'Unlocked' : 'Locked'}</span></div>
@@ -140,6 +134,14 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
       </div>
     </section>
 
+  return <div className="setup-view">
+    <div className="setup-intro">
+      {connected && <div className="setup-template-actions"><button className="button" disabled={savingModel || importing} onClick={onOpenReview}>Open review queue<ArrowUpRight size={16} /></button></div>}
+      <button className="button small" disabled={loading || savingModel || importing} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={14} className={loading ? 'spin' : ''} />Refresh status</button></div>
+    {statusError && <p className="inline-error" role="alert">{statusError}</p>}
+
+    {!connected && accessSection}
+
     <section className="setup-section" aria-labelledby="setup-source-title" ref={sourceSection}>
       <div className="setup-section-heading"><Database size={21} /><h2 id="setup-source-title">Records & sources</h2></div>
       <div className="setup-section-body">
@@ -156,7 +158,7 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
             const result = await importRecords(token, preview.payload, baseUrl)
             if (currentAccess.current !== startedWith) return
             setImportText('')
-            setImportNotice(`Imported ${result.opportunities_upserted} record${result.opportunities_upserted === 1 ? '' : 's'} and ${result.activities_inserted} new activit${result.activities_inserted === 1 ? 'y' : 'ies'}. Open the review queue and evaluate next actions.`)
+            setImportNotice(`Imported ${result.opportunities_upserted} record${result.opportunities_upserted === 1 ? '' : 's'} and ${result.activities_inserted} new activit${result.activities_inserted === 1 ? 'y' : 'ies'}. Your records are ready to review.`)
             onImported?.()
           } catch (error) { if (currentAccess.current === startedWith) setImportError(message(error, 'Could not import the records.')) }
           finally { if (currentAccess.current === startedWith) setImporting(false) }
@@ -190,14 +192,18 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
           }}>{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? 'Copied' : 'Copy template'}</button></div>
           <pre><code>{IMPORT_TEMPLATE}</code></pre>
           <p>Replace the template values before importing. To integrate a source tool, send the same JSON to <code>POST {status?.sources.import_url ?? '/v1/workflow/import'}</code> with <code>Authorization: Bearer &lt;engine access token&gt;</code>. Import confirmed human replies as activities with <code>direction: "inbound"</code> and <code>classification: "human"</code>. Automated acknowledgments should use <code>classification: "automated"</code>.</p>
-          <p>There is no automatic mailbox or CRM sync in this version. “Evaluate queue” evaluates the records already imported; it does not fetch from external tools.</p>
+          <p>There is no automatic mailbox or CRM sync in this version. Refresh reads the records and activity already imported; it does not fetch from external tools.</p>
         </details>
       </div>
     </section>
 
+    {connected && accessSection}
+
     <section className="setup-section" aria-labelledby="setup-model-title">
       <div className="setup-section-heading"><Server size={21} /><h2 id="setup-model-title">Model backend</h2></div>
       <div className="setup-section-body">
+        <p>Only needed for Generate draft. Importing and reviewing records do not use a model.</p>
+        <details className="setup-optional"><summary>Configure model (optional)</summary>
         <div className="setup-heading-row"><p>Used to generate drafts.</p><span className={`setup-state ${status?.model.ready ? 'is-ready' : ''}`}>{!connected ? 'Unlock to configure' : status?.model.ready ? 'Configured' : loading ? 'Loading settings' : 'Setup needed'}</span></div>
         {!connected && <p className="setup-note">Unlock engine access to view and save the server’s model settings.</p>}
         {status?.model.error && <p className="inline-error">{status.model.error}. Enter valid settings below to replace it.</p>}
@@ -230,12 +236,15 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
           <div className="setup-form-actions"><p>Saving makes no model request. Generating a draft sends its drafting context to this backend.</p><button type="submit" className="button primary" disabled={savingModel || !databaseReady}>{savingModel && <LoaderCircle size={16} className="spin" />}Save model settings</button></div>
         </form>}
         {connected && model && <details className="setup-details"><summary>Backend configuration help</summary>{model.backend === 'codex_cli' ? <p>The CLI adapter uses the executable and runtime configured on the server. Set <code>RESPAWNED_CODEX_BIN</code> if the executable is not on PATH. When calling a Windows executable from WSL, set <code>RESPAWNED_CODEX_SCRATCH_DIR</code> to an existing directory on a mounted Windows drive.</p> : <><p>For a local model server, use its API base URL and the exact model name it serves. For LiteLLM, use the proxy URL, a model alias from its configuration, and <code>LITELLM_MASTER_KEY</code>. A direct provider can use <code>RESPAWNED_MODEL_API_KEY</code>.</p><p>If your local backend needs no authentication, set a local-only value in the selected server credential variable. This API adapter requires a value, even when the backend ignores it.</p></>}</details>}
+        </details>
       </div>
     </section>
 
     <section className="setup-section" aria-labelledby="setup-outbox-title">
       <div className="setup-section-heading"><Mail size={21} /><h2 id="setup-outbox-title">Outbox & delivery</h2></div>
       <div className="setup-section-body">
+        <p>Approval saves an unsent message. Choose a delivery option when you are ready.</p>
+        <details className="setup-optional"><summary>Delivery options</summary>
         {outboxIntegration ? <>
           <div className="setup-heading-row"><p>Your tools can collect approved messages through the API, send them, and record the confirmed result.</p></div>
           <ol className="setup-delivery-steps"><li>Poll <code>GET {outboxIntegration.pending_url}</code> for approved, unsent messages.</li><li>Send through your own mail or messaging service.</li><li>Record its confirmed result with <code>POST {outboxIntegration.receipt_url}</code>.</li></ol>
@@ -247,7 +256,8 @@ export function SetupView({ connected, token, onConnect, onDisconnect, onImporte
           <ol className="setup-delivery-steps"><li>Review and approve the exact message text.</li><li>Open the outbox and export the approved messages.</li><li>Send through your own mail or messaging tool, then import the actual outbound event.</li></ol>
           <p className="setup-note">No email account, SMS provider, or sending worker is connected. Exporting does not mark a message sent; the UI keeps its recorded outbox status.</p>
         </> : <p className="setup-note">{connected ? 'Load server status to view the available outbox integrations.' : 'Unlock engine access to view this server’s outbox integrations.'}</p>}
-        <button className="button" disabled={!connected} onClick={onOpenOutbox}>Open outbox<ArrowUpRight size={17} /></button>
+        </details>
+        <button className="button setup-outbox-link" disabled={!connected} onClick={onOpenOutbox}>Open outbox<ArrowUpRight size={17} /></button>
       </div>
     </section>
   </div>

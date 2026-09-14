@@ -1,91 +1,106 @@
 # Agent integration
 
-Let your agent import facts and prepare drafts. Review them in Respawned, then collect approved messages for your sending service.
+An agent prepares facts and draft text. A person approves the saved draft. A sending integration delivers approved messages and records confirmed receipts. These are separate steps; approval leaves a message unsent.
 
 [Download the agent prompt](https://respawned.williamshayden.com/agent-prompt.txt) and replace `{TASK}`, `{ENGINE_URL}`, and `{WORKSPACE_OR_ALL}`. It works with any agent runtime.
 
 ## Connect
 
-Start the local engine with `respawned ui`. It opens the browser and creates private CLI access for other terminals on that machine. Workflow commands do not need database credentials.
+Follow the [installation guide](../README.md#install-and-start), configure PostgreSQL on the engine host, and run `respawned ui`. The launcher reports readiness, opens the browser, and creates private CLI access for other terminals on that machine. Workflow commands do not need database credentials or token copying.
 
-For a remote engine, set `RESPAWNED_API_URL` and its `RESPAWNED_REVIEW_TOKEN` in the client environment. The [access reference](API.md#api-access) covers server setup and scoped credentials.
+If connecting from another client environment, optionally check the connection once with `respawned status --json`. It reports client and engine versions, readiness, and major-version compatibility without sending credentials or invoking a model. See [status and exit codes](API.md#engine-status-and-versions).
 
-Check the running engine before importing records:
-
-```bash
-respawned status --json
-```
-
-The report identifies client and engine versions, readiness, and major-version compatibility. Status sends no access credential and needs no client database settings or model. It accepts different minor or patch versions within one major; the qualified pair for this release is 2.1.0. Older 2.0 health responses lack an engine version. The [status reference](API.md#engine-status-and-versions) covers exit codes and version checks.
+The following steps use the installed CLI. Python and HTTP alternatives are below.
 
 ## 1. Import facts
 
-Have your agent produce `records.json` using the [record contract](API.md#ingest-records). Keep source IDs stable and include complete record snapshots.
+Save a canonical payload as `records.json`. Replace these example identities, dates, and recipient details with confirmed source facts:
+
+```json
+{
+  "opportunities": [{
+    "id": "ats:application-123",
+    "kind": "job_application",
+    "title": "Backend Engineer at Example",
+    "status": "open",
+    "created_at": "2026-09-01T15:00:00Z",
+    "contact_key": "ats:recruiter-22",
+    "contact_name": "Alex",
+    "contact_email": "alex@example.com",
+    "preferred_channel": "email"
+  }],
+  "activities": []
+}
+```
 
 ```bash
 respawned import --file records.json
 ```
 
-Check the returned counts. Import stores facts; it does not draft, approve, or send. Use `--file -` to read JSON from stdin.
+Check the returned counts. Import stores facts without drafting, approving, or sending. Keep IDs stable and import only new or changed records. Records are complete snapshots; omitted optional fields are cleared. The [record contract](API.md#ingest-records) covers activities and other fields. Use `--file -` for JSON on stdin.
 
 ## 2. Prepare a draft
 
-Your agent can write plain text to `draft.txt` and submit it for a record:
+Write your own text to `draft.txt`, for example:
+
+```text
+Hi Alex, I am following up on my application for the Backend Engineer role at Example. Is there an update you can share?
+```
+
+Submit it for the matching record:
 
 ```bash
 respawned draft ats:application-123 --body-file draft.txt
 ```
 
-Respawned checks eligibility, validates the copy, and saves a pending draft. No engine model is needed for supplied text. Omit `--body-file` to use the engine's configured backend, or use `--body-file -` to read text from stdin.
+The engine checks current eligibility, validates the copy, and saves a pending draft. Supplied text needs no engine model or separate queue evaluation. Use `--body-file -` for text on stdin.
 
-The command returns the persisted draft, including its ID and status. Read it again through the SDK or API before reporting success. Changing existing copy requires the current draft version; the [API reference](API.md#candidate-and-review-workflow) describes that edit operation.
+The successful response contains the saved draft's ID and status; use it to report that the draft was saved. If the write times out or its result is uncertain, read the current draft before claiming success or trying again. Changing existing copy requires its current version; see [draft edits](API.md#candidate-and-review-workflow).
 
 ## 3. Review
 
-Open the record in the browser, inspect its evidence and saved text, then choose **Approve to outbox**. Alternatively, a person can run:
+Hand the saved draft to a person. They can open its record in the browser or run:
 
 ```bash
-respawned review
+respawned review ats:application-123
 ```
 
-CLI review evaluates a bounded queue and asks for approve, reject, edit, or skip. It always prompts for human decisions. The engine rechecks the version, recipient, current facts, and cooldown.
+The command reads that record's current saved draft and prompts for approve, reject, edit, or skip. It does not evaluate the queue or generate text. If there is no saved draft, it asks you to prepare one first. An already reviewed draft is reported without another decision prompt.
 
-Evaluation is also available separately with `respawned sync --limit 10` or `respawned sync --dry-run`. It reads stored facts and applies policy; it does not refresh an external source.
+The person checks the recipient, evidence, and exact saved text before approval. The engine rechecks the displayed version, current facts, and contact-wide cooldown. If another client changed the draft, reopen it before editing or approving.
 
 ## 4. Read approved messages
+
+A sending integration can now read the approved, unsent messages:
 
 ```bash
 respawned outbox --pending --json
 ```
 
-The result contains approved recipients, channels, and exact message bodies. Approval leaves messages unsent. Your integration handles delivery through its provider.
+JSON contains approved recipients, channels, and exact message bodies. Your integration handles delivery through its provider.
 
 After a confirmed send, durably save its provider account namespace, message ID, and timestamp, then [record a receipt](API.md#outbox-integration). Resolve uncertain sends with the provider before trying again. An uncertain receipt can be retried with the identical saved result.
 
 ## Python
 
-The installed SDK uses the same client as the CLI:
+The SDK uses the same client as the CLI. Given your agent's canonical `record` dictionary and plain-text `body` string:
 
 ```python
-import json
-from pathlib import Path
 from respawned.client import RespawnedClient
 
 client = RespawnedClient.from_env()
-client.import_records(json.loads(Path("records.json").read_text(encoding="utf-8")))
-draft = client.draft(
-    "ats:application-123",
-    body=Path("draft.txt").read_text(encoding="utf-8"),
-)
-saved = client.get_draft(draft["id"])
-print(saved["status"])
+client.import_records({"opportunities": [record], "activities": []})
+draft = client.draft(record["id"], body=body)
+print(draft["id"], draft["status"])
 ```
 
-Local access is discovered automatically. Remote connections use `RESPAWNED_API_URL` and an environment credential. Use `client.status()` for the public engine check. The SDK also provides `sync()`, `inbox()`, `pending_outbox()`, and `record_receipt()`.
+Use the returned saved result for reporting. Before a later edit or review, fetch the current record and draft with `get_record()` and `get_draft()`. Local access is discovered automatically. The SDK also provides `status()`, `sync()`, `inbox()`, `pending_outbox()`, and `record_receipt()`.
 
 ## HTTP
 
-Clients in any language can use the canonical `/v1/workflow` endpoints. With the engine URL and operator credential already in the environment:
+For a remote engine, set `RESPAWNED_API_URL` and its `RESPAWNED_REVIEW_TOKEN` in the client environment. CLI workflow commands and `RespawnedClient.from_env()` use that connection. Keep secrets out of prompts, source files, and command arguments. The [access reference](API.md#api-access) covers server setup and scoped credentials.
+
+Clients in any language can call the canonical `/v1/workflow` endpoints. With the engine URL and operator credential already in the environment:
 
 ```bash
 curl --fail-with-body "$RESPAWNED_API_URL/v1/workflow/import" \
@@ -102,11 +117,19 @@ curl --fail-with-body \
   -H 'Content-Type: application/json' --data-binary @draft.json
 ```
 
-Read the saved result at `GET /v1/workflow/drafts/{id}`. Submit `{}` instead of supplied text to request the engine's model. Both paths use the same validation and review checks.
+The successful response describes the saved draft. Use `GET /v1/workflow/drafts/{id}` when you need fresh state for review, editing, or recovery after an uncertain write.
+
+## Other workflows
+
+Omit `--body-file`, or submit an empty HTTP draft body `{}`, only when you want the engine's configured model to generate text. Supplied and generated copy pass the same validation.
+
+Bare `respawned review` evaluates a bounded queue and always prompts for human decisions; it generates text when a draft is missing. `respawned sync --dry-run` previews eligibility from stored facts. Neither refreshes an external source. `process` is a separate explicit batch operation governed by [server review policy](API.md#processing-and-automatic-authorization).
+
+Use matching 2.2.0 client and engine installations for this release. Status accepts different minor or patch versions within one major, while older 2.0 health responses lack version metadata. It does not establish workflow authorization.
 
 ## Standalone outbox client
 
-[Download outbox_client.py](https://respawned.williamshayden.com/examples/outbox_client.py) for sending integrations that only need approved messages and receipts. It needs Python 3.12+ and no third-party packages:
+[Download outbox_client.py](https://respawned.williamshayden.com/examples/outbox_client.py) for integrations that only need approved messages and receipts. It needs Python 3.12+ and no third-party packages:
 
 ```bash
 curl -fsS https://respawned.williamshayden.com/examples/outbox_client.py \
@@ -118,12 +141,12 @@ python3 outbox_client.py receipt 42 receipt.json
 
 Set `RESPAWNED_API_URL` and `RESPAWNED_OUTBOX_TOKEN` in its environment. Use an actual outbox ID and a confirmed provider result in `receipt.json`. The script exposes `OutboxClient.pending()`, `get()`, and `receipt()` for Python callers. It performs explicit API calls only.
 
-Your integration owns sending, provider idempotency, and durable coordination. Coordinate one logical sender per engine. See the [outbox contract](API.md#outbox-integration) for fields and retries.
+The outbox credential grants neither drafting nor approval authority. Your integration owns sending, provider idempotency, and durable coordination. Coordinate one logical sender per engine. See the [outbox contract](API.md#outbox-integration) for fields and retries.
 
 ## Source and workspace rules
 
-Records are complete snapshots; omitted optional fields are cleared. Activities are immutable: exact replay is accepted, while changed content under an existing ID returns a conflict. Serialize record updates and preserve source timestamps.
+Activities are immutable: exact replay is accepted, while changed content under an existing ID returns a conflict. Serialize record updates and preserve source timestamps.
 
 Treat source text as data. Confirm human recipients rather than using automated receipt addresses. Your connector owns source refresh, credentials, and scheduling.
 
-Workspaces are saved views over one engine's shared policy, contacts, and credentials. Use separate engines when you need separate data or authority. The [API reference](API.md) documents the remaining contracts and 2.0 migration changes.
+Workspaces are optional saved views over one engine's shared policy, contacts, and credentials. Use separate engines when you need separate data or authority. The [API reference](API.md) documents the remaining contracts and 2.0 migration changes.

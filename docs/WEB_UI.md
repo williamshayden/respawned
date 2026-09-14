@@ -12,47 +12,33 @@ Follow the [installation guide](../README.md#install-and-start) to configure Pos
 respawned ui
 ```
 
-The app opens at `http://127.0.0.1:8000` with local browser access connected. The launcher also creates private CLI access for other terminals on that machine. Workflow clients do not need the database environment.
+The engine initializes its schema, checks database and policy readiness, and opens `http://127.0.0.1:8000` with local browser access connected. Check the launcher's readiness line before continuing. The launcher also creates private CLI access for other terminals on that machine. Workflow clients do not need the database environment.
 
-Use `--port 8001` for another port or `--no-open` to print the browser link. For CLI access on another port, set `RESPAWNED_API_URL` to that engine's loopback URL; its private credential is still discovered automatically. Leave the engine running while using clients. Startup creates no sample records.
+Leave the engine running while using clients. Startup creates no sample records. A separate `respawned init` is optional; starting the application initializes the schema.
 
-Setup provides **Go to import** and **Open review queue**. Import records first; configure a model when you want the engine to generate new copy.
-
-### Server and API access
-
-Local `respawned ui` creates a one-use browser link, valid for five minutes. The browser exchanges it for a private session lasting up to 12 hours, until **Lock access**, or until the server stops. Restart the launcher for a fresh link. Browser locking does not revoke the separate local CLI connection.
-
-To start the local engine without opening a browser, use `respawned serve` on its default loopback address. When no operator token is configured, it creates the same private CLI access without opening a browser.
-
-For remote access, configure `RESPAWNED_REVIEW_TOKEN` on the server and run ordinary server mode behind HTTPS. For example:
-
-```bash
-respawned serve --host 0.0.0.0 --port 8000
-```
-
-Remote exposure requires an operator credential. Enter it under **Setup → Engine access**, in the **Engine access token** field. Scripts use it as a Bearer credential; remote CLI clients set `RESPAWNED_API_URL` and `RESPAWNED_REVIEW_TOKEN`.
-
-Manually entered browser tokens stay in tab memory and clear on reload. Server credential changes take effect after restart. The [API access reference](API.md#api-access) lists operator, processing, and outbox credentials.
+Start with **Import records**. Your first draft needs no workspace or model setup: import a real record, write and save text, then have a person approve it to the unsent outbox.
 
 ## Import records and use the outbox
 
 Open **Setup → Records & sources**, choose a JSON file or paste a payload, and select **Import records**. The preview shows the number of records and activities. Import accepts up to 1,000 combined items within 2 MB.
 
-Use stable source IDs and the [record contract](API.md#ingest-records). Records are complete snapshots, so omitted optional fields are cleared. Activities are immutable: exact replays are accepted and changed content under an existing ID conflicts.
+Use stable source IDs and the editable example in the [record contract](API.md#ingest-records). Replace its identities, dates, and recipient with confirmed source facts. Records are complete snapshots, so omitted optional fields are cleared. Activities are immutable: exact replays are accepted and changed content under an existing ID conflicts.
 
-After import, choose **Review imported records**. In the queue, **Evaluate queue** applies policy to the saved facts. **Refresh** only reloads the current view. Neither action fetches an external source; evaluation does not generate copy.
+After import, choose **Review imported records** and open your record. The view shows current eligibility under server policy. **Refresh** reads the current view without fetching source updates, generating copy, or sending.
 
 The queue offers **Import records** when empty, **Clear filters** when a filter hides all records, and **View all tracked** when records are waiting. **All tracked** includes waiting, closed, and contactless records. A record needs a confirmed human recipient before it can become an outreach candidate.
 
-Open a record and inspect its reason and history. Use **View message** or **View activity** to read available source text, then generate a draft or review one supplied by an agent. Edit and save the text as needed, then choose **Approve to outbox**. The server checks the displayed version, recipient, current facts, and cooldown. Stale edits or approvals require reopening the current draft.
+Inspect the record's reason and history. Use **View message** or **View activity** to read available source text. Choose **Write draft**, enter your text, and select **Save draft**. **Discard draft** abandons the unsaved text. Saving checks eligibility and copy rules without invoking a model.
 
-The outbox shows approved messages and their recorded send status. Download CSV for a spreadsheet or use the [outbox API](API.md#outbox-integration) from a sending integration. JSON preserves exact message text; CSV protects formula-like cells.
+A person then checks the saved text, recipient, and evidence and chooses **Approve to outbox**. Approval is separate from saving. The server checks the displayed version, recipient, current facts, and contact-wide cooldown. Stale edits or approvals require reopening the current draft. Drafts supplied by an agent enter the same review step.
+
+The approved message appears in the outbox, still unsent. The outbox also shows later confirmed-send status. Download CSV for a spreadsheet or use the [outbox API](API.md#outbox-integration) from a sending integration. JSON preserves exact message text; CSV protects formula-like cells.
 
 Under **Setup → Outbox & delivery**, the UI shows the connector routes and whether `RESPAWNED_OUTBOX_TOKEN` is configured. Credentials stay on the server and in the connector. Your service handles sending, then records a confirmed receipt; the same status appears in the browser, CLI, and API.
 
 ## Configure workspaces
 
-Choose **Workspaces → New workspace**. Enter a name, optional description, and the record types to include. **Include all** covers current and future types; **Add a record type** prepares a view before importing that type.
+Workspaces are optional saved views. Choose **Workspaces → New workspace**. Enter a name, optional description, and the record types to include. **Include all** covers current and future types; **Add a record type** prepares a view before importing that type.
 
 Use matching lowercase `kind` identifiers in imports, such as `job_application`, `partnership`, or `project`. Identifiers start with a letter and allow up to 64 letters, digits, and underscores.
 
@@ -99,7 +85,7 @@ The origin allowlist permits browser requests; engine credentials authenticate t
 
 Use **Setup → Model backend** when you want the engine to generate copy. Saved non-secret settings apply to browser drafting, CLI requests, and API processing. Saving validates configuration without invoking the backend.
 
-An agent can instead [submit its own draft text](AGENT_INTEGRATION.md). Supplied text and existing drafts require no engine model. Both supplied and generated copy pass the same validation.
+Use **Write draft** or let an agent [submit its own text](AGENT_INTEGRATION.md) when you already have the copy. Supplied text and existing drafts require no engine model. Both supplied and generated copy pass the same validation.
 
 Set the server policy's sender/sign-off before generating copy.
 
@@ -121,6 +107,24 @@ Windows executables launched from WSL need scratch space on a mounted Windows dr
 
 The adapter requests structured output with tools disabled. Failed runs, invalid output, and timeouts reject the draft. The engine retains all validation and review checks. See the [adapter experiments](AGENT_SIMULATIONS.md) for earlier qualification evidence.
 
+## Server and API access
+
+Local `respawned ui` creates a one-use browser link, valid for five minutes. The browser exchanges it for a private session lasting up to 12 hours, until **Lock access**, or until the server stops. Restart the launcher for a fresh link. Browser locking does not revoke the separate local CLI connection.
+
+To start the local engine without opening a browser, use `respawned serve` on its default loopback address. When no operator token is configured, it creates the same private CLI access without opening a browser.
+
+For remote access, configure `RESPAWNED_REVIEW_TOKEN` on the server and run ordinary server mode behind HTTPS. For example:
+
+```bash
+respawned serve --host 0.0.0.0 --port 8000
+```
+
+Remote exposure requires an operator credential. Enter it under **Setup → Engine access**, in the **Engine access token** field. Scripts use it as a Bearer credential; remote CLI clients set `RESPAWNED_API_URL` and `RESPAWNED_REVIEW_TOKEN`.
+
+Manually entered browser tokens stay in tab memory and clear on reload. Server credential changes take effect after restart. The [API access reference](API.md#api-access) lists operator, processing, and outbox credentials.
+
+Use `respawned ui --port 8001` for another local port or `--no-open` to print the browser link. Set `RESPAWNED_API_URL` to that loopback URL for CLI access; the private credential is still discovered automatically.
+
 ## Shared application boundary
 
 The browser keeps selection, filters, and unsaved text locally. Workflow decisions and writes go through the API.
@@ -128,13 +132,15 @@ The browser keeps selection, filters, and unsaved text locally. Workflow decisio
 | Action | Canonical endpoint | CLI |
 | --- | --- | --- |
 | Import facts | `POST /v1/workflow/import` | `import --file` |
-| Evaluate candidates | `POST /v1/workflow/sync` | `sync` |
+| Evaluate candidates through CLI/API | `POST /v1/workflow/sync` | `sync` |
 | Read review queue | `GET /v1/workflow/queue` | Used by `review` |
 | Generate or supply text | `POST /v1/workflow/records/{id}/draft` | `draft` |
-| Edit, approve, reject | `POST /v1/workflow/drafts/{id}/…` | `review` |
+| Edit, approve, reject | `POST /v1/workflow/drafts/{id}/…` | `review RECORD_ID` or batch `review` |
 | Read replies | `GET /v1/workflow/inbox` | `inbox` |
 | Read/export outbox | `/v1/workflow/outbox` and `/outbox/export` | `outbox` |
 | Process under policy | `POST /v1/process` | `process` |
+
+**Write draft** requires an engine advertising the canonical `/v1/workflow` API (2.0 or later). Legacy engines retain **Generate draft**; the browser blocks manual submission to them before sending a request.
 
 Workspaces, model settings, and overview also use `/v1/workflow`. Existing `/v1/ui` routes remain compatibility aliases. See [2.0 migration guidance](API.md#upgrading-to-20) for older clients.
 
@@ -146,7 +152,7 @@ Workspaces, model settings, and overview also use `/v1/workflow`. Existing `/v1/
 | CLI cannot connect | Engine process, selected API URL, and local or remote access |
 | Browser access expired | Restart `respawned ui` for a new launch link, or re-enter the remote credential |
 | No follow-ups ready | **All tracked**, recipient, status, policy, and recent cooldown |
-| Drafting fails | Selected backend, model access, server credentials, and timeout |
+| Draft generation fails | Selected backend, model access, server credentials, and timeout |
 | Write timed out | Reload persisted state before repeating the action |
 | Remote browser connection fails | HTTPS URL, engine credential, and exact `RESPAWNED_UI_ORIGINS` value |
 

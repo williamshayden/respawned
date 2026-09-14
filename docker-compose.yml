@@ -82,9 +82,9 @@ services:
       DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
-      # Processing stays disabled until an operator sets this separate credential.
+      # Optional processing-only access; the operator credential also permits processing.
       RESPAWNED_PROCESS_TOKEN: ${RESPAWNED_PROCESS_TOKEN:-}
-      # Review uses its own credential; setting this does not enable processing.
+      # Full operator access for review, processing, and other engine workflows.
       RESPAWNED_REVIEW_TOKEN: ${RESPAWNED_REVIEW_TOKEN:-}
       RESPAWNED_OUTBOX_TOKEN: ${RESPAWNED_OUTBOX_TOKEN:-}
       # Exact browser origins allowed to connect to this engine using Bearer access.

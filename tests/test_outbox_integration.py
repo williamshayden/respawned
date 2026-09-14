@@ -253,7 +253,7 @@ def test_cli_json_pending_batch_matches_api_and_retains_complete_history(persist
     assert [item["id"] for item in pending["items"]] == [ids[1]]
     assert pending["has_more"] is False
     history = json.loads(cli("--json"))
-    assert history["items"][0]["sent_at"] == sent_at.isoformat().replace("+00:00", "Z")
+    assert datetime.fromisoformat(history["items"][0]["sent_at"]) == sent_at
     assert history["items"][0]["status"] == "sent"
     destination = tmp_path / "all-statuses.csv"
     cli("--path", str(destination))

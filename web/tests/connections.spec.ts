@@ -116,7 +116,8 @@ test('holds the active engine while a workspace write is pending', async ({ page
   await expect(page.getByRole('status')).toContainText('Workspace saved')
   await page.getByLabel('Engine', { exact: true }).selectOption({ label: 'Remote staging' })
   await expect(page.locator('.record-row').filter({ hasText: 'Remote Workspace renewal' })).toBeVisible()
-  await expect(page.getByLabel('Workspace', { exact: true })).toHaveValue('all')
+  await expect(page.getByLabel('Workspace', { exact: true })).toHaveCount(0)
+  await expect(page.locator('.workspace-scope')).toHaveText('All work')
 })
 
 test('mobile connection setup can scroll to the form and remote server instructions', async ({ page }) => {

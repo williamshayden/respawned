@@ -6,6 +6,7 @@ export function useReview(client: ReviewClient | null, selectedRecordId: string 
   const [outbox, setOutbox] = useState<OutboxItem[]>([])
   const [inbox, setInbox] = useState<InboxResult | null>(null)
   const [config, setConfig] = useState<UIConfig | null>(null)
+  const [manualDraftSupported, setManualDraftSupported] = useState(false)
   const [total, setTotal] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -26,8 +27,8 @@ export function useReview(client: ReviewClient | null, selectedRecordId: string 
     // Old workspace requests must not invalidate the active workspace load.
     if (!client || currentClient.current !== client) return
     const request = ++generation.current
-    const [page, nextConfig, nextOutbox, nextInbox] = await Promise.all([
-      client.listRecords(offset), client.config(), client.listOutbox(), client.listInbox(),
+    const [page, nextConfig, nextOutbox, nextInbox, nextManualDraftSupported] = await Promise.all([
+      client.listRecords(offset), client.config(), client.listOutbox(), client.listInbox(), client.supportsManualDraft(),
     ])
     if (request !== generation.current || currentClient.current !== client) return
     const selected = !offset && detailId.current && !page.items.some(record => record.id === detailId.current)
@@ -38,6 +39,7 @@ export function useReview(client: ReviewClient | null, selectedRecordId: string 
     // A directly opened detail is not part of the page cursor.
     nextOffset.current = offset + page.items.length
     setConfig(nextConfig); setOutbox(nextOutbox); setInbox(nextInbox); setTotal(page.total); setHasMore(page.has_more)
+    setManualDraftSupported(nextManualDraftSupported)
     setSnapshotClient(client)
   }, [client])
 
@@ -45,6 +47,7 @@ export function useReview(client: ReviewClient | null, selectedRecordId: string 
     let active = true
     detailId.current = selection.current; nextOffset.current = 0; inFlight.current = null
     setLoading(true); setBusy(null); setError(null); setMessage(null); setRecords([]); setOutbox([]); setInbox(null); setConfig(null)
+    setManualDraftSupported(false)
     setTotal(0); setHasMore(false)
     if (!client) { setLoading(false); return }
     load().catch(reason => { if (active && currentClient.current === client) setError(reason instanceof Error ? reason.message : 'Could not load this workspace.') })
@@ -79,7 +82,7 @@ export function useReview(client: ReviewClient | null, selectedRecordId: string 
   return { records: ownsSnapshot ? records : [], outbox: ownsSnapshot ? outbox : [],
     inbox: ownsSnapshot ? inbox : null, config: ownsSnapshot ? config : null,
     total: ownsSnapshot ? total : 0, hasMore: ownsSnapshot && hasMore,
-    loading, busy, error, message, setMessage, setError,
+    loading, busy, error, message, setMessage, setError, canWriteDraft: ownsSnapshot && manualDraftSupported,
     rememberSelection: (id: string | null) => { detailId.current = id },
     openRecord: (id: string) => operate('Opening record', async () => {
       if (!client) return
@@ -88,7 +91,6 @@ export function useReview(client: ReviewClient | null, selectedRecordId: string 
       detailId.current = id
       setRecords(previous => [...new Map([...previous, record].map(item => [item.id, item])).values()])
     }, undefined, false),
-    reload: () => operate('Evaluating queue', async () => { await client?.sync() }, 'Queue evaluated.'),
     retry: () => operate('Reloading', async () => undefined),
     more: () => operate('Loading', () => load(nextOffset.current), undefined, false),
     operate,

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.0
+
+Start with one follow-up: import a record, write or generate its draft, review the saved copy, and approve it to the unsent outbox. The browser accepts supplied text without model setup, opens connected local sessions in the review queue, and omits selectors that have no choices. Refresh reads current eligibility without a separate queue-evaluation step.
+
+Use `respawned review RECORD_ID` to review that record's saved draft without refreshing a batch or generating unrelated drafts. Bare `respawned review` retains its existing batch workflow. The launcher reports engine readiness separately from local CLI access; normal startup initializes the schema automatically.
+
+Getting-started and agent guides lead with the first completed follow-up, then cover optional model, workspace, and remote-engine configuration. Agents prepare drafts, people approve the saved version, and sending tools record confirmed delivery. Authorization, validation, policy, cooldowns, and receipt semantics are unchanged.
+
 ## 2.1.0
 
 Show the running engine version and readiness with `respawned status` or the Python SDK. The command uses HTTP without database or model access, reports a client/engine version mismatch, and supports JSON output for scripts.
