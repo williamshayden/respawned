@@ -46,6 +46,10 @@ This is a bounded local measurement, not a production throughput or latency guar
 
 Release qualification requires the complete Python and browser suites, connected-browser checks, Docker persistence/restore, installed wheel/source execution, metadata, installer, and static-site checks. The [release workflow](RELEASING.md) records the qualified source and artifact hashes; its successful run is the publication gate.
 
+Application source `5f9bd0c56b21a99b231f4a576852eb9459ea89e7` passed [the complete qualification run](https://github.com/williamshayden/respawned/actions/runs/34906068906): 921 Python tests and 57 subtests, 85 frontend unit tests, 42 browser regression tests, and the connected browser workflow. The suite has one expected Python skip and the mocked browser job skips the live test that runs separately. Docker persistence/restore, installed wheel/source workflows, strict package metadata, all 19 installer checks, and static documentation building passed.
+
+The connected workflow completed in 8.3 seconds against the real packaged UI, HTTP API, and PostgreSQL. Its retained screenshots were inspected for cookie-only replay rejection, changed-source notice and unsaved copy retention, Contact 205 search with full counts, and the last inbox page. This qualifies those targeted post-fix behaviors.
+
 Local browser control became unresponsive after the initial workflow audit. A direct request for the record being inspected returned HTTP 200 in 1.224 seconds, and control also failed on fresh-tab navigation. This was not classified as a product defect. Post-fix browser verification requires successful hosted browser gates before release; a new manual visual, full keyboard, and assistive-technology audit remains unqualified.
 
 Native Windows descendant-tree termination and Windows executables launched through WSL are not covered by the POSIX cleanup guarantee. The existing native subprocess timeout behavior remains. Real provider inference quality, account-specific credentials, and external message delivery were not exercised. These limits do not imply successful qualification of those integrations.

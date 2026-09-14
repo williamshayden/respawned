@@ -11,7 +11,7 @@ python3 -m venv /tmp/respawned-site-build
 /tmp/respawned-site-build/bin/pip install -r site/requirements.txt
 ```
 
-The 2.3.0 package source pin is set after application, connected-browser, distribution, metadata, and installer qualification. The [release workflow](../docs/RELEASING.md) supplies the same packages to every enabled channel. Qualify the artifacts before updating the source pin.
+The 2.3.0 packages are pinned to application source `5f9bd0c56b21a99b231f4a576852eb9459ea89e7`, after application, connected-browser, distribution, metadata, and installer qualification. The [release workflow](../docs/RELEASING.md) supplies the same packages to every enabled channel. Qualify the artifacts before updating the source pin.
 
 For a local preview, set `PACKAGE_SOURCE` to the full qualified application commit and use a new output directory:
 
