@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from respawned.api.app import local_browser_origin_guard
-from respawned.api.session import BOOTSTRAP_SECONDS, SESSION_SECONDS, LocalSession, create_session_router
+from respawned.api.session import BOOTSTRAP_SECONDS, SESSION_SECONDS, SESSION_PROOF_HEADER, LocalSession, create_session_router
 from respawned.api.ui import require_review_authorization
 
 ORIGIN = "http://127.0.0.1:8123"
@@ -25,7 +25,7 @@ def local_client(monkeypatch):
     app.include_router(create_session_router())
     app.include_router(create_session_router(prefix="/v1/workflow/session"))
 
-    @app.api_route("/v1/workflow/probe", methods=["GET", "POST", "PUT", "DELETE"], dependencies=[Depends(require_review_authorization)])
+    @app.api_route("/v1/workflow/probe", methods=["GET", "HEAD", "OPTIONS", "POST", "PUT", "DELETE"], dependencies=[Depends(require_review_authorization)])
     @app.api_route("/v1/outbox/probe", methods=["GET"], dependencies=[Depends(require_review_authorization)])
     @app.api_route("/v1/ui/probe", methods=["GET", "POST", "PUT", "DELETE"], dependencies=[Depends(require_review_authorization)])
     def protected():
@@ -36,7 +36,11 @@ def local_client(monkeypatch):
 
 
 def login(state):
-    return state.client.post("/v1/ui/session", json={"secret": state.manager.launch_secret}, headers=HEADERS)
+    response = state.client.post("/v1/ui/session", json={"secret": state.manager.launch_secret}, headers=HEADERS)
+    if response.is_success:
+        state.proof = response.json()["session_proof"]
+        state.client.headers[SESSION_PROOF_HEADER] = state.proof
+    return response
 
 
 def test_one_use_launch_cookie_reload_and_logout(local_client):
@@ -74,6 +78,7 @@ def test_separate_local_server_ports_keep_independent_browser_sessions(local_cli
         response = second.post("/v1/ui/session", json={"secret": second_manager.launch_secret},
                                headers={"Origin": second_origin, "X-Respawned-Request": "1"})
         assert response.status_code == 200
+        second.headers[SESSION_PROOF_HEADER] = response.json()["session_proof"]
         # A browser shares its cookie jar across ports on the same hostname.
         first.client.cookies.update(second.cookies)
         assert first.client.get("/v1/ui/probe").status_code == 200
@@ -160,6 +165,7 @@ def test_browser_session_has_only_workflow_and_compatibility_cookie_paths(local_
     state = local_client
     response = state.client.post("/v1/workflow/session", json={"secret": state.manager.launch_secret}, headers=HEADERS)
     assert response.status_code == 200
+    state.client.headers[SESSION_PROOF_HEADER] = response.json()["session_proof"]
     cookies = [cookie for cookie in state.client.cookies.jar if cookie.name == state.manager.cookie_name]
     assert {cookie.path for cookie in cookies} == {"/v1/workflow", "/v1/ui"}
     assert all(cookie.value != state.manager.cli_token for cookie in cookies)
@@ -191,3 +197,43 @@ def test_local_cli_capability_is_independent_of_browser_login_and_logout(local_c
     state.manager.close()
     assert state.manager.cli_token == state.manager.launch_secret == ""
     assert state.client.post("/v1/workflow/probe", headers=headers).status_code == 401
+
+
+def test_stolen_cross_port_cookie_cannot_read_write_or_recover_proof(local_client):
+    import hashlib
+
+    state = local_client
+    response = login(state)
+    proof = response.json()["session_proof"]
+    assert len(proof) >= 32
+    assert state.manager.session_proof_hash == hashlib.sha256(proof.encode()).digest()
+    assert proof != state.manager.session
+    assert "session_proof" not in state.client.get("/v1/workflow/session").json()
+    with TestClient(state.app, base_url=ORIGIN, cookies=state.client.cookies) as thief:
+        for method in ("GET", "HEAD", "OPTIONS", "POST", "PUT", "DELETE"):
+            assert thief.request(method, "/v1/workflow/probe", headers=HEADERS).status_code == 401
+            assert thief.request(method, "/v1/workflow/probe", headers={
+                **HEADERS, SESSION_PROOF_HEADER: "wrong-proof"}).status_code == 401
+        status = thief.get("/v1/workflow/session")
+        assert status.json() == {"authenticated": False, "local_launcher": True}
+        assert proof not in status.text
+        assert thief.post("/v1/workflow/session", json={"secret": ""}, headers=HEADERS).status_code == 422
+        assert thief.post("/v1/workflow/session", json={"secret": state.manager.session}, headers=HEADERS).status_code == 401
+        assert thief.delete("/v1/workflow/session", headers=HEADERS).status_code == 401
+        # The independent proof is sufficient only together with the cookie.
+        assert thief.get("/v1/workflow/probe", headers={SESSION_PROOF_HEADER: proof}).status_code == 200
+    with TestClient(state.app, base_url=ORIGIN) as proof_only:
+        assert proof_only.get("/v1/workflow/probe", headers={SESSION_PROOF_HEADER: proof}).status_code == 401
+    assert state.client.delete("/v1/workflow/session", headers=HEADERS).status_code == 204
+    assert state.manager.session_proof_hash is None
+
+
+def test_session_proof_expires_with_cookie_and_never_bypasses_origin(local_client):
+    state = local_client
+    assert login(state).status_code == 200
+    for origin in ("http://127.0.0.1:8124", "https://untrusted.invalid", "null"):
+        assert state.client.get("/v1/workflow/probe", headers={"Origin": origin}).status_code == 403
+    state.clock.now += SESSION_SECONDS
+    assert state.client.get("/v1/workflow/probe").status_code == 401
+    assert state.manager.session is None
+    assert state.manager.session_proof_hash is None

@@ -159,8 +159,8 @@ test('scoped refs retain off-page inbox and closed outbox context and open the a
   await page.getByRole('button', { name: /Load more/ }).click()
   await expect(page.locator('.record-row').filter({ hasText: 'Next Page Contact' })).toBeVisible()
   await expect(panel(page).locator('dd').filter({ hasText: /^Primary renewal$/ })).toBeVisible()
-  expect(requests.filter((request) => request.path === '/records').map((request) => request.query)).toContain('?limit=50&offset=50')
-  expect(requests.filter((request) => request.path === '/records').map((request) => request.query)).not.toContain('?limit=50&offset=51')
+  expect(requests.filter((request) => request.path === '/records').map((request) => new URLSearchParams(request.query).get('offset'))).toContain('50')
+  expect(requests.filter((request) => request.path === '/records').map((request) => new URLSearchParams(request.query).get('offset'))).not.toContain('51')
 })
 
 function invalidRecord(): UIRecord {

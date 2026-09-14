@@ -20,7 +20,7 @@ Start with **Import records**. Your first draft needs no workspace or model setu
 
 ## Import records and use the outbox
 
-Open **Setup → Records & sources**, choose a JSON file or paste a payload, and select **Import records**. The preview shows the number of records and activities. Import accepts up to 1,000 combined items within 2 MB.
+Open **Setup → Records & sources**, choose a JSON file or paste a payload, and select **Import records**. The preview shows the number of records and activities. Import accepts up to 1,000 combined items within 2,000,000 bytes. Larger HTTP bodies return 413 before JSON parsing; split the batch before submitting again.
 
 Use stable source IDs and the editable example in the [record contract](API.md#ingest-records). Replace its identities, dates, and recipient with confirmed source facts. Records are complete snapshots, so omitted optional fields are cleared. Activities are immutable: exact replays are accepted and changed content under an existing ID conflicts.
 
@@ -28,9 +28,13 @@ After import, choose **Review imported records** and open your record. The view 
 
 The queue offers **Import records** when empty, **Clear filters** when a filter hides all records, and **View all tracked** when records are waiting. **All tracked** includes waiting, closed, and contactless records. A record needs a confirmed human recipient before it can become an outreach candidate.
 
+Search, channel, view, and sorting apply on the engine before record pagination. Tracked and ready counts cover the whole selected workspace; the result total reflects the active filters. The inbox uses offset pagination to load more reply contacts. **Activity** orders returned events from the records loaded so far, with up to 100 recent events per record. **Load more activity** adds record pages, so its date ordering describes that loaded subset.
+
 Inspect the record's reason and history. Use **View message** or **View activity** to read available source text. Choose **Write draft**, enter your text, and select **Save draft**. **Discard draft** abandons the unsaved text. Saving checks eligibility and copy rules without invoking a model.
 
 A person then checks the saved text, recipient, and evidence and chooses **Approve to outbox**. Approval is separate from saving. The server checks the displayed version, recipient, current facts, and contact-wide cooldown. Stale edits or approvals require reopening the current draft. Drafts supplied by an agent enter the same review step.
+
+In 2.3, changes to saved source facts also invalidate an old pending-review token, even when the copy is unchanged. Source-context notices identify whether draft preparation matches the review snapshot (`current`), differs (`changed`), or was not recorded (`unknown`). Fresh human review can approve eligible older copy; automatic processing requires known matching preparation context. The engine refreshes its clock after generation and lock waits before final checks.
 
 The approved message appears in the outbox, still unsent. The outbox also shows later confirmed-send status. Download CSV for a spreadsheet or use the [outbox API](API.md#outbox-integration) from a sending integration. JSON preserves exact message text; CSV protects formula-like cells.
 
@@ -75,7 +79,7 @@ RESPAWNED_UI_ORIGINS=http://127.0.0.1:8000
 
 Comma-separate multiple exact origins. Omit paths, trailing slashes, and wildcards. `localhost` and `127.0.0.1` are different origins. The documentation website is not the application origin.
 
-Remote URLs require HTTPS; HTTP is accepted for loopback addresses only. The browser sends each engine only its own credential, omits remote cookies, and refuses redirects. Local launch sessions cannot be forwarded.
+Remote URLs require HTTPS; HTTP is accepted for loopback addresses only. The browser sends each engine only its own credential, omits remote cookies and local session proofs, and refuses redirects. Local launch sessions cannot be forwarded.
 
 Names, URLs, and watched workspaces persist in the browser; manual tokens do not. **Unlock** reconnects after reload. **Remove** forgets the connection without deleting server data. Unsaved draft edits hold the current engine until resolved.
 
@@ -107,9 +111,13 @@ Windows executables launched from WSL need scratch space on a mounted Windows dr
 
 The adapter requests structured output with tools disabled. Failed runs, invalid output, and timeouts reject the draft. The engine retains all validation and review checks. See the [adapter experiments](AGENT_SIMULATIONS.md) for earlier qualification evidence.
 
+On POSIX, command completion, timeout, and cancellation clean up the command's owned process group. That guarantee does not cover native Windows descendants, including Windows processes launched through WSL.
+
 ## Server and API access
 
 Local `respawned ui` creates a one-use browser link, valid for five minutes. The browser exchanges it for a private session lasting up to 12 hours, until **Lock access**, or until the server stops. Restart the launcher for a fresh link. Browser locking does not revoke the separate local CLI connection.
+
+The 2.3 session needs both an HttpOnly cookie and an independent proof stored only in that engine origin's local storage. The browser attaches `X-Respawned-Session-Proof` to every session read and write. The proof supports reloads and other tabs at that same origin; it is never sent to a remote engine. The server stores only its hash and never recovers it from a cookie-only request. **Lock access** revokes the session and clears the stored proof; expiry or server shutdown also invalidates access. Neither cookie nor proof authenticates alone.
 
 To start the local engine without opening a browser, use `respawned serve` on its default loopback address. When no operator token is configured, it creates the same private CLI access without opening a browser.
 
@@ -142,6 +150,8 @@ The browser keeps selection, filters, and unsaved text locally. Workflow decisio
 
 **Write draft** requires an engine advertising the canonical `/v1/workflow` API (2.0 or later). Legacy engines retain **Generate draft**; the browser blocks manual submission to them before sending a request.
 
+Use matching 2.3.0 clients and engine for the current source-context and local-session contracts. The 2.3 CLI additionally requires the full draft response's `review_context`; older responses can be read but produce upgrade guidance instead of review writes. A same-major status result does not certify that capability. See [upgrading to 2.3](API.md#upgrading-to-23).
+
 Workspaces, model settings, and overview also use `/v1/workflow`. Existing `/v1/ui` routes remain compatibility aliases. See [2.0 migration guidance](API.md#upgrading-to-20) for older clients.
 
 ## Troubleshooting
@@ -151,6 +161,8 @@ Workspaces, model settings, and overview also use `/v1/workflow`. Existing `/v1/
 | Database unavailable | Engine-host `DB_*` settings and PostgreSQL readiness |
 | CLI cannot connect | Engine process, selected API URL, and local or remote access |
 | Browser access expired | Restart `respawned ui` for a new launch link, or re-enter the remote credential |
+| Local session proof is unavailable | Allow local storage for this engine origin and restart `respawned ui` for a fresh link, or use server Bearer access |
+| Import returns 413 | Split the request into batches of at most 2,000,000 bytes |
 | No follow-ups ready | **All tracked**, recipient, status, policy, and recent cooldown |
 | Draft generation fails | Selected backend, model access, server credentials, and timeout |
 | Write timed out | Reload persisted state before repeating the action |

@@ -4,7 +4,8 @@ import { createHttpClient } from './data/client'
 import { endLocalSession, isLocalSession, LOCAL_SESSION, restoreLocalSession } from './data/auth'
 import { useConnections } from './data/connections'
 import { useWorkspaces } from './data/workspaces'
-import { actionable, contextLine, type Page } from './presentation'
+import { type Page } from './presentation'
+import type { RecordQuery } from './data/types'
 import { useReview } from './useReview'
 import { Sidebar } from './components/Sidebar'
 import { QueueList } from './components/QueueList'
@@ -23,11 +24,11 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const client = useMemo(() => token ? createHttpClient(baseUrl, token, scope === 'all' ? '' : scope) : null, [baseUrl, token, scope, workspaceRevision])
-  const review = useReview(client, selectedId)
   const workspaces = useWorkspaces(token, baseUrl)
   const [page, setPage] = useState<Page>('Setup')
   const [setupSources, setSetupSources] = useState(false)
   const [query, setQuery] = useState('')
+  const [search, setSearch] = useState('')
   const [channel, setChannel] = useState('all')
   const [view, setView] = useState('ready')
   const [sort, setSort] = useState('priority')
@@ -37,6 +38,9 @@ export default function App() {
   const [contextBusy, setContextBusy] = useState(false)
   const [connectionBusy, setConnectionBusy] = useState(false)
   const initialNavigation = useRef(true)
+  useEffect(() => { const timer = window.setTimeout(() => setSearch(query), 250); return () => window.clearTimeout(timer) }, [query])
+  const filters = useMemo<RecordQuery>(() => ({ search, ...(channel === 'email' || channel === 'sms' ? { channel } : {}), view: view === 'all' ? 'all' : 'ready', sort: sort === 'recent' ? 'recent' : 'priority' }), [search, channel, view, sort])
+  const review = useReview(client, selectedId, filters)
 
   useEffect(() => {
     let active = true
@@ -56,12 +60,10 @@ export default function App() {
   const scopedRecords = review.records
   const scopedOutbox = review.outbox
   const scopedInbox = review.inbox?.items ?? []
-  const visibleRecords = scopedRecords.filter(record => (view === 'all' || actionable(record)) &&
-    (channel === 'all' || record.contact?.channel === channel) &&
-    [record.title, record.contact?.name, record.contact?.address, contextLine(record), record.reason.label].filter(Boolean).join(' ').toLowerCase().includes(query.toLowerCase()))
-    .sort((a, b) => sort === 'priority' ? 0 : (b.last_contact_at ?? '').localeCompare(a.last_contact_at ?? '') || a.id.localeCompare(b.id))
+  const filtering = search !== query
+  const visibleRecords = filtering ? [] : scopedRecords
   const selected = visibleRecords.find(record => record.id === selectedId) ?? visibleRecords[0] ?? null
-  const count = scopedRecords.filter(actionable).length
+  const count = review.readyCount
   const edit = selected ? edits[selected.id] : undefined
   const navigate = (destination: Page) => {
     initialNavigation.current = false
@@ -72,6 +74,10 @@ export default function App() {
   const openImport = () => { navigate('Setup'); setSetupSources(true) }
   const select = (id: string) => { review.rememberSelection(id); setSelectedId(id); setPage('Review queue'); setShowDetail(true) }
   const removeEdit = (id: string) => setEdits(previous => { const next = { ...previous }; delete next[id]; return next })
+  const changeFilter = (change: () => void) => {
+    if (review.busy) return
+    review.rememberSelection(null); setSelectedId(null); setShowDetail(false); change()
+  }
   const openConnection = () => {
     if (review.busy || review.loading) { review.setError('Wait for the current action to finish before changing the workspace connection.'); return }
     if (Object.keys(edits).length) { review.setError('Save or discard your edited drafts before changing the workspace connection.'); return }
@@ -90,7 +96,7 @@ export default function App() {
       const error = connectionChangeError()
       if (error) { review.setError(error); return }
       engines.setActiveId(next)
-      setEdits({}); setQuery(''); setChannel('all'); setView('ready')
+      setEdits({}); setQuery(''); setSearch(''); setChannel('all'); setView('ready')
     } else if (review.busy) { review.setError('Wait for the current action to finish before switching workspaces.'); return }
     setScope(workspaceId); review.rememberSelection(null); setSelectedId(null); setShowDetail(false)
     navigate(engines.accessById[next] ? destination : 'Setup')
@@ -133,7 +139,7 @@ export default function App() {
   return <div className={`app ${showDetail ? 'show-detail' : ''}`}>
     <Sidebar page={page} onNavigate={navigate} scope={scope} workspaces={workspaces.items} onScope={changeWorkspace}
       connections={engines.connections} activeConnectionId={engines.activeId} onConnection={changeEngine}
-      counts={{ 'Review queue': count, 'Reply inbox': scopedInbox.length, Outbox: scopedOutbox.filter(item => item.status === 'pending').length }}
+      counts={{ 'Review queue': count, 'Reply inbox': review.inbox?.total ?? 0, Outbox: scopedOutbox.filter(item => item.status === 'pending').length }}
       connected={!!token} onConnect={openConnection} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
     <main className="main-workspace">
       <header className="page-header"><div className="page-title"><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={23} /></button>
@@ -156,12 +162,13 @@ export default function App() {
         page === 'Workspaces' ? <WorkspaceManager key={`${engines.activeId}:${!!token}`} baseUrl={baseUrl} token={token} onBusyChange={setContextBusy} workspaces={workspaces.items} kinds={workspaces.available_kinds} loading={workspaces.loading} error={workspaces.error}
           onSetup={() => navigate('Setup')} onOpen={id => { changeWorkspace(id); navigate('Review queue') }} onSaved={async id => { await workspaces.reload(); setScope(id ?? 'all'); review.rememberSelection(null); setSelectedId(null); setShowDetail(false); setWorkspaceRevision(value => value + 1) }} /> :
         !client ? <div className="empty-state"><h2>Connect to start tracking</h2><p>Set up engine access, import your records, and configure a model when you are ready to draft.</p><button className="button primary" onClick={() => navigate('Setup')}>Open setup</button></div> :
-        review.loading ? <div className="loading-workspace" role="status"><LoaderCircle size={25} className="spin" /><p>Loading your workspace…</p></div> :
-        page === 'Review queue' && scope === 'all' && review.config && review.total === 0 && !review.error ?
+        review.loading && page !== 'Review queue' ? <div className="loading-workspace" role="status"><LoaderCircle size={25} className="spin" /><p>Loading your workspace…</p></div> :
+        page === 'Review queue' && scope === 'all' && review.config && review.trackedCount === 0 && !review.loading && !review.error ?
         <div className="empty-state"><h2>Start with one record</h2><p>Import a record, {review.canWriteDraft ? 'write' : 'generate'} a draft, then approve it to the unsent outbox.</p><button className="button primary" onClick={openImport}>Import records</button></div> : page === 'Review queue' ?
         <div className="review-layout">
-          <QueueList records={visibleRecords} selected={selected?.id ?? null} onSelect={select} query={query} onQuery={setQuery} channel={channel} onChannel={setChannel}
-            view={view} onView={setView} sort={sort} onSort={setSort} onImport={openImport} onClearFilters={() => { setQuery(''); setChannel('all') }} total={review.total} hasMore={review.hasMore} onMore={review.more} busy={!!review.busy} />
+          <QueueList records={visibleRecords} selected={selected?.id ?? null} onSelect={select} query={query} onQuery={value => changeFilter(() => setQuery(value))} channel={channel} onChannel={value => changeFilter(() => setChannel(value))}
+            view={view} onView={value => changeFilter(() => setView(value))} sort={sort} onSort={value => changeFilter(() => setSort(value))} onImport={openImport} onClearFilters={() => changeFilter(() => { setQuery(''); setSearch(''); setChannel('all') })}
+            total={review.total} trackedTotal={review.trackedCount} hasMore={review.hasMore} onMore={review.more} busy={!!review.busy} loading={review.loading || filtering} error={review.recordsError} />
           <ReviewPanel record={selected} records={review.records} index={visibleRecords.findIndex(record => record.id === selected?.id)} total={visibleRecords.length} config={review.config} edit={edit} busy={review.busy} canWriteDraft={review.canWriteDraft}
             onWrite={() => { if (selected && !selected.draft && review.canWriteDraft) setEdits(previous => ({ ...previous, [selected.id]: { kind: 'new', body: '' } })) }}
             onBack={() => setShowDetail(false)} onEdit={body => {
@@ -195,9 +202,9 @@ export default function App() {
               review.rememberSelection(next); setSelectedId(next)
               review.setMessage(edit?.kind === 'new' ? 'Skipped for now. Your unsaved draft stays in this tab.' : selected?.draft?.status === 'pending' ? 'Skipped for now. Your draft stays pending.' : 'Skipped for now. The record stays in your queue.')
             }} />
-        </div> : <AuxiliaryViews page={page} records={scopedRecords} outbox={scopedOutbox} inbox={scopedInbox} inboxHasMore={!!review.inbox?.has_more} config={review.config} onExport={() => client.exportOutbox()} onSelect={async id => {
+        </div> : <AuxiliaryViews page={page} records={scopedRecords} outbox={scopedOutbox} inbox={scopedInbox} inboxHasMore={!!review.inbox?.has_more} inboxTotal={review.inbox?.total ?? 0} onMoreInbox={review.moreInbox} busy={!!review.busy} activityClient={client} config={review.config} onExport={() => client.exportOutbox()} onSelect={async id => {
           if (!await review.openRecord(id)) return
-          setScope('all'); setView('all'); setQuery(''); setChannel('all'); select(id)
+          setScope('all'); setView('all'); setQuery(''); setSearch(''); setChannel('all'); select(id)
         }} />}
     </main>
   </div>

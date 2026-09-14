@@ -19,6 +19,7 @@ from respawned.core.review import (
     reject_draft,
     update_draft_message,
 )
+from respawned.core.sync import read_candidate_snapshot
 from respawned.llm.adapter import LiteLLMAdapter
 
 NOW = datetime(2026, 8, 20, 12, tzinfo=UTC)
@@ -102,18 +103,30 @@ def _insert_candidate(
     other_opportunity_ids: tuple[str, ...] = (),
     run_id=None,
 ) -> Candidate:
-    candidate = Candidate(
-        id=uuid4(),
-        run_at=NOW,
-        primary_opportunity_id=opportunity_id,
-        contact_key=contact_key,
-        contact_address=contact_address,
-        contact_name=contact_name,
-        channel=channel,
-        reason="replied_no_answer",
-        score=Decimal(score),
-        other_opportunity_ids=other_opportunity_ids,
+    # Give each requested revision a real, slightly newer reply signal. Review
+    # guards deliberately reject arbitrary persisted candidate identities.
+    reply_number = connection.execute(text("SELECT count(*) FROM activities")).scalar_one()
+    connection.execute(
+        text("""
+            INSERT INTO activities (id, type, opportunity_id, occurred_at, channel, direction)
+            VALUES (:id, 'contact_replied', :opportunity_id, :at, :channel, 'inbound')
+        """),
+        {
+            "id": f"review-reply-{uuid4()}",
+            "opportunity_id": opportunity_id,
+            "at": NOW - timedelta(hours=1) + timedelta(seconds=reply_number),
+            "channel": channel,
+        },
     )
+    snapshot = read_candidate_snapshot(connection, now=NOW, policy=load_policy(POLICY_PATH))
+    candidate = next(item for item in snapshot.candidates if item.contact_key == contact_key)
+    assert candidate.primary_opportunity_id == opportunity_id
+    assert candidate.contact_address == contact_address
+    assert candidate.channel == channel
+    if other_opportunity_ids:
+        assert candidate.other_opportunity_ids == other_opportunity_ids
+    # The iterator ordering test controls persisted rank independently of identity.
+    candidate = replace(candidate, score=Decimal(score))
     active_run_id = run_id or uuid4()
     if run_id is None:
         connection.execute(

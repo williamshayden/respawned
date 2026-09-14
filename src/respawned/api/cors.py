@@ -43,7 +43,7 @@ class RemoteUIMiddleware:
         self.remote = CORSMiddleware(
             app, allow_origins=selected, allow_credentials=False,
             allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type", "X-Respawned-Request"],
+            allow_headers=["Authorization", "Content-Type", "X-Respawned-Request", "X-Respawned-Session-Proof"],
             expose_headers=["Content-Disposition"],
         ) if selected else app
 

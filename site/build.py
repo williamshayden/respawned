@@ -21,8 +21,8 @@ SITE = ROOT / "site"
 ORIGIN = "https://respawned.williamshayden.com"
 REPO = "https://github.com/williamshayden/respawned"
 # Pin the source after the complete application and distribution checks pass.
-PACKAGE_COMMIT: str | None = "767aaf873225fd74537775ec3e251399c6c98789"
-PACKAGE_VERSION = "2.2.0"
+PACKAGE_COMMIT: str | None = None
+PACKAGE_VERSION = "2.3.0"
 ASSETS = ("docs.css", "docs.js", "favicon.svg")
 SITE_SOURCES = ("build.py", "README.md", "requirements.txt", "_headers", "content/index.md")
 TEXT_DOWNLOADS = {
@@ -131,6 +131,7 @@ def render_markdown(source: str, page: str, revision: str) -> tuple[str, list[tu
                     "WEB_UI.md#import-records-and-use-the-outbox": "/#review-and-outbox",
                     "WEB_UI.md#shared-application-boundary": f"{REPO}/blob/{revision}/docs/WEB_UI.md#shared-application-boundary",
                     "../README.md#install-and-start": "/#install-and-start-locally",
+                    "../README.md#upgrading-to-23": "/#upgrading-to-23",
                     "../README.md": "/",
                     "API.md": "/api/",
                     "AGENT_INTEGRATION.md": "/agent-integration/",

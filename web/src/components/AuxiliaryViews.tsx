@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { ArrowUpRight, Download, ExternalLink, Mail, ShieldCheck } from 'lucide-react'
-import type { InboxItem, OutboxItem, UIConfig, UIRecord } from '../data/types'
-import { contextLine, safeSource, shortDate, type Page } from '../presentation'
+import { ArrowUpRight, Download, Mail, ShieldCheck } from 'lucide-react'
+import type { InboxItem, OutboxItem, ReviewClient, UIConfig, UIRecord } from '../data/types'
+import { contextLine, shortDate, type Page } from '../presentation'
+import { ActivityView } from './ActivityView'
 
 function downloadOutbox(exported: Blob) {
   const url = URL.createObjectURL(exported)
@@ -9,8 +10,8 @@ function downloadOutbox(exported: Blob) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-interface Props { page: Page; records: UIRecord[]; outbox: OutboxItem[]; inbox: InboxItem[]; inboxHasMore: boolean; config: UIConfig | null; onSelect: (id: string) => void; onExport: () => Promise<Blob> }
-export function AuxiliaryViews({ page, records, outbox, inbox, inboxHasMore, config, onSelect, onExport }: Props) {
+interface Props { page: Page; records: UIRecord[]; outbox: OutboxItem[]; inbox: InboxItem[]; inboxHasMore: boolean; inboxTotal: number; onMoreInbox: () => void; busy: boolean; activityClient: ReviewClient; config: UIConfig | null; onSelect: (id: string) => void; onExport: () => Promise<Blob> }
+export function AuxiliaryViews({ page, records, outbox, inbox, inboxHasMore, inboxTotal, onMoreInbox, busy, activityClient, config, onSelect, onExport }: Props) {
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const exportOutbox = async () => {
@@ -39,22 +40,13 @@ export function AuxiliaryViews({ page, records, outbox, inbox, inboxHasMore, con
       {inbox.length ? inbox.map(item => {
         const targetId = item.review_record_id ?? item.opportunity_ids[0]
         const record = records.find(record => record.id === targetId)
-        return <button className="inbox-row" key={`${item.contact_key}:${item.channel}`} disabled={!targetId} onClick={() => targetId && onSelect(targetId)}><Mail size={21} /><span>
+        return <button className="inbox-row" key={`${item.contact_key}:${item.channel}`} disabled={!targetId || busy} onClick={() => targetId && onSelect(targetId)}><Mail size={21} /><span>
           <strong>{item.contact_name || item.contact_address}</strong><span>{record ? contextLine(record) : item.record_refs?.map(record => record.title).join(', ') || item.opportunity_ids.join(', ')}</span>
           <span className="muted">Reply received {shortDate(item.latest_reply_at)} · {item.pending_outbox_count ? `${item.pending_outbox_count} unsent in outbox` : 'No later response recorded'}</span>
         </span><ArrowUpRight size={20} /></button>
       }) : <div className="empty-state"><Mail size={30} /><h2>No replies waiting</h2><p>Newly ingested human replies will appear here.</p></div>}
-      {inboxHasMore && <p className="subtle-note">Showing the first 200 reply routes. Additional replies are available through the engine.</p>}
+      {inboxHasMore && <div className="queue-footer"><p>{inbox.length} of {inboxTotal} reply routes loaded.</p><button className="button" onClick={onMoreInbox} disabled={busy}>{busy ? 'Loading…' : 'Load more replies'}</button></div>}
     </div>
   }
-  const activities = records.flatMap(record => record.activities.map(activity => ({ record, activity })))
-    .sort((a, b) => b.activity.occurred_at.localeCompare(a.activity.occurred_at))
-  return <div className="auxiliary-view"><div className="aux-heading"><p>Imported events, ordered by date.</p></div>
-    <div className="activity-feed">{activities.map(({ record, activity }) => <article key={`${record.id}:${activity.id}`}>
-      <time dateTime={activity.occurred_at}>{shortDate(activity.occurred_at)}</time><div><h3>{activity.label}</h3>
-        <button className="text-button" onClick={() => onSelect(record.id)}>{record.title}</button>{activity.summary && <p>{activity.summary}</p>}
-        <span className="activity-classification">{activity.classification === 'unknown' ? 'Classification unknown' : activity.classification === 'human' ? 'Human' : 'Automated'}</span>
-      </div>{safeSource(activity.source_url) && <a href={safeSource(activity.source_url)} target="_blank" rel="noreferrer" aria-label={`Source for ${activity.label}`}><ExternalLink size={17} /></a>}
-    </article>)}</div>{!activities.length && <div className="empty-state"><h2>No activity yet</h2></div>}
-  </div>
+  return <ActivityView client={activityClient} onSelect={onSelect} />
 }

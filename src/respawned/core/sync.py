@@ -16,6 +16,7 @@ from respawned.core.policy import Policy
 from respawned.core.reasons import ReasonFactory
 from respawned.core.reduce import reduce_opportunities
 from respawned.core.score import score_opportunities
+from respawned.core.time import aware_utc
 
 
 INSERT_SYNC_RUN = text(
@@ -115,6 +116,21 @@ class SyncResult:
     dry_run: bool
 
 
+@dataclass(frozen=True, slots=True)
+class CandidateSnapshot:
+    """One complete state projection and its currently available candidates.
+
+    Reads that show both source evidence and eligibility must use the same
+    projection. Keep the full engine population: scoring can use global value
+    percentiles, and contacts and cooldowns cross workspace boundaries.
+    """
+
+    states: tuple[OpportunityState, ...]
+    candidates: tuple[Candidate, ...]
+    existing_candidate_ids: frozenset[UUID]
+    as_of: datetime
+
+
 def compute_candidates(
     states: Sequence[OpportunityState],
     policy: Policy,
@@ -156,27 +172,16 @@ def _candidate_values(candidate: Candidate, run_id: UUID) -> dict[str, object]:
     }
 
 
-def sync_candidates(
+def read_candidate_snapshot(
     conn: Connection,
     *,
     now: datetime,
     policy: Policy,
-    dry_run: bool = False,
-    limit: int = 10,
     evaluators: Mapping[str, ReasonFactory] | None = None,
-    primary_opportunity_id: str | None = None,
-) -> SyncResult:
-    """Run one idempotent sync, optionally persisting only a selected primary.
-
-    Selection happens after global eligibility, contact grouping, and review
-    history. It cannot promote an ineligible sibling or bypass a cooldown.
-    A selected materialization does not publish a queue snapshot or move an
-    existing candidate out of its full sync. Drafting uses the freshly computed
-    candidate and rechecks current state through the shared review service.
-    """
-
-    _validate_limit(limit)
-    states = reduce_opportunities(conn, now)
+) -> CandidateSnapshot:
+    """Read current eligibility without persisting a sync or rebuilding state."""
+    now = aware_utc(now, "read_candidate_snapshot.now")
+    states = tuple(reduce_opportunities(conn, now))
     # One candidate per contact means the state count bounds the complete queue.
     # Review history and reservations must be considered before the user limit.
     ranked = compute_candidates(
@@ -207,12 +212,36 @@ def sync_candidates(
         for candidate in ranked
         if existing.get(candidate.id) not in {"approved", "rejected"}
         and candidate.contact_key not in reserved_contacts
-        and (primary_opportunity_id is None
-             or candidate.primary_opportunity_id == primary_opportunity_id)
-    )[:limit]
+    )
+    return CandidateSnapshot(states, candidates, frozenset(existing), now)
+
+
+def sync_candidates(
+    conn: Connection,
+    *,
+    now: datetime,
+    policy: Policy,
+    dry_run: bool = False,
+    limit: int = 10,
+    evaluators: Mapping[str, ReasonFactory] | None = None,
+    primary_opportunity_id: str | None = None,
+) -> SyncResult:
+    """Run one idempotent sync, optionally persisting only a selected primary.
+
+    Selection happens after global eligibility, contact grouping, and review
+    history. It cannot promote an ineligible sibling or bypass a cooldown.
+    A selected materialization does not publish a queue snapshot or move an
+    existing candidate out of its full sync. Drafting uses the freshly computed
+    candidate and rechecks current state through the shared review service.
+    """
+    _validate_limit(limit)
+    snapshot = read_candidate_snapshot(conn, now=now, policy=policy, evaluators=evaluators)
+    candidates = tuple(candidate for candidate in snapshot.candidates
+                       if primary_opportunity_id is None
+                       or candidate.primary_opportunity_id == primary_opportunity_id)[:limit]
     if dry_run:
         inserted_count = sum(
-            candidate.id not in existing
+            candidate.id not in snapshot.existing_candidate_ids
             for candidate in candidates
         )
         return SyncResult(candidates, inserted_count, None, True)

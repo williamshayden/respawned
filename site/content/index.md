@@ -55,7 +55,9 @@ Start with one real record. Open **Setup → Records & sources**, paste a payloa
 
 Use **Review imported records** to open the queue, then open your record. Import saves facts; eligibility still depends on the server's policy. **All tracked** shows waiting records and their reasons. A record without a confirmed human recipient remains trackable but cannot become an outreach candidate.
 
-Save the same payload as `records.json` for CLI use. The [record contract](/api/#ingest-records) covers activities and additional fields. Import accepts up to 1,000 combined items within 2 MB. Records are complete snapshots, so omitted optional fields are cleared. Activities are immutable: exact replay is accepted and conflicting content rolls back the batch.
+Save the same payload as `records.json` for CLI use. The [record contract](/api/#ingest-records) covers activities and additional fields. Import accepts up to 1,000 combined items within 2,000,000 bytes. Larger declared or streamed HTTP bodies return 413 before JSON parsing. Records are complete snapshots, so omitted optional fields are cleared. Activities are immutable: exact replay is accepted and conflicting content rolls back the batch.
+
+The server searches, filters by channel and view, and sorts before paging records. Tracked and ready counts cover the selected workspace; the result total reflects active filters. The inbox can load additional reply-contact pages. **Activity** orders events from the records loaded so far, with up to 100 recent events per record; **Load more activity** adds record pages to that subset.
 
 ## Review and outbox
 
@@ -65,7 +67,9 @@ Inspect the record's reason, facts, and history. Choose **Write draft**, enter y
 Hi Alex, I am following up on my application for the Backend Engineer role at Example. Is there an update you can share?
 ```
 
-A person then checks the saved text and recipient and chooses **Approve to outbox**. Saving and approval are separate actions. The server rechecks the displayed version, current records, recipient, and contact-wide cooldown before approval. Reopen a draft changed by another client.
+A person then checks the saved text, recipient, and current saved facts and chooses **Approve to outbox**. Saving and approval are separate actions. The server rechecks the displayed version, current eligibility, recipient, and contact-wide cooldown before approval. Changed source facts invalidate an old review token even when copy is unchanged. Reopen the draft for fresh review.
+
+Draft preparation context can be `current`, `changed`, or `unknown`. Fresh human review can approve eligible older copy, while automatic processing requires known matching preparation context. Final checks use fresh server time after model calls and review-lock waits. See the [review contract](/api/#candidate-and-review-workflow).
 
 The approved message appears in **Outbox**, still unsent. **Refresh** reads current engine state; it does not fetch source updates, draft, or send.
 
@@ -90,7 +94,7 @@ A person reviews that saved draft:
 respawned review ats:application-123
 ```
 
-Review opens the current draft and prompts for a human decision. This selected-record mode does not generate copy or evaluate the queue.
+Review opens the current saved draft and its source context, then prompts for a human decision. This selected-record mode does not generate copy or evaluate the queue. The 2.3 CLI requires the engine's `review_context` capability; older responses remain readable with upgrade guidance and no review writes. A successful edit is followed by a fresh draft read before another decision.
 
 The [agent guide](/agent-integration/) covers SDK and HTTP alternatives, remote connections, and uncertain-write recovery. [Download the prompt](/agent-prompt.txt) to give an agent the workflow and boundaries.
 
@@ -121,7 +125,7 @@ Use matching lowercase `kind` identifiers such as `job_application`, `partnershi
 
 ## Configure a drafting backend
 
-An engine model is needed only for **Generate draft** or a CLI draft request without supplied text. **Write draft**, agent-supplied text, and review of saved drafts require no engine model.
+An engine model is needed only for **Generate draft** or a CLI draft request without supplied text. **Write draft**, agent-supplied text, review of saved drafts, and processing an empty queue or existing copy require no engine model.
 
 Under **Setup → Model backend**, choose an OpenAI-compatible API or the optional Codex CLI adapter. Saved settings apply to requests from the browser, CLI, and API.
 
@@ -148,9 +152,11 @@ PostgreSQL holds records, activities, drafts, outbox reservations and receipts, 
 | `RESPAWNED_REVIEW_TOKEN` | Operator access for remote UI, CLI, SDK, and HTTP clients |
 | `RESPAWNED_PROCESS_TOKEN` | Optional processing-only credential for an agent |
 | `RESPAWNED_OUTBOX_TOKEN` | Approved-message reads and confirmed-send receipts |
-| Draft `review_token` | Version fingerprint for edits and review; not a password |
+| Draft `review_token` | Opaque version binding saved copy, recipient, and review facts; not a password |
 
 The one-use local browser link lasts five minutes. Its session lasts up to 12 hours, until **Lock access**, or until server shutdown. Private CLI access is separate and ends when its server stops.
+
+Local browser sessions require both an HttpOnly cookie and a proof stored only in that engine origin's local storage. The UI sends `X-Respawned-Session-Proof` on every session read and write. The server stores only its hash and never returns a proof from a cookie-only request. Neither credential authenticates alone. Locking clears the proof and revokes the session; expiry or server shutdown also invalidates access. Local proof is never forwarded to another engine.
 
 For remote access, configure `RESPAWNED_REVIEW_TOKEN` on the engine and restart. Enter it under **Setup → Engine access** or provide it in the client environment. Manual browser credentials clear on reload.
 
@@ -178,11 +184,16 @@ The [API reference](/api/) covers routes, payloads, errors, and retries. The run
 
 `respawned status` reads public health and readiness endpoints without an access credential. `/healthz` reports the engine version and process liveness. `/readyz` checks database, schema, and policy; it does not test a model. The status client needs no database settings.
 
+Status accepts minor and patch differences within a major version. That reports version policy, not support for every workflow capability; the current CLI's interactive review requires the 2.3 coherent review-context response.
+
 | Symptom | Check |
 | --- | --- |
 | Database unavailable | Engine-host `DB_*` values and PostgreSQL readiness |
 | CLI cannot connect | Engine process, API URL, and local or remote access |
 | Status cannot determine the engine version | Older 2.0 health responses lack version metadata; update and restart the engine |
+| CLI draft is read-only | Upgrade the engine to provide the 2.3 review-context capability |
+| Local session proof is unavailable | Allow local storage for this engine origin and restart `respawned ui` for a new link |
+| Import returns 413 | Split the request into batches of at most 2,000,000 bytes |
 | Nothing ready for review | **All tracked**, confirmed recipient, status, policy, and cooldown |
 | Draft generation fails | Backend, model access, server credential, and timeout |
 | Write timed out | Read saved state before repeating the action |
@@ -199,20 +210,28 @@ curl -fsS https://respawned.williamshayden.com/install.sh -o install.sh
 sh install.sh
 ```
 
-The installer verifies the wheel checksum, installs into `~/.local/share/respawned/2.2.0`, and adds `~/.local/bin/respawned`. Use `sh install.sh --prefix /absolute/path` for another prefix. No repository clone or Node.js is needed.
+The installer verifies the wheel checksum, installs into `~/.local/share/respawned/2.3.0`, and adds `~/.local/bin/respawned`. Use `sh install.sh --prefix /absolute/path` for another prefix. No repository clone or Node.js is needed.
 
-[Download package](/downloads/respawned-2.2.0-py3-none-any.whl) · [Source archive](/downloads/respawned-2.2.0.tar.gz) · [Checksums](/SHA256SUMS) · [Package provenance](/release.json) · [Site manifest](/site-manifest.json) · [GitHub release](https://github.com/williamshayden/respawned/releases/tag/v2.2.0)
+[Download package](/downloads/respawned-2.3.0-py3-none-any.whl) · [Source archive](/downloads/respawned-2.3.0.tar.gz) · [Checksums](/SHA256SUMS) · [Package provenance](/release.json) · [Site manifest](/site-manifest.json) · [GitHub release](https://github.com/williamshayden/respawned/releases/tag/v2.3.0)
 
 ## Update the engine and clients
 
+### Upgrading to 2.3
+
 1. Stop the engine before upgrading; use Ctrl+C for a foreground `ui` or `serve` process. Keep PostgreSQL running for backup.
 2. Back up the existing database and preserve the engine environment and any custom policy file.
-3. Download the current [website installer](/install.sh) again and run it with the same prefix, following [Install and start locally](#install-and-start-locally). A previously downloaded installer remains pinned to its original release. If you installed the wheel directly, update the [2.2.0 wheel](/downloads/respawned-2.2.0-py3-none-any.whl) in that same Python environment.
+3. Download the current [website installer](/install.sh) again and run it with the same prefix, following [Install and start locally](#install-and-start-locally). A previously downloaded installer remains pinned to its original release. If you installed the wheel directly, update the [2.3.0 wheel](/downloads/respawned-2.3.0-py3-none-any.whl) in that same Python environment.
 4. Restart with the usual `ui` or `serve` command and existing database settings. Check readiness, then reload the browser and reconnect clients. Separately installed clients can use `respawned status` to check the running engine.
 
-Use matching 2.2.0 client and engine installations for this release. Status displays and accepts other minor or patch versions within the same major. Update separately installed client environments with the engine; the matching browser UI is bundled with it.
+Use matching 2.3.0 client and engine installations for this release. Update separately installed client environments with the engine; the matching browser UI is bundled with it. Reconnect local browsers with a fresh launch link so they receive the origin-scoped session proof.
+
+The schema records draft preparation and accepted-review context. Older drafts with unknown preparation context remain available for fresh human review when eligible, but automatic processing cannot approve them without matching preparation context. Existing approved reservations and receipts are preserved. See [2.3 upgrade details](/api/#upgrading-to-23).
 
 The installer retains earlier version environments and has no uninstall command. To remove an installer-managed copy, stop the engine and remove its `bin/respawned` symlink and `share/respawned` program directory under the chosen prefix, after confirming they belong to this installation. Preserve PostgreSQL, its backups, and external configuration when removing program files.
+
+### Upgrading to 2.2
+
+Version 2.2 introduced targeted review of a saved draft and the supplied-text first browser workflow. These remain available in 2.3 with current-context checks. Historical [2.2.0 package](/downloads/respawned-2.2.0-py3-none-any.whl), [source archive](/downloads/respawned-2.2.0.tar.gz), and [GitHub release](https://github.com/williamshayden/respawned/releases/tag/v2.2.0) links are retained with earlier release archives.
 
 ### Upgrading to 2.0
 

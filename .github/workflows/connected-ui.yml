@@ -1,0 +1,108 @@
+name: Connected browser
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  connected-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+        env:
+          POSTGRES_USER: respawned_ui
+          POSTGRES_PASSWORD: disposable-ui-fixture
+          POSTGRES_DB: respawned_ui
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U respawned_ui -d respawned_ui"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.3"
+          python-version: "3.12"
+          enable-cache: true
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: "22.20.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install locked application and browser dependencies
+        run: |
+          uv sync --frozen
+          npm --prefix web ci
+      - name: Verify committed packaged UI and install Chromium
+        working-directory: web
+        run: |
+          npm run bundle:check
+          npx playwright install --with-deps chromium
+      - name: Exercise packaged UI with real HTTP, PostgreSQL, and deterministic drafting
+        shell: bash
+        env:
+          CI: "true"
+          RESPAWNED_LIVE_UI_TEST: "1"
+          RESPAWNED_LIVE_UI_URL: http://127.0.0.1:8133
+          RESPAWNED_LIVE_UI_SOURCE_URL: http://127.0.0.1:8142/v1/workflow/source
+        run: |
+          set -euo pipefail
+          fixture_dir="$RUNNER_TEMP/respawned-connected-ui"
+          mkdir -p "$fixture_dir"
+          export RESPAWNED_LIVE_UI_LAUNCH_FILE="$fixture_dir/launch-url.txt"
+          export RESPAWNED_TEST_OUTPUT_DIR="$fixture_dir/browser-results"
+          .venv/bin/python scripts/serve_ui_simulation.py \
+            --postgres-url postgresql+psycopg2://respawned_ui:disposable-ui-fixture@127.0.0.1:5432/respawned_ui \
+            --port 8133 --empty --local-session \
+            --launch-url-file "$RESPAWNED_LIVE_UI_LAUNCH_FILE" \
+            --source-receiver-port 8142 >"$fixture_dir/server.log" 2>&1 &
+          fixture_pid=$!
+          cleanup() {
+            kill -INT "$fixture_pid" 2>/dev/null || true
+            for attempt in $(seq 1 15); do
+              if ! kill -0 "$fixture_pid" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            kill -TERM "$fixture_pid" 2>/dev/null || true
+            wait "$fixture_pid" || true
+          }
+          trap cleanup EXIT
+          ready=0
+          for attempt in $(seq 1 60); do
+            if ! kill -0 "$fixture_pid" 2>/dev/null; then
+              cat "$fixture_dir/server.log"
+              exit 1
+            fi
+            if test -s "$RESPAWNED_LIVE_UI_LAUNCH_FILE" && curl --silent --fail --max-time 2 "$RESPAWNED_LIVE_UI_URL/healthz" >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if test "$ready" != 1; then
+            cat "$fixture_dir/server.log"
+            echo 'The connected UI fixture did not become ready within the bounded wait.' >&2
+            exit 1
+          fi
+          npm --prefix web run test:e2e -- tests/live-ui.spec.ts --workers=1 --retries=0
+      - name: Preserve connected-browser evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: respawned-connected-ui-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/respawned-connected-ui/browser-results
+            ${{ runner.temp }}/respawned-connected-ui/server.log
+          if-no-files-found: warn
+          retention-days: 7

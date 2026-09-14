@@ -10,20 +10,22 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from respawned.core.candidates import Candidate
+from respawned.core.contact import normalize_contact_key
 from respawned.core.domain import OpportunityState, resolve_contact
 from respawned.core.helpers.validate import DraftValidationError, validate_draft
 from respawned.core.opportunity import is_contactable_opportunity
 from respawned.core.policy import Policy
-from respawned.core.reduce import reduce_opportunities
 from respawned.core.review import PersistedDraft
-from respawned.core.sync import sync_candidates
+from respawned.core.review_context import bind_review_context
+from respawned.core.sync import CandidateSnapshot, read_candidate_snapshot
 from respawned.core.time import aware_utc, local_calendar_days_since, within_cooldown
 
 
 DRAFT_COLUMNS = """
     id, candidate_id, contact_key, contact_address, contact_name, channel,
     primary_opportunity_id, opportunity_ids, body, status,
-    created_at, updated_at, reviewed_at
+    created_at, updated_at, reviewed_at,
+    generation_source_fingerprint, reviewed_source_fingerprint
 """
 
 
@@ -48,6 +50,11 @@ def draft_view(
         "id": draft.id, "body": draft.body, "status": draft.status,
         "review_token": draft.review_token,
         "validation_errors": validation_errors or [], "outbox_id": outbox_id,
+        "source_context_status": (
+            "unknown" if draft.generation_source_fingerprint is None
+            else "current" if draft.generation_source_fingerprint == draft.current_source_fingerprint
+            else "changed"
+        ),
     }
 
 
@@ -61,14 +68,6 @@ def record_references(connection: Connection, record_ids: Iterable[str]) -> dict
         FROM opportunities WHERE id = ANY(:ids)
     """), {"ids": ids}).mappings()
     return {row["id"]: dict(row) for row in rows}
-
-
-def inbox_review_targets(connection: Connection, *, now: datetime, policy: Policy) -> dict[str, str]:
-    """Find the current contact-group primary, independent of reply evidence IDs."""
-    count = connection.execute(text("SELECT count(*) FROM opportunities")).scalar_one()
-    eligible = sync_candidates(connection, now=now, policy=policy, dry_run=True, limit=count).candidates
-    return {candidate.contact_key: candidate.primary_opportunity_id
-            for candidate in eligible}
 
 
 def _label(value: str) -> str:
@@ -153,6 +152,9 @@ def list_ui_records(
     connection: Connection, *, now: datetime, policy: Policy,
     limit: int = 50, offset: int = 0, record_id: str | None = None,
     kinds: Iterable[str] | None = None,
+    search: str = "", channel: str | None = None,
+    view: str = "all", sort: str = "priority",
+    snapshot: CandidateSnapshot | None = None,
 ) -> dict[str, Any]:
     """Retain every tracked record, including records with no delivery route.
 
@@ -164,10 +166,13 @@ def list_ui_records(
     always use the complete shared engine state, before filtering or pagination.
     """
     now = aware_utc(now, "list_ui_records.now")
-    states = reduce_opportunities(connection, now)
-    eligible = sync_candidates(
-        connection, now=now, policy=policy, dry_run=True, limit=len(states)
-    ).candidates
+    snapshot = snapshot or read_candidate_snapshot(connection, now=now, policy=policy)
+    if snapshot.as_of != now:
+        raise ValueError("The record and candidate projections must use the same as-of time")
+    states, eligible = snapshot.states, snapshot.candidates
+    states_by_contact: dict[str | None, list[OpportunityState]] = {}
+    for state in states:
+        states_by_contact.setdefault(normalize_contact_key(state.contact_key), []).append(state)
     current = {candidate.primary_opportunity_id: candidate for candidate in eligible}
     drafts = {
         row["primary_opportunity_id"]: _persisted_draft(row)
@@ -197,6 +202,7 @@ def list_ui_records(
     timezone = ZoneInfo(policy.business_context.timezone_name)
     selected_kinds = set(kinds or ())
     items: list[dict[str, Any]] = []
+    displayed_drafts: dict[str, tuple[PersistedDraft, list[str]]] = {}
     for state in states:
         if record_id is not None and state.opportunity_id != record_id:
             continue
@@ -262,6 +268,8 @@ def list_ui_records(
             if errors and action not in {"closed", "blocked"}:
                 action = "blocked"
                 reason = _reason("draft_needs_review", "Draft needs review", errors[0])
+        if draft is not None:
+            displayed_drafts[state.opportunity_id] = (draft, errors)
         items.append({
             "id": state.opportunity_id, "kind": state.kind,
             "title": state.title or state.context.role or state.context.company or state.opportunity_id,
@@ -286,9 +294,33 @@ def list_ui_records(
                 "source_url": activity.source_url, "summary": activity.summary,
             } for activity in sorted(state.activities, key=lambda item: (item.occurred_at, item.activity_id), reverse=True)[:100]],
             "source_freshness": "unknown",
-            "draft": draft_view(draft, outbox_id=outbox.get(draft.id), validation_errors=errors) if draft else None,
+            "draft": None,
         })
     priority = {"reply": 0, "follow_up": 1, "blocked": 2, "waiting": 3, "approved": 4, "rejected": 5, "closed": 6}
     items.sort(key=lambda item: (priority[item["next_action"]], -(item["score"] or 0), item["id"]))
-    return {"items": items[offset:offset + limit], "total": len(items),
+    def actionable(item):
+        return item["next_action"] in {"reply", "follow_up"} and item["contact"] is not None and item["candidate_id"] is not None
+
+    counts = {"tracked": len(items), "ready": sum(bool(actionable(item)) for item in items)}
+    needle = search.strip().casefold()
+    items = [item for item in items
+             if (view != "ready" or actionable(item))
+             and (channel is None or item["contact"] is not None and item["contact"]["channel"] == channel)
+             and (not needle or needle in " ".join([
+                 item["title"], item["kind"], item["id"],
+                 item["contact"]["name"] or "" if item["contact"] else "",
+                 item["contact"]["address"] if item["contact"] else "",
+                 *[field["value"] for field in item["fields"]], item["reason"]["label"],
+             ]).casefold())]
+    if sort == "recent":
+        items.sort(key=lambda item: (
+            -(item["last_contact_at"].timestamp() if item["last_contact_at"] is not None else float("-inf")), item["id"],
+        ))
+    selected = items[offset:offset + limit]
+    for item in selected:
+        if saved := displayed_drafts.get(item["id"]):
+            draft, errors = saved
+            draft = bind_review_context(draft, states_by_contact.get(normalize_contact_key(draft.contact_key), ()))
+            item["draft"] = draft_view(draft, outbox_id=outbox.get(draft.id), validation_errors=errors)
+    return {"items": selected, "total": len(items), "counts": counts,
             "has_more": offset + limit < len(items), "as_of": now}

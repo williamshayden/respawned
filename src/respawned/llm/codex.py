@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -17,6 +18,28 @@ from respawned.llm.adapter import LLMAdapterError
 class DraftOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     body: str = Field(min_length=1, max_length=2000)
+
+
+def _run_command(command, *, input, env, timeout):
+    options = dict(stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                   text=True, encoding="utf-8", env=env)
+    if os.name != "posix":
+        # Native Windows retains the subprocess timeout behavior. POSIX process
+        # groups cannot manage native Windows descendants (including WSL interop).
+        return subprocess.run(command, input=input, capture_output=True, text=True,
+                              encoding="utf-8", env=env, timeout=timeout)
+    with subprocess.Popen(command, start_new_session=True, **options) as process:
+        try:
+            stdout, stderr = process.communicate(input=input, timeout=timeout)
+            return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        finally:
+            # The PID is the new session's group ID, never the caller's group.
+            # Also clean up descendants left behind after a successful wrapper.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=5)
 
 
 def codex_environment() -> dict[str, str]:
@@ -85,8 +108,8 @@ class CodexRunner:
                 command.extend(["--model", self.model])
             started = time.monotonic()
             try:
-                completed = subprocess.run(command + ["-"], input=prompt, capture_output=True,
-                                           text=True, encoding="utf-8", env=self.env, timeout=self.timeout)
+                completed = _run_command(command + ["-"], input=prompt,
+                                         env=self.env, timeout=self.timeout)
             except subprocess.TimeoutExpired as exc:
                 save(".jsonl", exc.stdout)
                 save(".stderr.txt", exc.stderr)

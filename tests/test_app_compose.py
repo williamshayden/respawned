@@ -177,6 +177,8 @@ finally:
         assert len(original["drafts"]) == len(original["outbox"]) == 1
         draft, reservation = original["drafts"][0], original["outbox"][0]
         assert draft["status"] == "approved" and draft["reviewed_at"] is None
+        assert len(draft["generation_source_fingerprint"]) == 64
+        assert draft["reviewed_source_fingerprint"] == draft["generation_source_fingerprint"]
         assert reservation["authorization_mode"] == "automatic"
         assert reservation["body"] == draft["body"]
         assert reservation["draft_id"] == draft["id"]

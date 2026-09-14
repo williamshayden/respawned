@@ -19,6 +19,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  connected-ui:
+    uses: ./.github/workflows/connected-ui.yml
+
   frontend:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

@@ -122,8 +122,13 @@ def test_invalid_policy_is_unready_and_does_not_disclose_file_contents(overrides
     assert response.json() == {"detail": "Workflow policy configuration is invalid"}
 
 
+@pytest.mark.parametrize("table, column", [
+    ("outbox", "authorization_mode"),
+    ("drafts", "generation_source_fingerprint"),
+    ("drafts", "reviewed_source_fingerprint"),
+])
 def test_readiness_checks_required_schema_without_model_configuration(
-    postgres_connection, overrides, monkeypatch,
+    postgres_connection, overrides, monkeypatch, table, column,
 ):
     # SAVEPOINTs keep failure probes from aborting the fixture's outer transaction.
     @contextmanager
@@ -137,8 +142,11 @@ def test_readiness_checks_required_schema_without_model_configuration(
     with TestClient(api_module.app) as client:
         assert client.get("/readyz").json() == {"status": "ready"}
         with postgres_connection.begin_nested() as altered_schema:
-            postgres_connection.execute(text("ALTER TABLE outbox RENAME COLUMN authorization_mode TO temporarily_absent"))
-            assert client.get("/readyz").status_code == 503
+            postgres_connection.execute(text(f"ALTER TABLE {table} RENAME COLUMN {column} TO temporarily_absent"))
+            response = client.get("/readyz")
+            assert response.status_code == 503
+            assert response.json() == {"detail": "Database unavailable"}
+            assert client.get("/healthz").status_code == 200
             altered_schema.rollback()
         assert client.get("/readyz").status_code == 200
 

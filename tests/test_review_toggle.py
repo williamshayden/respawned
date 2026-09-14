@@ -182,9 +182,11 @@ def test_automatic_authorization_observes_contact_wide_outbox_reservation(
     second = _prepare(
         postgres_connection, policy, suffix="a-second", contact_key="crm:shared"
     )
-    _authorize(postgres_connection, first, policy)
+    # The second import changes this contact's source context. Authorize its
+    # current draft, then prove its reservation blocks the older draft too.
+    _authorize(postgres_connection, second, policy)
     with pytest.raises(ReviewBlockedError, match="cooldown"):
-        _authorize(postgres_connection, second, policy)
+        _authorize(postgres_connection, first, policy)
     assert postgres_connection.execute(text("SELECT count(*) FROM outbox")).scalar_one() == 1
 
 

@@ -65,7 +65,9 @@ For `draft.txt` or the browser editor, replace this example with your own copy:
 Hi Alex, I am following up on my application for the Backend Engineer role at Example. Is there an update you can share?
 ```
 
-Saving validates the copy and current eligibility. Approval rechecks the displayed version, recipient, facts, and contact-wide cooldown. If a record is waiting, inspect its reason in **All tracked**; importing facts does not make every record eligible. **Refresh** reads stored state without fetching source updates.
+Saving validates the copy and current eligibility. Approval rechecks the displayed version, recipient, facts, and contact-wide cooldown. Changed source details require fresh review, even when the saved text is unchanged. If a record is waiting, inspect its reason in **All tracked**; importing facts does not make every record eligible. **Refresh** reads stored state without fetching source updates.
+
+Record search, channel, view, and sorting apply on the server before pagination. Tracked and ready counts cover the selected workspace. **Activity** shows returned events from the records loaded so far, with up to 100 recent events per record; **Load more activity** adds more records.
 
 ## CLI and API
 
@@ -86,7 +88,7 @@ A person then reviews that saved draft:
 respawned review ats:application-123
 ```
 
-This opens the selected record's current saved draft and prompts for a human decision. It does not generate copy or evaluate the queue. The engine performs the same review checks as the browser.
+This opens the selected record's current saved draft, source context, and recipient, then prompts for a human decision. It does not generate copy or evaluate the queue. The engine performs the same review checks as the browser. The 2.3 CLI requires the engine's `review_context` capability; older responses remain readable, with upgrade guidance and no review writes. After an edit, the CLI reloads current context before asking for another decision.
 
 See [Agent integration](https://respawned.williamshayden.com/agent-integration/) for SDK and HTTP alternatives, uncertain-write recovery, and the downloadable prompt.
 
@@ -116,7 +118,7 @@ The API reference is available on the engine at `/docs` and `/openapi.json`. Can
 
 Configure **Setup → Model backend** only when the engine should generate new text. Choose an OpenAI-compatible API, an optional LiteLLM proxy, or the optional Codex CLI adapter.
 
-Credentials stay on the engine host. Saving settings does not invoke the backend; **Generate draft** or `respawned draft RECORD_ID` without `--body-file` does. Writing your own text and reviewing saved drafts need no model. See [backend setup](https://respawned.williamshayden.com/#configure-a-drafting-backend).
+Credentials stay on the engine host. Saving settings does not invoke the backend; **Generate draft** or `respawned draft RECORD_ID` without `--body-file` does. Writing your own text, reviewing saved drafts, and processing an empty queue or existing drafts need no model. See [backend setup](https://respawned.williamshayden.com/#configure-a-drafting-backend).
 
 ## Engine configuration and remote clients
 
@@ -125,6 +127,10 @@ Engine commands do not automatically load `.env`. Keep `DB_*` values and model c
 Use `respawned ui --port 8001` for another port or `--no-open` to print a browser link. Set `RESPAWNED_API_URL` to that loopback URL in CLI terminals using a custom port. Local `respawned serve` starts the engine without opening a browser; `--api-only` disables the bundled UI. Ctrl+C stops a foreground engine; PostgreSQL remains separate.
 
 Remote CLI and SDK clients use `RESPAWNED_API_URL` and `RESPAWNED_REVIEW_TOKEN`. The same connection is used by `RespawnedClient.from_env()`. Workflow clients need only the URL, access credential or local discovery, and optional timeout. See [engine access](https://respawned.williamshayden.com/#access-and-draft-version-tokens).
+
+Local browser access requires both an HttpOnly cookie and a proof stored only in that engine origin's local storage. The browser sends the proof on every session read and write; neither credential works alone. Locking or server expiry revokes access. Manually entered Bearer tokens stay in tab memory and clear on reload. CLI access remains separate.
+
+HTTP request bodies are limited to 2,000,000 bytes before JSON parsing. Larger declared or streamed bodies return 413; split imports into smaller batches.
 
 PostgreSQL holds records, activities, drafts, outbox reservations and receipts, workspace definitions, and saved model settings. Preserve the engine environment and any custom policy file separately from database backups.
 
@@ -138,30 +144,36 @@ curl -fsS https://respawned.williamshayden.com/install.sh -o install.sh
 sh install.sh
 ```
 
-The installer verifies the wheel checksum, installs into `~/.local/share/respawned/2.2.0`, and adds `~/.local/bin/respawned`. It leaves shell startup files unchanged and refuses to overwrite unrelated commands. Use `sh install.sh --prefix /absolute/path` for another prefix.
+The installer verifies the wheel checksum, installs into `~/.local/share/respawned/2.3.0`, and adds `~/.local/bin/respawned`. It leaves shell startup files unchanged and refuses to overwrite unrelated commands. Use `sh install.sh --prefix /absolute/path` for another prefix.
 
-[Download package](https://respawned.williamshayden.com/downloads/respawned-2.2.0-py3-none-any.whl) · [Checksums](https://respawned.williamshayden.com/SHA256SUMS)
+[Download package](https://respawned.williamshayden.com/downloads/respawned-2.3.0-py3-none-any.whl) · [Checksums](https://respawned.williamshayden.com/SHA256SUMS)
 
 ### Direct package installation
 
 Install the wheel into an existing Python 3.12+ environment:
 
 ```sh
-python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-2.2.0-py3-none-any.whl'
+python -m pip install 'https://respawned.williamshayden.com/downloads/respawned-2.3.0-py3-none-any.whl'
 ```
 
-The [source archive](https://respawned.williamshayden.com/downloads/respawned-2.2.0.tar.gz) also includes the prebuilt UI and connector example. Package installation does not run a frontend build.
+The [source archive](https://respawned.williamshayden.com/downloads/respawned-2.3.0.tar.gz) also includes the prebuilt UI and connector example. Package installation does not run a frontend build.
 
-## Upgrading to 2.2
+## Upgrading to 2.3
 
 1. Stop the engine before upgrading; use Ctrl+C for a foreground `ui` or `serve` process. Keep PostgreSQL running for backup.
 2. Back up the existing database and preserve the engine environment and any custom policy file.
 3. Download the current website installer again using [Install and start](#install-and-start), then run it with the same prefix. A previously downloaded installer remains pinned to its original release. For a direct Python installation, update the wheel in that same environment using [Direct package installation](#direct-package-installation).
 4. Restart with the usual `ui` or `serve` command and existing database settings. Check readiness, then reload the browser and reconnect clients. Separately installed clients can use `respawned status` to check the running engine.
 
-Use matching 2.2.0 client and engine installations for this release. The browser UI ships with the engine.
+Use matching 2.3.0 client and engine installations for this release. The browser UI ships with the engine. A same-major status result checks version policy, not support for every workflow capability; interactive CLI review requires the new coherent review context.
+
+Reconnect local browsers with a fresh launch link after upgrading. The schema adds draft preparation and accepted-review context fingerprints. Existing drafts with unknown preparation context remain available for fresh human review when eligible, but automatic processing cannot approve them until preparation context is established. Existing approved reservations and receipts remain intact. See [2.3 review changes](https://respawned.williamshayden.com/api/#upgrading-to-23).
 
 The installer retains earlier version environments and has no uninstall command. To remove an installer-managed copy, stop the engine and remove its `bin/respawned` symlink and `share/respawned` program directory under the chosen prefix, after confirming they belong to this installation. Preserve PostgreSQL, its backups, and external configuration when removing program files.
+
+## Upgrading to 2.2
+
+The 2.2 workflow introduced direct review of one saved draft with `respawned review RECORD_ID` and a first browser flow using supplied text without model setup. Those workflows continue in 2.3 with current-context checks. Historical [2.2.0 package](https://respawned.williamshayden.com/downloads/respawned-2.2.0-py3-none-any.whl) and [source archive](https://respawned.williamshayden.com/downloads/respawned-2.2.0.tar.gz) links are retained.
 
 ### Upgrading to 2.1
 

@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 import hmac
 import os
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -25,9 +25,10 @@ from respawned.core.review import (
     ReviewBlockedError, approve_draft, draft_candidate,
     reject_draft, update_draft_message, load_latest_candidates, rank_candidates,
 )
-from respawned.core.sync import sync_candidates
+from respawned.core.review_context import bind_review_context
+from respawned.core.sync import CandidateSnapshot, read_candidate_snapshot, sync_candidates
 from respawned.core.ui_queries import (
-    draft_view, inbox_review_targets, list_ui_records, load_ui_draft, record_references,
+    draft_view, list_ui_records, load_ui_draft, record_references,
 )
 from respawned.core.workspaces import load_workspace_kinds
 from respawned.llm.adapter import ChatMessage, DraftingAdapter
@@ -78,11 +79,22 @@ def _require_draft(connection: Connection, draft_id: UUID):
     return draft
 
 
-def _draft_response(connection: Connection, draft_id: UUID) -> WorkflowDraft:
+def _draft_response(connection: Connection, draft_id: UUID, policy: Policy,
+                    now: datetime, snapshot: CandidateSnapshot | None = None) -> WorkflowDraft:
     draft = _require_draft(connection, draft_id)
+    snapshot = snapshot or read_candidate_snapshot(connection, now=now, policy=policy)
+    draft = bind_review_context(draft, snapshot.states)
     outbox_id = connection.execute(text("SELECT id FROM outbox WHERE draft_id = :id"),
                                    {"id": draft_id}).scalar_one_or_none()
-    return WorkflowDraft(**{**asdict(draft), **draft_view(draft, outbox_id=outbox_id)})
+    record = list_ui_records(connection, now=now, policy=policy,
+                             record_id=draft.primary_opportunity_id, limit=1,
+                             snapshot=snapshot)["items"]
+    context = dict(record[0], draft=None) if record else None
+    # Internal preparation/review hashes are not the public review contract.
+    persisted = {key: value for key, value in asdict(draft).items()
+                 if key in WorkflowDraft.model_fields}
+    return WorkflowDraft(**{**persisted, **draft_view(draft, outbox_id=outbox_id),
+                            "review_context": context})
 
 
 @dataclass(frozen=True)
@@ -120,6 +132,10 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency,
     def records(connection: ConnectionDep, policy: PolicyDep, clock: ClockDep,
                 limit: Annotated[int, Query(ge=1, le=200)] = 50,
                 offset: Annotated[int, Query(ge=0)] = 0,
+                search: Annotated[str, Query(max_length=300)] = "",
+                channel: Literal["email", "sms"] | None = None,
+                view: Literal["ready", "all"] = "all",
+                sort: Literal["priority", "recent"] = "priority",
                 workspace_id: Annotated[UUID | None, Query(
                     description="Saved view filter; eligibility remains shared across all records.",
                 )] = None) -> UIRecordList:
@@ -130,7 +146,8 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency,
                 raise HTTPException(404, "Workspace not found")
         try:
             result = list_ui_records(connection, now=clock(), policy=policy,
-                                     limit=limit, offset=offset, kinds=kinds)
+                                     limit=limit, offset=offset, kinds=kinds,
+                                     search=search, channel=channel, view=view, sort=sort)
         except ValueError as exc:
             raise HTTPException(503, "Workflow policy or tracked state is invalid") from exc
         return UIRecordList(**result)
@@ -153,6 +170,7 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency,
     @router.get("/inbox", response_model=UIInboxResult)
     def inbox(connection: ConnectionDep, policy: PolicyDep, clock: ClockDep,
               limit: Annotated[int, Query(ge=1, le=200)] = 200,
+              offset: Annotated[int, Query(ge=0)] = 0,
               workspace_id: Annotated[UUID | None, Query(
                   description="Saved view filter; reply groups retain contact-wide evidence.",
               )] = None) -> UIInboxResult:
@@ -164,8 +182,11 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency,
                 raise HTTPException(404, "Workspace not found")
         try:
             now = clock()
-            result = list_reply_inbox(connection, now=now, policy=policy, limit=limit, kinds=kinds)
-            targets = inbox_review_targets(connection, now=now, policy=policy)
+            snapshot = read_candidate_snapshot(connection, now=now, policy=policy)
+            result = list_reply_inbox(connection, now=now, policy=policy, limit=limit,
+                                      offset=offset, kinds=kinds, states=snapshot.states)
+            targets = {candidate.contact_key: candidate.primary_opportunity_id
+                       for candidate in snapshot.candidates}
         except ValueError as exc:
             raise HTTPException(503, "Workflow policy or tracked state is invalid") from exc
         refs = record_references(connection, (record_id for item in result.items
@@ -202,9 +223,10 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency,
 
 
     @router.get("/drafts/{draft_id}", response_model=WorkflowDraft)
-    def read_draft(draft_id: UUID, connection: ConnectionDep) -> WorkflowDraft:
+    def read_draft(draft_id: UUID, connection: ConnectionDep,
+                   policy: PolicyDep, clock: ClockDep) -> WorkflowDraft:
         """Recover the persisted recipient, copy and version for explicit review."""
-        return _draft_response(connection, draft_id)
+        return _draft_response(connection, draft_id, policy, clock())
 
 
     @router.post("/candidates/{candidate_id}/draft", response_model=WorkflowDraft)
@@ -221,12 +243,12 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency,
         try:
             draft = draft_candidate(connection, candidate=candidate, now=clock(), policy=policy,
                                     adapter=_LazyDraftingAdapter(adapter_factory),
-                                    body=payload.body if payload is not None else None)
+                                    body=payload.body if payload is not None else None, clock=clock)
         except ReviewBlockedError as exc:
             raise _review_error(exc) from exc
         if draft is None:
             raise HTTPException(409, "Candidate has already been reviewed")
-        return _draft_response(connection, draft.id)
+        return _draft_response(connection, draft.id, policy, clock())
 
 
     @router.post("/records/{record_id:path}/draft", response_model=UIDraft)
@@ -250,16 +272,16 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency,
         existing_id = connection.execute(text("SELECT id FROM drafts WHERE candidate_id = :id"),
                                          {"id": candidate.id}).scalar_one_or_none()
         if existing_id is not None and (payload is None or payload.body is None):
-            return _draft_response(connection, existing_id)
+            return _draft_response(connection, existing_id, policy, clock())
         try:
             draft = draft_candidate(connection, candidate=candidate, now=now,
                                     policy=policy, adapter=_LazyDraftingAdapter(adapter_factory),
-                                    body=payload.body if payload is not None else None)
+                                    body=payload.body if payload is not None else None, clock=clock)
         except ReviewBlockedError as exc:
             raise _review_error(exc) from exc
         if draft is None:
             raise HTTPException(409, "Candidate has already been reviewed")
-        return _draft_response(connection, draft.id)
+        return _draft_response(connection, draft.id, policy, clock())
 
 
     @router.post("/drafts/{draft_id}/edit", response_model=UIDraft)
@@ -268,10 +290,10 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency,
         _require_draft(connection, draft_id)
         try:
             update_draft_message(connection, draft_id=draft_id, body=payload.body,
-                                 expected_review_token=payload.review_token, now=clock(), policy=policy)
+                                 expected_review_token=payload.review_token, now=clock(), policy=policy, clock=clock)
         except ReviewBlockedError as exc:
             raise _review_error(exc) from exc
-        return _draft_response(connection, draft_id)
+        return _draft_response(connection, draft_id, policy, clock())
 
 
     @router.post("/drafts/{draft_id}/approve", response_model=UIDraft)
@@ -280,22 +302,22 @@ def create_ui_router(connection_dependency, policy_dependency, clock_dependency,
         _require_draft(connection, draft_id)
         try:
             approve_draft(connection, draft_id=draft_id, expected_review_token=payload.review_token,
-                          now=clock(), policy=policy)
+                          now=clock(), policy=policy, clock=clock)
         except ReviewBlockedError as exc:
             raise _review_error(exc) from exc
-        return _draft_response(connection, draft_id)
+        return _draft_response(connection, draft_id, policy, clock())
 
 
     @router.post("/drafts/{draft_id}/reject", response_model=UIDraft)
     def reject(draft_id: UUID, payload: UIReviewRequest, connection: ConnectionDep,
-               clock: ClockDep) -> UIDraft:
+               policy: PolicyDep, clock: ClockDep) -> UIDraft:
         _require_draft(connection, draft_id)
         try:
             reject_draft(connection, draft_id=draft_id, expected_review_token=payload.review_token,
-                         now=clock())
+                         now=clock(), clock=clock)
         except ReviewBlockedError as exc:
             raise _review_error(exc) from exc
-        return _draft_response(connection, draft_id)
+        return _draft_response(connection, draft_id, policy, clock())
 
 
     @router.get("/outbox", response_model=UIOutboxList)

@@ -1,6 +1,6 @@
 """Local integration API with explicitly enabled operator processing."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -18,6 +18,7 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from respawned.api.cors import RemoteUIMiddleware, parse_ui_origins
+from respawned.api.body_limit import RequestBodyLimitMiddleware
 from respawned.api.models import (
     DraftListResponse,
     HealthResponse,
@@ -42,7 +43,7 @@ from respawned.core.workflow import ProcessResult, process_candidates, utc_now
 from respawned.db.helpers.pg_connect import (
     DatabaseConnectionError, create_tables, get_engine,
 )
-from respawned.llm.adapter import DraftingAdapter
+from respawned.llm.adapter import ChatMessage, DraftingAdapter, LLMAdapterError
 
 
 @lru_cache(maxsize=1)
@@ -94,14 +95,22 @@ def get_workflow_policy() -> Policy:
         raise HTTPException(503, "Workflow policy configuration is invalid") from exc
 
 
-def get_workflow_adapter() -> DraftingAdapter:
-    from respawned.core.settings import configured_adapter
+class _ConfiguredDraftingAdapter:
+    """Resolve optional model configuration only when new copy is requested."""
 
-    try:
-        with get_api_engine().connect() as connection:
-            return configured_adapter(connection)
-    except ValueError as exc:
-        raise HTTPException(503, "Drafting model is not configured") from exc
+    def complete(self, messages: Sequence[ChatMessage]) -> str:
+        from respawned.core.settings import configured_adapter
+
+        try:
+            with get_api_engine().connect() as connection:
+                adapter = configured_adapter(connection)
+        except ValueError as exc:
+            raise LLMAdapterError("Drafting model is not configured") from exc
+        return adapter.complete(messages)
+
+
+def get_workflow_adapter() -> DraftingAdapter:
+    return _ConfiguredDraftingAdapter()
 
 
 def get_workflow_clock() -> Callable[[], datetime]:
@@ -147,6 +156,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Respawned", version=version("respawned"), lifespan=lifespan)
 
+app.add_middleware(RequestBodyLimitMiddleware)
 # Validate before Uvicorn starts. A middleware-construction exception is otherwise
 # mistaken for unsupported ASGI lifespan under Uvicorn's default auto detection,
 # leaving an apparently started server whose requests all return 500.
@@ -199,7 +209,8 @@ def readiness(
     connection.exec_driver_sql("SET LOCAL statement_timeout = '2s'")
     connection.exec_driver_sql("""
         SELECT opportunities.id, activities.id, sync_runs.id, sync_runs.scope, candidates.id,
-               drafts.id, outbox.authorization_mode, opportunity_states.opportunity_id,
+               drafts.id, drafts.generation_source_fingerprint, drafts.reviewed_source_fingerprint,
+               outbox.authorization_mode, opportunity_states.opportunity_id,
                workspaces.id, application_settings.key, outbox_receipts.outbox_id
         FROM opportunities, activities, sync_runs, candidates, drafts, outbox,
              opportunity_states, workspaces, application_settings, outbox_receipts

@@ -71,6 +71,7 @@ select { appearance: none; width: 100%; background: #fff; border: 1px solid #dde
 .review-layout { display: grid; grid-template-columns: minmax(325px, 36.8%) minmax(0, 1fr); min-height: 0; flex: 1; }
 .queue-pane { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .queue-controls { padding: 15px 15px 0; border-bottom: 1px solid var(--border); }
+.source-context-notice { margin: 0 0 14px; padding: 12px 14px; border-left: 3px solid #a57928; background: #fff8e8; color: #674b19; line-height: 1.5; }
 .search-control { display: flex; align-items: center; gap: 13px; min-height: 49px; border: 1px solid #dfe4ea; border-radius: 7px; color: var(--muted); padding: 0 15px; }
 .search-control input { border: 0; background: transparent; min-width: 0; width: 100%; font-size: 15px; padding: 12px 0; outline-offset: 2px; }
 .search-control input::placeholder { color: var(--muted); opacity: 1; }

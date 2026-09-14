@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from respawned.api import ui
@@ -165,6 +165,103 @@ def test_overview_counts_every_record_and_reply_beyond_queue_limits_without_writ
     assert persisted_counts() == before
     assert _get(state, "/overview") == result
     assert state.calls == []
+
+
+def test_record_search_sort_and_ready_counts_apply_before_pagination(review_api):
+    state = review_api
+    keys = [f"search-{index:03}" for index in range(205)]
+    ingest_records(state.connection, opportunities=[
+        *[_record(key, contact_name=f"Audit Contact {index:03}") for index, key in enumerate(keys)],
+        _record("closed-search", status="lost"),
+        _record("contactless-search", contact_key=None, contact_email=None),
+    ], activities=[_reply(key, occurred_at=NOW - timedelta(minutes=205 - index))
+                   for index, key in enumerate(keys)])
+    first = _get(state, "/records?view=ready&limit=50")
+    assert first["counts"] == {"tracked": 207, "ready": 205}
+    assert first["total"] == 205 and first["has_more"]
+    assert "search-000" not in {item["id"] for item in first["items"]}
+    found = _get(state, "/records?view=ready&search=Audit%20Contact%20000")
+    assert [item["id"] for item in found["items"]] == ["search-000"]
+    assert found["total"] == 1 and not found["has_more"]
+    assert found["counts"] == first["counts"]
+    recent = _get(state, "/records?view=ready&sort=recent&limit=1")
+    assert recent["items"][0]["id"] == "search-204"
+    sms = _get(state, "/records?view=all&channel=sms")
+    assert sms["items"] == [] and sms["total"] == 0
+    assert sms["counts"] == first["counts"]
+    for query in ("view=invalid", "channel=push", "sort=unknown", "offset=-1", "search=" + "x" * 301):
+        response = state.client.get("/v1/workflow/records?" + query, headers=HEADERS)
+        assert response.status_code == 422, response.text
+    assert state.calls == []
+    for table in ("sync_runs", "candidates", "drafts", "outbox"):
+        assert state.connection.execute(text(f"SELECT count(*) FROM {table}")).scalar_one() == 0
+
+
+def test_inbox_pagination_reaches_replies_beyond_two_hundred(review_api):
+    state = review_api
+    keys = [f"reply-page-{index:03}" for index in range(205)]
+    ingest_records(state.connection, opportunities=[_record(key) for key in keys],
+                   activities=[_reply(key) for key in keys])
+    first = _get(state, "/inbox?limit=200")
+    tail = _get(state, "/inbox?limit=200&offset=200")
+    assert first["total"] == tail["total"] == 205
+    assert len(first["items"]) == 200 and first["has_more"]
+    assert len(tail["items"]) == 5 and not tail["has_more"]
+    all_ids = [item["contact_key"] for item in first["items"] + tail["items"]]
+    assert len(set(all_ids)) == 205
+    assert _get(state, "/inbox?offset=205")["items"] == []
+    assert state.client.get("/v1/workflow/inbox?offset=-1", headers=HEADERS).status_code == 422
+    assert state.calls == []
+
+
+def test_http_review_token_binds_displayed_source_and_preserves_approval_replay(review_api):
+    state = review_api
+    original = _draft(state)
+    original_read = _get(state, f"/drafts/{original['id']}")
+    assert original_read["source_context_status"] == "current"
+    assert original_read["review_context"]["contact"]["name"] == "Avery"
+    assert original_read["review_context"]["draft"] is None
+    assert original_read["review_token"] == original["review_token"]
+    ingest_records(state.connection, opportunities=[_record()], activities=[_reply()])
+    assert _get(state, f"/drafts/{original['id']}")["review_token"] == original["review_token"]
+    changed = _record(contact_name="Morgan", title="New role", context={"company": "Beta", "role": "Lead"})
+    ingest_records(state.connection, opportunities=[changed])
+    _post(state, f"/drafts/{original['id']}/approve", {"review_token": original["review_token"]}, status=409)
+    fresh = _get(state, f"/drafts/{original['id']}")
+    assert fresh["review_token"] != original["review_token"]
+    assert fresh["source_context_status"] == "changed"
+    assert fresh["review_context"]["title"] == "New role"
+    assert fresh["review_context"]["contact"]["name"] == "Morgan"
+    assert fresh["review_context"]["fields"] == [{"label": "Company", "value": "Beta"}, {"label": "Role", "value": "Lead"}]
+    assert fresh["contact_name"] == "Avery" and fresh["body"] == original["body"]
+    assert fresh["review_token"] == _get(state, "/records/one")["draft"]["review_token"]
+    assert not any("fingerprint" in key for key in fresh)
+    approved = _post(state, f"/drafts/{original['id']}/approve", {"review_token": fresh["review_token"]})
+    ingest_records(state.connection, opportunities=[dict(changed, title="Later source title")])
+    repeated = _post(state, f"/drafts/{original['id']}/approve", {"review_token": fresh["review_token"]})
+    assert repeated["outbox_id"] == approved["outbox_id"]
+    outbox = _get(state, "/outbox")["items"]
+    assert len(outbox) == 1 and outbox[0]["body"] == original["body"]
+    assert outbox[0]["contact_name"] == "Avery"
+
+
+@pytest.mark.parametrize("path", ["/records", "/records/one", "/inbox", "/overview", "/draft"])
+def test_combined_review_reads_reconstruct_source_state_once(review_api, path):
+    state = review_api
+    draft = _draft(state)
+    projections = []
+
+    def track(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if "FROM opportunity_states" in statement:
+            projections.append(statement)
+
+    event.listen(state.connection, "before_cursor_execute", track)
+    try:
+        _get(state, f"/drafts/{draft['id']}" if path == "/draft" else path)
+    finally:
+        event.remove(state.connection, "before_cursor_execute", track)
+    assert len(projections) == 1
+    assert len(state.calls) == 1
 
 
 def test_overview_preserves_global_groups_cooldowns_and_pending_reservations(review_api):

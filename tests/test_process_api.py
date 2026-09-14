@@ -175,12 +175,17 @@ def test_automatic_process_rechecks_state_after_drafting(workflow_api, postgres_
     state = workflow_api
     state.policy = replace(state.policy, review=ReviewPolicy("automatic"))
     assert state.client.post("/v1/ingest", json=_records()).status_code == 200
-    calls = []
+    source_changed = False
 
     def clock():
-        calls.append(NOW)
-        if len(calls) == 3:
+        nonlocal source_changed
+        # Change facts after the draft is persisted, independent of how many
+        # fresh-clock checks drafting performs before its final save.
+        if not source_changed and postgres_connection.execute(
+            text("SELECT EXISTS (SELECT 1 FROM drafts)")
+        ).scalar_one():
             ingest_records(postgres_connection, **_records(status="lost"))
+            source_changed = True
         return NOW
 
     state.clock = clock
@@ -272,3 +277,51 @@ def test_local_cli_capability_can_process_without_browser_cookie(workflow_api, m
         response = client.post("/v1/process", json={}, headers={"Authorization": f"Bearer {manager.cli_token}"})
         assert response.status_code == 200, response.text
         assert state.calls == []
+
+
+def test_processing_without_model_reuses_supplied_copy_and_defers_resolution(
+    workflow_api, postgres_connection, monkeypatch,
+):
+    import importlib
+    from respawned.core import settings
+
+    api_module = importlib.import_module("respawned.api.app")
+    state = workflow_api
+    app.dependency_overrides.pop(get_workflow_adapter)
+    for key in ("LITELLM_MASTER_KEY", "RESPAWNED_MODEL_API_KEY"):
+        monkeypatch.setenv(key, "")
+    monkeypatch.setenv("RESPAWNED_MODEL_BACKEND", "openai_compatible")
+    monkeypatch.setenv("LITELLM_PROXY_URL", "http://unused.invalid")
+    monkeypatch.setenv("LITELLM_MODEL_ALIAS", "unused")
+    monkeypatch.setenv("LITELLM_TIMEOUT_SECONDS", "1")
+    @contextmanager
+    def connect():
+        yield postgres_connection
+    state.engine.connect = connect
+    def engine():
+        return state.engine
+    engine.cache_info = lambda: SimpleNamespace(currsize=0)
+    monkeypatch.setattr(api_module, "get_api_engine", engine)
+    original_configured = settings.configured_adapter
+    resolutions = []
+    def configured(connection):
+        resolutions.append(True)
+        return original_configured(connection)
+    monkeypatch.setattr(settings, "configured_adapter", configured)
+
+    assert _process(state)["items"] == []
+    assert resolutions == []
+    ingest_records(postgres_connection, **_records())
+    created = state.client.post("/v1/workflow/records/one/draft", json={
+        "body": "Hi Avery, thanks for your reply. What would help you next?"})
+    assert created.status_code == 200, created.text
+    assert _process(state)["items"][0]["status"] == "pending"
+    state.policy = replace(state.policy, review=ReviewPolicy("automatic"))
+    assert _process(state)["items"][0]["status"] == "authorized"
+    assert resolutions == [] and state.calls == []
+
+    ingest_records(postgres_connection, **_records("needs-model"))
+    result = _process(state)
+    assert result["items"][0]["status"] == "blocked"
+    assert "not configured" in result["items"][0]["detail"]
+    assert resolutions == [True] and state.calls == []

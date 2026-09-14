@@ -15,6 +15,7 @@ export interface UIDraft {
   review_token: string
   validation_errors: string[]
   outbox_id: number | null
+  source_context_status?: 'current' | 'changed' | 'unknown'
 }
 
 export interface UIActivity {
@@ -64,6 +65,14 @@ export interface RecordPage {
   total: number
   has_more: boolean
   as_of: string
+  counts?: { tracked: number; ready: number }
+}
+
+export interface RecordQuery {
+  search?: string
+  channel?: 'email' | 'sms'
+  view?: 'ready' | 'all'
+  sort?: 'priority' | 'recent'
 }
 
 export interface SyncResult {
@@ -125,7 +134,7 @@ export interface InboxResult {
 export interface ReviewClient {
   readonly mode: 'demo' | 'live'
   config(): Promise<UIConfig>
-  listRecords(offset?: number): Promise<RecordPage>
+  listRecords(offset?: number, query?: RecordQuery): Promise<RecordPage>
   getRecord(recordId: string): Promise<UIRecord>
   sync(): Promise<SyncResult>
   supportsManualDraft(): Promise<boolean>
@@ -135,7 +144,7 @@ export interface ReviewClient {
   reject(draftId: string, reviewToken: string): Promise<UIDraft>
   listOutbox(): Promise<OutboxItem[]>
   exportOutbox(): Promise<Blob>
-  listInbox(): Promise<InboxResult>
+  listInbox(offset?: number): Promise<InboxResult>
   resetDemo?(): Promise<void>
 }
 

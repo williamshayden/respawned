@@ -1,6 +1,7 @@
 """Local server capabilities for CLI clients and explicitly launched browsers."""
 
 from collections.abc import Callable
+import hashlib
 import hmac
 import secrets
 from threading import Lock
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field
 from respawned.api.paths import BROWSER_COOKIE_PATHS
 
 COOKIE = "respawned_local_session"
+SESSION_PROOF_HEADER = "X-Respawned-Session-Proof"
 BOOTSTRAP_SECONDS = 300
 SESSION_SECONDS = 12 * 60 * 60
 
@@ -32,6 +34,7 @@ class LocalSession:
         self.launch_secret = secrets.token_urlsafe(32)
         self.launch_expires = clock() + BOOTSTRAP_SECONDS
         self.session: str | None = None
+        self.session_proof_hash: bytes | None = None
         self.session_expires = 0.0
         self.lock = Lock()
 
@@ -60,23 +63,33 @@ class LocalSession:
     def authenticated(self, request: Request) -> bool:
         self.check_origin(request, mutation=request.method not in {"GET", "HEAD", "OPTIONS"})
         supplied = request.cookies.get(self.cookie_name, "")
+        proof = request.headers.get(SESSION_PROOF_HEADER, "")
         with self.lock:
             if self.clock() >= self.session_expires:
                 self.session = None
-            return bool(self.session and hmac.compare_digest(supplied.encode(), self.session.encode()))
+                self.session_proof_hash = None
+            return bool(self.session and self.session_proof_hash and 0 < len(proof) <= 128
+                        and hmac.compare_digest(supplied.encode(), self.session.encode())
+                        and hmac.compare_digest(hashlib.sha256(proof.encode()).digest(), self.session_proof_hash))
 
-    def exchange(self, secret: str) -> str:
+    def exchange(self, secret: str) -> tuple[str, str]:
         with self.lock:
             if not self.launch_secret or self.clock() >= self.launch_expires or not hmac.compare_digest(secret.encode(), self.launch_secret.encode()):
                 raise HTTPException(401, "This launch link has expired or was already used. Restart respawned ui for a new link.")
             self.launch_secret = ""
             self.session = secrets.token_urlsafe(32)
+            # Cookies cross ports on loopback. This second capability is returned
+            # once to the launching origin and must accompany every session read
+            # and write; possessing a leaked cookie alone cannot recover it.
+            proof = secrets.token_urlsafe(32)
+            self.session_proof_hash = hashlib.sha256(proof.encode()).digest()
             self.session_expires = self.clock() + SESSION_SECONDS
-            return self.session
+            return self.session, proof
 
     def clear(self) -> None:
         with self.lock:
             self.session = None
+            self.session_proof_hash = None
             self.session_expires = 0.0
 
     def close(self) -> None:
@@ -85,6 +98,7 @@ class LocalSession:
             self.cli_token = ""
             self.launch_secret = ""
             self.session = None
+            self.session_proof_hash = None
             self.session_expires = 0.0
 
 
@@ -111,14 +125,15 @@ def create_session_router(*, prefix: str = "/v1/ui/session") -> APIRouter:
         if manager is None:
             raise HTTPException(404, "Local browser sessions require respawned ui")
         manager.check_origin(request, mutation=True)
-        session = manager.exchange(payload.secret)
+        session, proof = manager.exchange(payload.secret)
         # Loopback HTTP cannot use Secure cookies. HttpOnly, host-only scope,
-        # Strict SameSite, exact Origin and the custom header protect this mode.
+        # Strict SameSite and exact Origin protect browser requests; the proof
+        # header additionally prevents a different loopback port replaying a cookie.
         for cookie_path in BROWSER_COOKIE_PATHS:
             response.set_cookie(manager.cookie_name, session, httponly=True, samesite="strict",
                                 path=cookie_path, max_age=SESSION_SECONDS)
         response.headers["Cache-Control"] = "no-store"
-        return {"authenticated": True, "local_launcher": True}
+        return {"authenticated": True, "local_launcher": True, "session_proof": proof}
 
     @router.delete("", status_code=204)
     def logout(request: Request, response: Response) -> None:
