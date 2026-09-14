@@ -8,8 +8,7 @@ from sqlalchemy.engine import Connection
 
 from respawned.core.inbox import reply_inbox_items
 from respawned.core.policy import Policy
-from respawned.core.reduce import reduce_opportunities
-from respawned.core.sync import sync_candidates
+from respawned.core.sync import read_candidate_snapshot
 from respawned.core.time import aware_utc
 from respawned.core.workspaces import list_workspaces
 
@@ -29,10 +28,10 @@ def workspace_overview(connection: Connection, *, now: datetime, policy: Policy)
     overlapping views are deliberately not additive. Source freshness is unknown.
     """
     now = aware_utc(now, "workspace_overview.now")
-    states = reduce_opportunities(connection, now)
+    snapshot = read_candidate_snapshot(connection, now=now, policy=policy)
+    states = snapshot.states
     kinds_by_id = {state.opportunity_id: state.kind for state in states}
-    ready = sync_candidates(connection, now=now, policy=policy, dry_run=True,
-                            limit=len(states)).candidates
+    ready = snapshot.candidates
     replies = reply_inbox_items(states, now=now, policy=policy)
     pending_drafts = connection.execute(text("""
         SELECT opportunity_ids FROM drafts WHERE status = 'pending'

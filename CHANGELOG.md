@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.3.0
+
+The full application audit corrected approval freshness, local browser authentication, large-queue reads, and model execution boundaries. Review tokens now include the source context for the whole contact group. Source changes invalidate an open review; generated drafts retain their original context, and automatic processing cannot reuse changed or unknown context. Eligibility and deadlines are checked again after generation and while reserving an outbox item. Completed review retries remain idempotent.
+
+Local browser sessions require both their HttpOnly cookie and a separate origin-scoped proof, preventing another loopback port from replaying a captured cookie. API request bodies are capped at 2,000,000 bytes. Empty processing queues and existing supplied drafts no longer require model configuration. On POSIX, timed-out or interrupted Codex commands have their process group terminated.
+
+Search, views, channels, sorting, and ready counts now apply across the complete record set before pagination. The reply inbox supports additional pages. Activity loads independently and explicitly identifies a partial feed. Shared read projections avoid reducing the complete event history twice per request.
+
+Upgrade the engine and clients together, restart the engine to apply the additive schema migration, and reconnect local browser sessions. Existing drafts and outbox items remain stored; older drafts have unknown source provenance and require fresh human review before approval. See the [application audit](docs/APPLICATION_AUDIT_2_3.md) for findings, evidence, and qualification limits.
+
 ## 2.2.0
 
 Start with one follow-up: import a record, write or generate its draft, review the saved copy, and approve it to the unsent outbox. The browser accepts supplied text without model setup, opens connected local sessions in the review queue, and omits selectors that have no choices. Refresh reads current eligibility without a separate queue-evaluation step.

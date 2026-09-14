@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { CONNECTIONS_STORAGE_KEY } from '../src/data/connections'
+import { SESSION_PROOF_STORAGE_KEY } from '../src/data/auth'
 import { WATCH_STORAGE_KEY, watchKey, type Overview } from '../src/data/overview'
 
 const remoteUrl = 'https://remote.respawned.test'
@@ -12,9 +13,10 @@ function summary(remote = false): Overview {
   ] }
 }
 async function environment(page: Page) {
-  await page.addInitScript(({ storage, url }) => {
+  await page.addInitScript(({ storage, url, proofStorage }) => {
     localStorage.setItem(storage, JSON.stringify([{ id: 'remote', name: 'Studio engine', baseUrl: url }]))
-  }, { storage: CONNECTIONS_STORAGE_KEY, url: remoteUrl })
+    localStorage.setItem(proofStorage, 'mock-local-origin-proof')
+  }, { storage: CONNECTIONS_STORAGE_KEY, url: remoteUrl, proofStorage: SESSION_PROOF_STORAGE_KEY })
   const requests: { engine: string; path: string; method: string; authorization: string | undefined }[] = []
   const state = { remoteStatus: 200, localReady: 280 }
   await page.route('**/v1/**', async route => {

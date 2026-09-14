@@ -1,5 +1,6 @@
 import { readEngineBootstrap, workflowRoot } from './workflow'
-import type { InboxResult, OutboxItem, RecordPage, ReviewClient, SyncResult, UIConfig, UIDraft, UIRecord } from './types'
+import type { InboxResult, OutboxItem, RecordPage, RecordQuery, ReviewClient, SyncResult, UIConfig, UIDraft, UIRecord } from './types'
+import { queryRecords } from './recordQuery'
 import { accessHeaders, type ReviewAccess } from './auth'
 import { engineNetworkError, engineRequestOptions } from './transport'
 
@@ -36,7 +37,7 @@ function errorMessage(payload: unknown, fallback: string): string {
   return fallback
 }
 
-/** Credentials live only in this closure; they are never written to storage or URLs. */
+/** Bearer credentials live only in this closure, never in storage or URLs. */
 export function createHttpClient(baseUrl = '', operatorToken: ReviewAccess = '', workspaceId = ''): ReviewClient {
   const transport = engineRequestOptions(operatorToken, baseUrl)
   const supportsManualDraft = async () => (await readEngineBootstrap(baseUrl)).workflow_api_prefix === '/v1/workflow'
@@ -78,7 +79,29 @@ export function createHttpClient(baseUrl = '', operatorToken: ReviewAccess = '',
   return {
     mode: 'live',
     config: () => request<UIConfig>('/config'),
-    listRecords: (offset = 0) => request<RecordPage>(`/records?limit=50&offset=${Math.max(0, Math.floor(offset))}${workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : ''}`),
+    async listRecords(offset = 0, query?: RecordQuery) {
+      const start = Math.max(0, Math.floor(offset))
+      const scope = workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : ''
+      const filters = new URLSearchParams()
+      if (query?.search) filters.set('search', query.search)
+      if (query?.channel) filters.set('channel', query.channel)
+      if (query?.view) filters.set('view', query.view)
+      if (query?.sort) filters.set('sort', query.sort)
+      const page = await request<RecordPage>(`/records?limit=50&offset=${start}${scope}${filters.size ? `&${filters}` : ''}`)
+      if (!query || page.counts) return page
+      // Older engines ignore unknown filters. Complete their snapshot before
+      // filtering so a later-page match can never become a false empty result.
+      let next = start ? await request<RecordPage>(`/records?limit=50&offset=0${scope}`) : page
+      const records = [...next.items]
+      while (next.has_more) {
+        if (!next.items.length) throw new ClientError('This engine returned an incomplete record page. Refresh or update the engine before searching again.', 0, 'invalid_response')
+        const previousIds = new Set(records.map(record => record.id))
+        next = await request<RecordPage>(`/records?limit=50&offset=${records.length}${scope}`)
+        if (next.has_more && next.items.every(record => previousIds.has(record.id))) throw new ClientError('This engine does not support complete record pagination. Update Respawned on that engine before searching again.', 0, 'invalid_response')
+        records.push(...next.items)
+      }
+      return queryRecords(records, query, start, page.as_of)
+    },
     getRecord: (recordId) => request<UIRecord>(`/records/${encodeURIComponent(recordId)}`),
     sync: () => request<SyncResult>('/sync', 'POST', {}),
     supportsManualDraft,
@@ -93,7 +116,7 @@ export function createHttpClient(baseUrl = '', operatorToken: ReviewAccess = '',
     edit: (draftId, body, reviewToken) => request<UIDraft>(`/drafts/${encodeURIComponent(draftId)}/edit`, 'POST', { body, review_token: reviewToken }),
     approve: (draftId, reviewToken) => request<UIDraft>(`/drafts/${encodeURIComponent(draftId)}/approve`, 'POST', { review_token: reviewToken }),
     reject: (draftId, reviewToken) => request<UIDraft>(`/drafts/${encodeURIComponent(draftId)}/reject`, 'POST', { review_token: reviewToken }),
-    listInbox: () => request<InboxResult>(`/inbox?limit=200${workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : ''}`),
+    listInbox: (offset = 0) => request<InboxResult>(`/inbox?limit=200${offset ? `&offset=${Math.max(0, Math.floor(offset))}` : ''}${workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : ''}`),
     exportOutbox: () => request<Blob>(`/outbox/export?format=csv${workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : ''}`, 'GET', undefined, true),
     async listOutbox() {
       const items: OutboxItem[] = []

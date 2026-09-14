@@ -9,7 +9,7 @@ function backend(prefix: unknown = '/v1/workflow') {
     if (url.endsWith('/overview')) return new Response(JSON.stringify({ generated_at: '2026-09-10T12:00:00Z', source_freshness: 'unknown', workspaces: [] }))
     if (url.endsWith('/setup')) return new Response(JSON.stringify({ review: { enabled: true }, database: { status: 'ready' } }))
     if (url.includes('/outbox?')) return new Response('{"items":[],"has_more":false}')
-    if (url.endsWith('/session')) return new Response('{"authenticated":true}')
+    if (url.endsWith('/session')) return new Response('{"authenticated":true,"session_proof":"fixture-origin-proof"}')
     return new Response('{}')
   })
   vi.stubGlobal('fetch', fetch)
@@ -154,7 +154,12 @@ describe('workflow API discovery', () => {
   it('uses the canonical session route for launch, restoration, and lock without exposing the launch secret in discovery', async () => {
     const fetch = backend()
     const replaceState = vi.fn()
-    vi.stubGlobal('window', { location: { hash: '#login=one-use-secret', pathname: '/', search: '' }, history: { replaceState } })
+    const stored = new Map<string, string>()
+    vi.stubGlobal('window', { location: { hash: '#login=one-use-secret', pathname: '/', search: '' }, history: { replaceState }, localStorage: {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => stored.set(key, value),
+      removeItem: (key: string) => stored.delete(key),
+    } })
     const { restoreLocalSession, endLocalSession } = await import('./auth')
     const opening = restoreLocalSession()
     expect(replaceState).toHaveBeenCalledWith(null, '', '/')
@@ -164,7 +169,7 @@ describe('workflow API discovery', () => {
     expect(requests.map(([url]) => url)).toEqual(['/v1/setup/bootstrap', '/v1/workflow/session', '/v1/workflow/session'])
     expect(JSON.stringify(requests[0])).not.toContain('one-use-secret')
     expect(requests[1][1]).toMatchObject({ method: 'POST', credentials: 'same-origin', redirect: 'error', body: '{"secret":"one-use-secret"}' })
-    expect(requests[2][1]).toMatchObject({ method: 'DELETE', credentials: 'same-origin', redirect: 'error' })
+    expect(requests[2][1]).toMatchObject({ method: 'DELETE', credentials: 'same-origin', redirect: 'error', headers: { 'X-Respawned-Session-Proof': 'fixture-origin-proof' } })
   })
 
   it('rejects malformed discovery instead of treating an unrelated server as a legacy engine', async () => {

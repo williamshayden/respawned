@@ -73,7 +73,7 @@ def process_candidates(
             with engine.begin() as connection:
                 draft = draft_candidate(
                     connection, candidate=candidate, now=current_time(),
-                    policy=policy, adapter=adapter,
+                    policy=policy, adapter=adapter, clock=current_time,
                 )
             if draft is None:
                 items.append(ProcessItem(candidate.id, "already_reviewed"))
@@ -85,7 +85,7 @@ def process_candidates(
                 outbox_id = authorize_draft_automatically(
                     connection, draft_id=draft.id,
                     expected_review_token=draft.review_token,
-                    now=current_time(), policy=policy,
+                    now=current_time(), policy=policy, clock=current_time,
                 )
             items.append(ProcessItem(candidate.id, "authorized", draft.id, outbox_id))
         except ReviewBlockedError as exc:

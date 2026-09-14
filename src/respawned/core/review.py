@@ -1,6 +1,6 @@
 """Transactional drafting and explicit human or policy-based authorization."""
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -27,6 +27,8 @@ from respawned.core.helpers.validate import DraftValidationError, validate_draft
 from respawned.core.opportunity import is_contactable_opportunity
 from respawned.core.policy import Policy
 from respawned.core.reduce import reduce_opportunities
+from respawned.core.review_context import bind_review_context, review_source_fingerprint
+from respawned.core.sync import CandidateSnapshot, read_candidate_snapshot
 from respawned.core.time import aware_utc, within_cooldown
 from respawned.llm.adapter import DraftingAdapter, LLMAdapterError
 
@@ -87,12 +89,15 @@ class PersistedDraft:
     created_at: datetime
     updated_at: datetime
     reviewed_at: datetime | None
+    generation_source_fingerprint: str | None = None
+    reviewed_source_fingerprint: str | None = None
+    current_source_fingerprint: str | None = None
 
     @property
     def review_token(self) -> str:
-        """Identify the displayed copy and destination, not human authorization."""
+        """Identify the displayed copy, destination and source context."""
         snapshot = {
-            "version": 1,
+            "version": 2,
             "draft_id": str(self.id),
             "body": self.body,
             "contact_key": self.contact_key,
@@ -101,6 +106,7 @@ class PersistedDraft:
             "channel": self.channel,
             "primary_opportunity_id": self.primary_opportunity_id,
             "opportunity_ids": self.opportunity_ids,
+            "source_fingerprint": self.current_source_fingerprint,
         }
         return sha256(
             json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -146,7 +152,8 @@ def _load_candidate_draft(
                 """
             SELECT id, candidate_id, contact_key, contact_address, contact_name,
                    channel, primary_opportunity_id, opportunity_ids, body,
-                   status, created_at, updated_at, reviewed_at
+                   status, created_at, updated_at, reviewed_at,
+                   generation_source_fingerprint, reviewed_source_fingerprint
             FROM drafts WHERE candidate_id = :candidate_id
             """
             ),
@@ -171,7 +178,8 @@ def _load_draft(
                 """
             SELECT id, candidate_id, contact_key, contact_address, contact_name,
                    channel, primary_opportunity_id, opportunity_ids, body,
-                   status, created_at, updated_at, reviewed_at
+                   status, created_at, updated_at, reviewed_at,
+                   generation_source_fingerprint, reviewed_source_fingerprint
             FROM drafts WHERE id = :draft_id
             """
                 + lock
@@ -213,6 +221,7 @@ def _current_review_state(
     fallback_contact_name: str | None,
     now: datetime,
     policy: Policy,
+    available_states: Sequence[OpportunityState] | None = None,
 ) -> CurrentReviewState:
     key = normalize_contact_key(contact_key)
     if key is None:
@@ -222,7 +231,13 @@ def _current_review_state(
     except ValueError as exc:
         raise ReviewBlockedError("contact route is no longer usable") from exc
 
-    states = tuple(reduce_opportunities(connection, now, contact_key=key))
+    states = tuple(
+        state for state in (
+            available_states if available_states is not None
+            else reduce_opportunities(connection, now, contact_key=key)
+        )
+        if normalize_contact_key(state.contact_key) == key
+    )
     by_id = {state.opportunity_id: state for state in states}
     primary = by_id.get(primary_opportunity_id)
     ids = tuple(dict.fromkeys((primary_opportunity_id, *opportunity_ids)))
@@ -270,24 +285,22 @@ def _require_matching_supplied_body(draft: PersistedDraft, body: str | None) -> 
         )
 
 
-def draft_candidate(
-    connection: Connection,
-    *,
-    candidate: Candidate,
-    now: datetime,
-    policy: Policy,
-    adapter: DraftingAdapter,
-    body: str | None = None,
-) -> PersistedDraft | None:
-    """Persist validated supplied copy or lazily generate it for a current candidate.
+def _review_time(now: datetime, clock: Callable[[], datetime] | None) -> datetime:
+    return aware_utc(clock() if clock is not None else now, "review time")
 
-    Supplied text follows the edit validator and remains exact apart from outer
-    whitespace. Only model-generated copy receives the configured sign-off.
-    """
-    now = aware_utc(now, "now")
-    existing = _load_candidate_draft(connection, candidate.id)
-    if existing is not None and existing.status != "pending":
-        return None
+
+def _require_current_candidate(snapshot: CandidateSnapshot, candidate_id: UUID) -> None:
+    if not any(candidate.id == candidate_id for candidate in snapshot.candidates):
+        raise ReviewBlockedError(
+            "candidate is no longer eligible under current source facts and policy; "
+            "reopen the record before preparing or approving a draft"
+        )
+
+
+def _candidate_review_state(
+    connection: Connection, candidate: Candidate, snapshot: CandidateSnapshot,
+    now: datetime, policy: Policy,
+) -> CurrentReviewState:
     current = _current_review_state(
         connection,
         contact_key=candidate.contact_key,
@@ -298,21 +311,43 @@ def draft_candidate(
         fallback_contact_name=candidate.contact_name,
         now=now,
         policy=policy,
+        available_states=snapshot.states,
     )
-    supplied_body = _validate_body(body, current.primary, policy) if body is not None else None
-    if existing is not None:
-        _require_matching_supplied_body(existing, supplied_body)
-        return existing
+    _require_current_candidate(snapshot, candidate.id)
+    return current
 
-    reason = policy.reasons.get(candidate.reason)
-    if reason is None:
-        raise ReviewBlockedError(
-            f"candidate reason {candidate.reason!r} is not configured"
-        )
-    primary = current.primary
-    if supplied_body is not None:
-        body = supplied_body
-    else:
+
+def draft_candidate(
+    connection: Connection,
+    *,
+    candidate: Candidate,
+    now: datetime,
+    policy: Policy,
+    adapter: DraftingAdapter,
+    body: str | None = None,
+    clock: Callable[[], datetime] | None = None,
+) -> PersistedDraft | None:
+    """Persist validated supplied copy or lazily generate it for a current candidate.
+
+    Supplied text follows the edit validator and remains exact apart from outer
+    whitespace. Only model-generated copy receives the configured sign-off.
+    """
+    now = _review_time(now, None)
+    existing = _load_candidate_draft(connection, candidate.id)
+    if existing is not None and existing.status != "pending":
+        return None
+    supplied = body is not None
+    prepared_fingerprint = None
+    if not supplied and existing is None:
+        before = read_candidate_snapshot(connection, now=now, policy=policy)
+        current = _candidate_review_state(connection, candidate, before, now, policy)
+        prepared_fingerprint = review_source_fingerprint(before.states, candidate.contact_key)
+        reason = policy.reasons.get(candidate.reason)
+        if reason is None:
+            raise ReviewBlockedError(
+                f"candidate reason {candidate.reason!r} is not configured"
+            )
+        primary = current.primary
         try:
             body = draft_follow_up(
                 DraftPayload(
@@ -337,17 +372,39 @@ def draft_candidate(
             raise ReviewBlockedError(f"draft failed validation: {exc}") from exc
         except LLMAdapterError as exc:
             raise ReviewBlockedError(f"draft generation failed: {exc}") from exc
+
+    # Do not hold source locks during a provider call. The final snapshot is
+    # taken after both completion and lock waits, before any draft is stored.
+    lock_contact_opportunities(connection, candidate.contact_key)
+    lock_contact_keys(connection, (candidate.contact_key,))
+    now = _review_time(now, clock)
+    current_snapshot = read_candidate_snapshot(connection, now=now, policy=policy)
+    current = _candidate_review_state(connection, candidate, current_snapshot, now, policy)
+    source_fingerprint = review_source_fingerprint(current_snapshot.states, candidate.contact_key)
+    if prepared_fingerprint is not None and source_fingerprint != prepared_fingerprint:
+        raise ReviewBlockedError(
+            "source facts changed while generating this draft; reopen the record before generating again"
+        )
+    existing = _load_candidate_draft(connection, candidate.id)
+    supplied_body = _validate_body(body, current.primary, policy) if supplied else None
+    if existing is not None:
+        if existing.status != "pending":
+            return None
+        _require_matching_supplied_body(existing, supplied_body)
+        return bind_review_context(existing, current_snapshot.states)
+    assert body is not None
+    body = _validate_body(body, current.primary, policy)
     connection.execute(
         text(
             """
             INSERT INTO drafts (
                 id, candidate_id, contact_key, contact_address, contact_name,
                 channel, primary_opportunity_id, opportunity_ids, body,
-                status, created_at, updated_at
+                status, created_at, updated_at, generation_source_fingerprint
             ) VALUES (
                 :id, :candidate_id, :contact_key, :contact_address, :contact_name,
                 :channel, :primary_opportunity_id, :opportunity_ids, :body,
-                'pending', :now, :now
+                'pending', :now, :now, :source_fingerprint
             ) ON CONFLICT (candidate_id) DO NOTHING
             """
         ),
@@ -362,14 +419,14 @@ def draft_candidate(
             "opportunity_ids": list(current.opportunity_ids),
             "body": body,
             "now": now,
+            "source_fingerprint": source_fingerprint,
         },
     )
     persisted = _load_candidate_draft(connection, candidate.id)
     if persisted is not None:
         _require_matching_supplied_body(persisted, supplied_body)
-    return (
-        persisted if persisted is not None and persisted.status == "pending" else None
-    )
+    return (bind_review_context(persisted, current_snapshot.states)
+            if persisted is not None and persisted.status == "pending" else None)
 
 
 def iter_candidate_drafts(
@@ -499,6 +556,7 @@ def approve_draft(
     expected_review_token: str,
     now: datetime,
     policy: Policy,
+    clock: Callable[[], datetime] | None = None,
 ) -> int:
     """Reserve the exact reviewed copy after rechecking live safety constraints."""
     return _authorize_draft(
@@ -508,6 +566,7 @@ def approve_draft(
         now=now,
         policy=policy,
         authorization_mode="human",
+        clock=clock,
     )
 
 
@@ -518,6 +577,7 @@ def authorize_draft_automatically(
     expected_review_token: str,
     now: datetime,
     policy: Policy,
+    clock: Callable[[], datetime] | None = None,
 ) -> int:
     """Reserve validated copy only under explicit trusted automatic policy.
 
@@ -535,7 +595,23 @@ def authorize_draft_automatically(
         now=now,
         policy=policy,
         authorization_mode="automatic",
+        clock=clock,
     )
+
+
+def _locked_review_draft(
+    connection: Connection, draft_id: UUID | str,
+) -> tuple[PersistedDraft, str]:
+    unlocked = _load_draft(connection, draft_id)
+    contact_key = normalize_contact_key(unlocked.contact_key)
+    if contact_key is None:
+        raise ReviewBlockedError("draft contact identity is no longer usable")
+    lock_contact_opportunities(connection, contact_key)
+    lock_contact_keys(connection, (contact_key,))
+    draft = _load_draft(connection, draft_id, for_update=True)
+    if normalize_contact_key(draft.contact_key) != contact_key:
+        raise ReviewBlockedError("draft contact identity changed during review")
+    return draft, contact_key
 
 
 def _authorize_draft(
@@ -546,27 +622,26 @@ def _authorize_draft(
     now: datetime,
     policy: Policy,
     authorization_mode: Literal["human", "automatic"],
+    clock: Callable[[], datetime] | None = None,
 ) -> int:
     now = aware_utc(now, "now")
-    unlocked = _load_draft(connection, draft_id)
-    contact_key = normalize_contact_key(unlocked.contact_key)
-    if contact_key is None:
-        raise ReviewBlockedError("draft contact identity is no longer usable")
-    lock_contact_opportunities(connection, contact_key)
-    lock_contact_keys(connection, (contact_key,))
-    draft = _load_draft(connection, draft_id, for_update=True)
-    _require_review_snapshot(draft, expected_review_token)
-    if normalize_contact_key(draft.contact_key) != contact_key:
-        raise ReviewBlockedError("draft contact identity changed during approval")
+    draft, contact_key = _locked_review_draft(connection, draft_id)
+    now = _review_time(now, clock)
     existing = connection.execute(
         text("SELECT id FROM outbox WHERE draft_id = :draft_id"),
         {"draft_id": draft.id},
     ).scalar_one_or_none()
     if existing is not None:
+        # Legacy reservations can coexist with a pending draft. They have no
+        # accepted source snapshot, so validate the currently displayed context
+        # without assigning an authorization mode or fabricating past review.
+        states = reduce_opportunities(connection, now, contact_key=contact_key) if draft.status == "pending" else ()
+        _require_review_snapshot(bind_review_context(draft, states), expected_review_token)
         return existing
     if draft.status != "pending":
         raise ReviewBlockedError(f"draft {draft.id!s} has already been {draft.status}")
 
+    snapshot = read_candidate_snapshot(connection, now=now, policy=policy)
     current = _current_review_state(
         connection,
         contact_key=draft.contact_key,
@@ -577,6 +652,7 @@ def _authorize_draft(
         fallback_contact_name=draft.contact_name,
         now=now,
         policy=policy,
+        available_states=snapshot.states,
     )
     _validate_body(draft.body, current.primary, policy)
     if _has_state_cooldown(
@@ -594,13 +670,24 @@ def _authorize_draft(
         raise ReviewBlockedError(
             "contact-wide cooldown was consumed after this draft was created"
         )
+    draft = bind_review_context(draft, snapshot.states)
+    _require_review_snapshot(draft, expected_review_token)
+    _require_current_candidate(snapshot, draft.candidate_id)
+    if authorization_mode == "automatic" and (
+        draft.generation_source_fingerprint is None
+        or draft.generation_source_fingerprint != draft.current_source_fingerprint
+    ):
+        raise ReviewBlockedError(
+            "draft preparation source context is changed or unknown; "
+            "explicit human review and editing are required before automatic authorization"
+        )
 
     outbox_id = enqueue_outbox(
         connection,
         draft_id=draft.id,
         contact_key=contact_key,
         contact_address=draft.contact_address,
-        contact_name=current.contact_name,
+        contact_name=draft.contact_name,
         channel=draft.channel,
         opportunity_ids=draft.opportunity_ids,
         body=draft.body,
@@ -611,7 +698,8 @@ def _authorize_draft(
         text(
             """
             UPDATE drafts SET status = 'approved', updated_at = :now,
-                              reviewed_at = :reviewed_at
+                              reviewed_at = :reviewed_at,
+                              reviewed_source_fingerprint = :source_fingerprint
             WHERE id = :draft_id
             """
         ),
@@ -619,6 +707,7 @@ def _authorize_draft(
             "draft_id": draft.id,
             "now": now,
             "reviewed_at": now if authorization_mode == "human" else None,
+            "source_fingerprint": draft.current_source_fingerprint,
         },
     )
     return outbox_id
@@ -630,9 +719,13 @@ def reject_draft(
     draft_id: UUID | str,
     expected_review_token: str,
     now: datetime,
+    clock: Callable[[], datetime] | None = None,
 ) -> PersistedDraft:
     now = aware_utc(now, "now")
-    draft = _load_draft(connection, draft_id, for_update=True)
+    draft, contact_key = _locked_review_draft(connection, draft_id)
+    now = _review_time(now, clock)
+    states = reduce_opportunities(connection, now, contact_key=contact_key) if draft.status == "pending" else ()
+    draft = bind_review_context(draft, states)
     _require_review_snapshot(draft, expected_review_token)
     if draft.status == "approved":
         raise ReviewBlockedError(f"draft {draft.id!s} has already been approved")
@@ -641,13 +734,15 @@ def reject_draft(
             text(
                 """
                 UPDATE drafts SET status = 'rejected', updated_at = :now,
-                                  reviewed_at = :now
+                                  reviewed_at = :now,
+                                  reviewed_source_fingerprint = :source_fingerprint
                 WHERE id = :draft_id
                 """
             ),
-            {"draft_id": draft.id, "now": now},
+            {"draft_id": draft.id, "now": now,
+             "source_fingerprint": draft.current_source_fingerprint},
         )
-    return _load_draft(connection, draft.id)
+    return bind_review_context(_load_draft(connection, draft.id), states)
 
 
 def update_draft_message(
@@ -658,12 +753,16 @@ def update_draft_message(
     body: str,
     now: datetime,
     policy: Policy,
+    clock: Callable[[], datetime] | None = None,
 ) -> PersistedDraft:
     now = aware_utc(now, "now")
-    draft = _load_draft(connection, draft_id, for_update=True)
-    _require_review_snapshot(draft, expected_review_token)
+    draft, contact_key = _locked_review_draft(connection, draft_id)
+    now = _review_time(now, clock)
     if draft.status != "pending":
         raise ReviewBlockedError(f"draft {draft.id!s} has already been {draft.status}")
+    states = reduce_opportunities(connection, now, contact_key=contact_key)
+    draft = bind_review_context(draft, states)
+    _require_review_snapshot(draft, expected_review_token)
     current = _current_review_state(
         connection,
         contact_key=draft.contact_key,
@@ -674,10 +773,16 @@ def update_draft_message(
         fallback_contact_name=draft.contact_name,
         now=now,
         policy=policy,
+        available_states=states,
     )
     normalized = _validate_body(body, current.primary, policy)
     connection.execute(
-        text("UPDATE drafts SET body = :body, updated_at = :now WHERE id = :draft_id"),
-        {"draft_id": draft.id, "body": normalized, "now": now},
+        text("""UPDATE drafts SET body = :body, updated_at = :now,
+                contact_name = :contact_name,
+                generation_source_fingerprint = :source_fingerprint
+                WHERE id = :draft_id"""),
+        {"draft_id": draft.id, "body": normalized, "now": now,
+         "contact_name": current.contact_name,
+         "source_fingerprint": draft.current_source_fingerprint},
     )
-    return _load_draft(connection, draft.id)
+    return bind_review_context(_load_draft(connection, draft.id), states)

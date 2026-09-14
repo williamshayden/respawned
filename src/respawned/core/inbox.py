@@ -55,7 +55,9 @@ def list_reply_inbox(
     now: datetime,
     policy: Policy,
     limit: int = 50,
+    offset: int = 0,
     kinds: Iterable[str] | None = None,
+    states: Sequence[OpportunityState] | None = None,
 ) -> ReplyInboxResult:
     """List ingested human replies that have no later contact-wide outbound.
 
@@ -68,14 +70,19 @@ def list_reply_inbox(
     not an answer: only ingested outbound state resolves an inbox item. Counts of
     pending reservations are contact-wide and visible at the requested cutoff.
     Optional workspace kinds select complete groups containing matching reply
-    evidence, after contact-wide resolution and before the result limit.
+    evidence, after contact-wide resolution and before the result limit. Internal
+    callers may reuse a complete canonical projection made at the same ``now``
+    when displaying inbox evidence together with current eligibility.
     """
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
         raise ValueError("limit must be an integer between 1 and 200")
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise ValueError("offset must be a non-negative integer")
     now = aware_utc(now, "list_reply_inbox.now")
-    states = reduce_opportunities(connection, now)
+    if states is None:
+        states = reduce_opportunities(connection, now)
     items = reply_inbox_items(states, now=now, policy=policy, kinds=kinds)
-    selected = items[:limit]
+    selected = items[offset:offset + limit]
     if selected:
         counts = dict(connection.execute(text("""
             SELECT contact_key, count(*)
@@ -88,7 +95,7 @@ def list_reply_inbox(
         }).tuples().all())
         selected = [replace(item, pending_outbox_count=counts.get(item.contact_key, 0))
                     for item in selected]
-    return ReplyInboxResult(now, tuple(selected), len(items), len(items) > limit)
+    return ReplyInboxResult(now, tuple(selected), len(items), offset + len(selected) < len(items))
 
 
 def reply_inbox_items(

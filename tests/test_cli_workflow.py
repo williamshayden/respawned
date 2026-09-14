@@ -306,6 +306,7 @@ def test_record_review_approves_only_supplied_copy_without_sync_or_model_configu
         ("GET", f"/v1/workflow/records/{selected}"),
         ("GET", f"/v1/workflow/drafts/{saved['id']}"),
         ("POST", f"/v1/workflow/drafts/{saved['id']}/edit"),
+        ("GET", f"/v1/workflow/drafts/{saved['id']}"),
         ("POST", f"/v1/workflow/drafts/{saved['id']}/approve"),
     ]
     outbox = cli.rows("outbox")

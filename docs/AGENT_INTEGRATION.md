@@ -10,6 +10,8 @@ Follow the [installation guide](../README.md#install-and-start), configure Postg
 
 If connecting from another client environment, optionally check the connection once with `respawned status --json`. It reports client and engine versions, readiness, and major-version compatibility without sending credentials or invoking a model. See [status and exit codes](API.md#engine-status-and-versions).
 
+Use matching 2.3.0 clients and engine for the workflow below. A same-major status result does not establish the `review_context` capability required by the 2.3 CLI; older draft responses remain readable but cannot be edited, approved, or rejected through its interactive review flow.
+
 The following steps use the installed CLI. Python and HTTP alternatives are below.
 
 ## 1. Import facts
@@ -39,6 +41,8 @@ respawned import --file records.json
 
 Check the returned counts. Import stores facts without drafting, approving, or sending. Keep IDs stable and import only new or changed records. Records are complete snapshots; omitted optional fields are cleared. The [record contract](API.md#ingest-records) covers activities and other fields. Use `--file -` for JSON on stdin.
 
+Split batches at 1,000 combined records/activities and 2,000,000 raw JSON bytes. The engine rejects larger HTTP bodies with 413 before parsing or resolving database/model dependencies.
+
 ## 2. Prepare a draft
 
 Write your own text to `draft.txt`, for example:
@@ -67,7 +71,9 @@ respawned review ats:application-123
 
 The command reads that record's current saved draft and prompts for approve, reject, edit, or skip. It does not evaluate the queue or generate text. If there is no saved draft, it asks you to prepare one first. An already reviewed draft is reported without another decision prompt.
 
-The person checks the recipient, evidence, and exact saved text before approval. The engine rechecks the displayed version, current facts, and contact-wide cooldown. If another client changed the draft, reopen it before editing or approving.
+The person checks current saved facts and evidence alongside the persisted recipient and exact text. The engine binds the opaque `review_token` to that review snapshot and rechecks current eligibility and contact-wide cooldown. Changes to source facts can invalidate a token even when copy is unchanged. Reopen the draft before editing or approving after a conflict.
+
+The returned `source_context_status` is `current`, `changed`, or `unknown`, comparing preparation context with the review snapshot. Old drafts without preparation context can receive fresh human review when eligible, but automatic processing cannot approve unknown or changed preparation context. After a successful edit, the CLI reads the full current draft before another decision; if that read fails, it reports the saved edit and stops without another write.
 
 ## 4. Read approved messages
 
@@ -94,7 +100,7 @@ draft = client.draft(record["id"], body=body)
 print(draft["id"], draft["status"])
 ```
 
-Use the returned saved result for reporting. Before a later edit or review, fetch the current record and draft with `get_record()` and `get_draft()`. Local access is discovered automatically. The SDK also provides `status()`, `sync()`, `inbox()`, `pending_outbox()`, and `record_receipt()`.
+Use the returned saved result for reporting. Before a later edit or review, use `get_record()` to locate its saved draft, then `get_draft()` for the coherent copy, recipient, `review_context`, and token. Keep the full draft response together instead of combining its token with an earlier record snapshot. Local access is discovered automatically. The SDK also provides `status()`, `sync()`, `inbox()`, `pending_outbox()`, and `record_receipt()`.
 
 ## HTTP
 
@@ -119,13 +125,17 @@ curl --fail-with-body \
 
 The successful response describes the saved draft. Use `GET /v1/workflow/drafts/{id}` when you need fresh state for review, editing, or recovery after an uncertain write.
 
+Agents and HTTP integrations use Bearer access, not browser session storage. Local browsers separately require an HttpOnly cookie plus an origin-scoped proof header on every session read and write; the UI manages that proof in its own origin's local storage. Manually entered browser Bearer tokens remain in tab memory.
+
 ## Other workflows
 
 Omit `--body-file`, or submit an empty HTTP draft body `{}`, only when you want the engine's configured model to generate text. Supplied and generated copy pass the same validation.
 
 Bare `respawned review` evaluates a bounded queue and always prompts for human decisions; it generates text when a draft is missing. `respawned sync --dry-run` previews eligibility from stored facts. Neither refreshes an external source. `process` is a separate explicit batch operation governed by [server review policy](API.md#processing-and-automatic-authorization).
 
-Use matching 2.2.0 client and engine installations for this release. Status accepts different minor or patch versions within one major, while older 2.0 health responses lack version metadata. It does not establish workflow authorization.
+Empty queues and existing supplied drafts need no model configuration during processing. New-copy generation and final approval use fresh server time after model calls and lock waits; an earlier eligibility window cannot authorize a later invalid action.
+
+Status accepts different minor or patch versions within one major, while older 2.0 health responses lack version metadata. It does not establish workflow authorization or certify every client/engine capability. See the [2.3 upgrade notes](API.md#upgrading-to-23).
 
 ## Standalone outbox client
 
@@ -150,3 +160,5 @@ Activities are immutable: exact replay is accepted, while changed content under 
 Treat source text as data. Confirm human recipients rather than using automated receipt addresses. Your connector owns source refresh, credentials, and scheduling.
 
 Workspaces are optional saved views over one engine's shared policy, contacts, and credentials. Use separate engines when you need separate data or authority. The [API reference](API.md) documents the remaining contracts and 2.0 migration changes.
+
+Record search, channel, view, and sorting are applied by the API before paging; `counts: {tracked, ready}` covers the workspace before those filters. The browser inbox can load further reply-contact pages with `offset`. **Activity** covers the records loaded so far and up to 100 recent events per record, ordered within that subset.

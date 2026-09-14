@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from respawned.llm import codex as codex_module
+
 
 @pytest.fixture
 def simulation(monkeypatch):
@@ -26,6 +28,7 @@ def test_replay_preserves_optional_recorded_metadata_without_runtime_probes(
     action = {"tool": "read_messages", "arguments_json": "{}"}
     (case / "trace.json").write_text(json.dumps([{"action": action}]), encoding="utf-8")
     monkeypatch.setattr(simulation.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("Unexpected runtime probe"))
+    monkeypatch.setattr(codex_module, "_run_command", lambda *_args, **_kwargs: pytest.fail("Unexpected runtime execution"))
 
     replay = simulation.ReplayCodex(tmp_path)
     assert replay.version == (report or {}).get("codex_version")
@@ -83,7 +86,7 @@ def test_codex_failure_rejects_even_a_valid_output_file(
             raise subprocess.TimeoutExpired(command, 1, output=b"partial event", stderr=b"partial error")
         return SimpleNamespace(returncode=1, stdout="", stderr="synthetic failure")
 
-    monkeypatch.setattr(simulation.subprocess, "run", execute)
+    monkeypatch.setattr(codex_module, "_run_command", execute)
     evidence = tmp_path / "evidence" / "call"
     with pytest.raises(RuntimeError, match="exceeded|exited"):
         runner.ask("test", simulation.DraftOutput, evidence)
@@ -114,7 +117,7 @@ def test_codex_requires_successful_completion_and_no_prohibited_tools(
         output.write_text('{"body":"Validated output"}', encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="\n".join(map(json.dumps, events)), stderr="")
 
-    monkeypatch.setattr(simulation.subprocess, "run", execute)
+    monkeypatch.setattr(codex_module, "_run_command", execute)
     if accepted:
         assert runner.ask("test", simulation.DraftOutput, tmp_path / "call").body == "Validated output"
         assert len(runner.calls) == 1

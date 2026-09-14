@@ -75,6 +75,8 @@ export function ReviewPanel(props: Props) {
       <section className="draft-panel" aria-labelledby="draft-heading">
         <div className="draft-header"><h3 id="draft-heading">Draft message</h3></div>
         {draft || writing ? <>
+          {draft?.status === 'pending' && draft.source_context_status === 'changed' && <p className="source-context-notice" role="status">Source facts changed since this draft was saved. Check the current record before approval.</p>}
+          {draft?.status === 'pending' && draft.source_context_status === 'unknown' && <p className="source-context-notice" role="status">Review this draft against the current record before approval.</p>}
           <textarea aria-label="Draft message" value={body} onChange={event => props.onEdit(event.target.value)}
             readOnly={!canEdit || !!busy} aria-invalid={validationFailed} spellCheck="true" autoFocus={writing} />
           <div className="draft-status-row">

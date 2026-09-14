@@ -9,7 +9,7 @@ interface Props {
   view: string; onView: (value: string) => void
   sort: string; onSort: (value: string) => void
   onImport: () => void; onClearFilters: () => void
-  total: number; hasMore: boolean; onMore: () => void; busy: boolean
+  total: number; trackedTotal: number; hasMore: boolean; onMore: () => void; busy: boolean; loading: boolean; error: string | null
 }
 
 export function QueueList(props: Props) {
@@ -17,23 +17,24 @@ export function QueueList(props: Props) {
   return <section className="queue-pane" aria-label="Records">
     <div className="queue-controls">
       <div className="search-control"><Search size={20} aria-hidden="true" />
-        <input aria-label="Find a record" placeholder="Find a record" value={props.query} onChange={event => props.onQuery(event.target.value)} />
+        <input aria-label="Find a record" placeholder="Find a record" value={props.query} maxLength={300} disabled={props.busy} onChange={event => props.onQuery(event.target.value)} />
       </div>
       <div className="queue-filter-row">
-        <div className="select-wrap borderless"><select aria-label="Channel" value={props.channel} onChange={event => props.onChannel(event.target.value)}>
+        <div className="select-wrap borderless"><select aria-label="Channel" value={props.channel} disabled={props.busy} onChange={event => props.onChannel(event.target.value)}>
           <option value="all">All channels</option><option value="email">Email</option><option value="sms">SMS</option>
         </select><ChevronDown size={14} /></div>
-        <div className="select-wrap borderless"><select aria-label="Sort records" value={props.sort} onChange={event => props.onSort(event.target.value)}>
+        <div className="select-wrap borderless"><select aria-label="Sort records" value={props.sort} disabled={props.busy} onChange={event => props.onSort(event.target.value)}>
           <option value="priority">Highest priority</option><option value="recent">Most recent</option>
         </select><ChevronDown size={14} /></div>
       </div>
       <div className="queue-views" aria-label="Queue view">
-        <button aria-pressed={props.view === 'ready'} onClick={() => props.onView('ready')}>Ready for review</button>
-        <button aria-pressed={props.view === 'all'} onClick={() => props.onView('all')}>All tracked</button>
+        <button aria-pressed={props.view === 'ready'} disabled={props.busy} onClick={() => props.onView('ready')}>Ready for review</button>
+        <button aria-pressed={props.view === 'all'} disabled={props.busy} onClick={() => props.onView('all')}>All tracked</button>
       </div>
     </div>
     <div className="queue-scroll">
-      {props.records.map(record => {
+      {props.loading && <p className="queue-footer" role="status">Loading records…</p>}
+      {!props.loading && props.records.map(record => {
         const name = displayName(record)
         const value = record.fields.find(field => field.label.toLowerCase() === 'value')?.value
         return <button className={`record-row ${props.selected === record.id ? 'is-selected' : ''}`} key={record.id}
@@ -46,14 +47,15 @@ export function QueueList(props: Props) {
           </span>
         </button>
       })}
-      {!props.records.length && <div className="empty-state queue-empty"><SearchX size={28} />
-        <h2>{props.total === 0 ? 'No tracked records' : filtered ? 'No matching records' : 'Nothing ready for review'}</h2>
-        <p>{props.total === 0 ? 'Import records and activity to start tracking this workspace.' : filtered ? 'Clear your search and channel filter to see more records.' : 'See All tracked for waiting records. Refresh after importing new activity.'}</p>
-        {props.total === 0 ? <button className="button primary" onClick={props.onImport}>Import records</button> : filtered ? <button className="button" onClick={props.onClearFilters}>Clear filters</button> : <button className="button" onClick={() => props.onView('all')}>View all tracked</button>}
+      {!props.loading && props.error && <div className="empty-state queue-empty"><h2>Records unavailable</h2><p>Reload to try this search again.</p></div>}
+      {!props.loading && !props.error && !props.records.length && <div className="empty-state queue-empty"><SearchX size={28} />
+        <h2>{props.trackedTotal === 0 ? 'No tracked records' : filtered ? 'No matching records' : 'Nothing ready for review'}</h2>
+        <p>{props.trackedTotal === 0 ? 'Import records and activity to start tracking this workspace.' : filtered ? 'Clear your search and channel filter to see more records.' : 'See All tracked for waiting records. Refresh after importing new activity.'}</p>
+        {props.trackedTotal === 0 ? <button className="button primary" onClick={props.onImport}>Import records</button> : filtered ? <button className="button" onClick={props.onClearFilters}>Clear filters</button> : <button className="button" onClick={() => props.onView('all')}>View all tracked</button>}
       </div>}
-      <div className="queue-footer">{props.records.length} {props.hasMore ? 'loaded records' : `record${props.records.length === 1 ? '' : 's'}`}
+      {!props.loading && <div className="queue-footer">{props.records.length} {props.hasMore ? 'loaded records' : `record${props.records.length === 1 ? '' : 's'}`}
         {props.hasMore && <button className="text-button" onClick={props.onMore} disabled={props.busy}>Load more ({props.total} total)</button>}
-      </div>
+      </div>}
     </div>
   </section>
 }

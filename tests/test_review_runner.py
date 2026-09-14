@@ -26,7 +26,11 @@ def candidate(key="one", **changes):
 def draft(row, **changes):
     return {**row, "id": str(uuid4()), "candidate_id": row["id"], "body": "Hi Jamie, checking in.",
             "opportunity_ids": [row["primary_opportunity_id"]], "status": "pending",
-            "review_token": "a" * 64, "outbox_id": None, "validation_errors": [], **changes}
+            "review_token": "a" * 64, "outbox_id": None, "validation_errors": [],
+            "source_context_status": "current", "review_context": {
+                "id": row["primary_opportunity_id"], "title": "A current opportunity", "kind": "general",
+                "status": "open", "stage": None, "contact": None, "fields": [], "activities": [],
+                "reason": {"label": "Reply received", "detail": "An unanswered human reply."}}, **changes}
 
 
 class Client:
@@ -65,6 +69,8 @@ class Client:
 
     def edit_draft(self, identity, body, review_token):
         self.call("edit", identity, body, review_token)
+        saved = next(value for value in self.drafts.values() if value["id"] == identity)
+        saved.update(body=body, review_token="b" * 64)
         return {"id": identity, "body": body, "review_token": "b" * 64, "status": "pending"}
 
     def approve_draft(self, identity, review_token):
@@ -99,6 +105,7 @@ def test_review_displays_the_persisted_recipient_and_body():
     client, output = Client(), console(48)
     value = next(iter(client.drafts.values()))
     value.update(primary_opportunity_id="source/record", contact_address="reviewed@example.com", body="Hi Jamie, checking in.\n\nSigned copy")
+    value["review_context"]["id"] = "source/record"
     run_review(client, console=output, action_prompt=lambda *_args, **_kwargs: "s")
     text = output.export_text()
     assert "Record: source/record" in text
@@ -256,3 +263,85 @@ def test_record_review_stops_after_an_unknown_mutation_result(operation):
     assert result == ReviewSummary(presented=1, blocked=1)
     assert len([call for call in client.calls if call[0] == operation]) == 1
     assert client.calls[-1][0] == operation
+
+
+@pytest.mark.parametrize("targeted", [False, True])
+def test_older_engine_draft_is_read_only_without_coherent_review_context(targeted):
+    client, output = Client(), console()
+    value = next(iter(client.drafts.values()))
+    value.pop("review_context")
+    options = dict(console=output, action_prompt=lambda *_args, **_kwargs: pytest.fail("Legacy draft prompted"))
+    result = run_record_review(client, "one", **options) if targeted else run_review(client, **options)
+    assert result == ReviewSummary(presented=1, blocked=1)
+    assert not [call for call in client.calls if call[0] in {"edit", "approve", "reject"}]
+    text = output.export_text()
+    assert value["body"] in text
+    assert "Read-only draft" in text and "Upgrade the engine" in text and "2.3" in text
+
+
+def test_current_context_and_saved_recipient_are_displayed_from_one_draft_response():
+    client, output = Client(), console(120)
+    value = next(iter(client.drafts.values()))
+    value.update(contact_name="Saved contact", contact_address="saved@example.test", source_context_status="changed")
+    value["review_context"].update(title="Current company role", fields=[{"label": "Company", "value": "New company"}],
+        contact={"name": "Current contact", "channel": "email", "address": "current@example.test"},
+        source_url="https://source.example.test/current", activities=[{
+            "id": "reply:new", "label": "Contact replied", "type": "contact_replied",
+            "occurred_at": "2026-09-14T12:00:00Z", "classification": "human",
+            "summary": "The current request changed.", "source_url": "https://source.example.test/reply"}])
+    original = client.get_record
+    client.get_record = lambda identity: {**original(identity), "title": "Stale separate GET record",
+                                          "fields": [{"label": "Company", "value": "Old company"}]}
+    def approve(*_args, **_kwargs):
+        text = output.export_text(clear=False)
+        for current in ("Current company role", "New company", "Current contact", "current@example.test",
+                        "The current request changed.", "human", "https://source.example.test/reply"):
+            assert current in text
+        assert "Saved contact" in text and "saved@example.test" in text and value["body"] in text
+        assert "Source details changed" in text
+        assert "Stale separate GET record" not in text and "Old company" not in text
+        return "a"
+    assert run_record_review(client, "one", console=output, action_prompt=approve).approved == 1
+    assert client.calls[-1] == ("approve", value["id"], value["review_token"])
+
+
+@pytest.mark.parametrize("targeted", [False, True])
+def test_successful_edit_then_failed_context_read_stops_without_another_mutation(targeted):
+    client, output = Client(), console()
+    original_edit = client.edit_draft
+    def edit(*args):
+        result = original_edit(*args)
+        client.failures["get_draft"] = APIError("The refresh timed out")
+        return result
+    client.edit_draft = edit
+    actions = iter(("e", "a"))
+    options = dict(console=output, action_prompt=lambda *_args, **_kwargs: next(actions),
+                   message_prompt=lambda *_args: "Successfully saved copy")
+    result = run_record_review(client, "one", **options) if targeted else run_review(client, **options)
+    assert result == ReviewSummary(presented=1, blocked=1)
+    assert len([call for call in client.calls if call[0] == "edit"]) == 1
+    assert not [call for call in client.calls if call[0] in {"approve", "reject"}]
+    assert next(iter(client.drafts.values()))["body"] == "Successfully saved copy"
+    text = output.export_text()
+    assert "Edit saved" in text and "Current review could not be loaded" in text
+
+
+def test_post_edit_review_uses_new_get_context_and_token_instead_of_edit_response():
+    client, output = Client(), console()
+    original_get = client.get_draft
+    def get(identity):
+        value = original_get(identity)
+        value.update(review_token="c" * 64)
+        value["review_context"]["title"] = "Context from the refreshed GET"
+        return value
+    client.get_draft = get
+    actions = iter(("e", "a"))
+    def choose(*_args, **_kwargs):
+        action = next(actions)
+        if action == "a":
+            assert "Context from the refreshed GET" in output.export_text()
+        return action
+    result = run_review(client, console=output, action_prompt=choose,
+                        message_prompt=lambda *_args: "Updated copy")
+    assert result.approved == 1
+    assert client.calls[-1][0] == "approve" and client.calls[-1][-1] == "c" * 64

@@ -30,7 +30,53 @@ def _default_message_prompt(draft: dict, console: Console) -> str:
     return str(Prompt.ask("Message", default=draft["body"], console=console))
 
 
-def _show_draft(draft: dict, console: Console) -> None:
+def _show_source_context(draft: dict, console: Console) -> bool:
+    current = draft.get("review_context")
+    if not isinstance(current, dict):
+        return False
+    if current.get("id") != draft["primary_opportunity_id"]:
+        raise APIError("The draft's current source context does not match its record. Reopen the draft before reviewing.")
+    context = Text("Current saved source context", style="bold")
+    context.append(f"\n{current.get('title', current['id'])}")
+    context.append(f"\nKind: {current.get('kind', '')} | Status: {current.get('status', '')}")
+    if current.get("stage"):
+        context.append(f" | Stage: {current['stage']}")
+    contact = current.get("contact")
+    if contact:
+        context.append(f"\nCurrent contact: {contact.get('name') or ''} ({contact['channel']}: {contact['address']})")
+    for field in current.get("fields", ()):
+        context.append(f"\n{field['label']}: {field['value']}")
+    reason = current.get("reason") or {}
+    context.append(f"\nReason: {reason.get('label', '')}. {reason.get('detail', '')}")
+    if current.get("source_url"):
+        context.append(f"\nSource: {current['source_url']}")
+    related = current.get("referenced_record_ids") or []
+    if related:
+        context.append("\nRelated records: " + ", ".join(related))
+    context.append("\nSource freshness: unknown.")
+    console.print(context)
+    if current.get("activities"):
+        evidence = Table(title="Current recorded activity", box=None, padding=(0, 1))
+        evidence.add_column("When", no_wrap=True)
+        evidence.add_column("Activity")
+        evidence.add_column("Evidence", overflow="fold")
+        for activity in current["activities"]:
+            details = activity.get("summary") or ""
+            if activity.get("source_url"):
+                details += ("\n" if details else "") + activity["source_url"]
+            label = f"{activity.get('label') or activity.get('type', '')} ({activity.get('classification', 'unknown')})"
+            evidence.add_row(Text(str(activity["occurred_at"])), Text(label), Text(details))
+        console.print(evidence)
+    source_status = draft.get("source_context_status", "unknown")
+    if source_status == "changed":
+        console.print("Source details changed since this draft was saved. Review the copy against the current details.")
+    elif source_status == "unknown":
+        console.print("The saved copy's source context is unknown. Review it against the current details.")
+    return True
+
+
+def _show_draft(draft: dict, console: Console) -> bool:
+    current_context = _show_source_context(draft, console)
     context = Text()
     context.append("Record: ", style="bold")
     context.append(draft["primary_opportunity_id"])
@@ -41,6 +87,9 @@ def _show_draft(draft: dict, console: Console) -> None:
     context.append(draft["contact_address"])
     console.print(context)
     console.print(Panel(Text(draft["body"]), title="Draft message", expand=True))
+    if not current_context:
+        console.print("Read-only draft: this engine did not provide current review context. Upgrade the engine to Respawned 2.3 or later before reviewing with this client.")
+    return current_context
 
 
 def _show_queue(candidates: list[dict], console: Console) -> None:
@@ -63,7 +112,8 @@ def _review_draft(
     action_prompt: Callable[..., str], message_prompt: Callable[[dict, Console], str],
 ) -> tuple[str, bool]:
     """Return the human decision and whether input ended the review session."""
-    _show_draft(draft, console)
+    if not _show_draft(draft, console):
+        return "blocked", False
     while True:
         try:
             action = action_prompt(
@@ -81,17 +131,27 @@ def _review_draft(
             except (EOFError, KeyboardInterrupt):
                 return "skipped", True
             try:
-                updated = client.edit_draft(draft["id"], body, draft["review_token"])
-                # Version/body come from the response; the approved recipient
-                # context is unchanged. The server still checks every action.
-                draft = dict(draft, **updated)
+                client.edit_draft(draft["id"], body, draft["review_token"])
             except APIError as exc:
                 console.print(Text.assemble(("Not saved: ", "red"), str(exc)))
                 if exc.status_code == 422 and not exc.ambiguous:
                     continue
                 console.print("Reopen this draft to inspect its current version.")
                 return "blocked", False
-            _show_draft(draft, console)
+            try:
+                refreshed = client.get_draft(draft["id"])
+                if refreshed["id"] != draft["id"] or refreshed["primary_opportunity_id"] != draft["primary_opportunity_id"]:
+                    raise APIError("The refreshed draft does not match this record.")
+            except APIError as exc:
+                console.print(Text.assemble(("Edit saved. Current review could not be loaded: ", "yellow"), str(exc)))
+                console.print("Reopen this draft before making another decision.")
+                return "blocked", False
+            draft = refreshed
+            if draft["status"] != "pending":
+                console.print(f"Edit saved. This draft is now {draft['status']}; reopen it to inspect the current state.")
+                return "blocked", False
+            if not _show_draft(draft, console):
+                return "blocked", False
             continue
         try:
             if action == "a":

@@ -2,6 +2,7 @@ import { createFixtures, DEMO_AS_OF, DEMO_CONFIG, DEMO_DRAFT_BODIES, DEMO_STORAG
 import type { InboxItem, InboxResult, OutboxItem, RecordPage, RecordRef, ReviewClient, StorageLike, SyncResult, UIConfig, UIDraft, UIRecord } from './types'
 
 import { ClientError, validateDraft } from './client'
+import { queryRecords } from './recordQuery'
 
 interface DemoState {
   version: 1
@@ -158,9 +159,10 @@ export function createDemoClient(storage: StorageLike | null = defaultStorage())
     async config() {
       return structuredClone(DEMO_CONFIG)
     },
-    async listRecords(offset = 0) {
+    async listRecords(offset = 0, query) {
       const current = read()
       const start = Math.max(0, Math.floor(offset))
+      if (query) return queryRecords(current.records, query, start, DEMO_AS_OF)
       return structuredClone({ items: current.records.slice(start, start + 50), total: current.records.length, has_more: start + 50 < current.records.length, as_of: DEMO_AS_OF })
     },
     async getRecord(recordId) {

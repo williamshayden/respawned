@@ -219,7 +219,8 @@ def main():
     if str(launcher.parent) not in os.environ.get('PATH', '').split(os.pathsep):
         print('Add ' + str(launcher.parent) + ' to PATH, or invoke the full path above.')
     print('PostgreSQL is separate. Set DB_HOST, DB_PORT, DB_NAME, DB_USER, and DB_PASSWORD,')
-    print('then run respawned init and respawned ui. Setup configures workspaces and models.')
+    print('then run respawned ui. Startup initializes the schema and checks readiness.')
+    print('Import a record, save a draft, and review it before approval. Model setup is optional.')
     print('Documentation: ' + BASE_URL)
 
 

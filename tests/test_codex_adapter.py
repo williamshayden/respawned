@@ -33,7 +33,7 @@ def cli(monkeypatch, tmp_path):
         output.write_text('{"body":"Hi Avery, when would be a good time to talk?"}')
         return SimpleNamespace(returncode=0, stdout='{"type":"turn.completed"}', stderr='')
 
-    monkeypatch.setattr(codex.subprocess, 'run', run)
+    monkeypatch.setattr(codex, '_run_command', run)
     return commands
 
 
@@ -61,13 +61,13 @@ def test_saved_codex_settings_use_same_packaged_backend_without_api_key(postgres
 @pytest.mark.parametrize('stream', ['null', '{"item":null}', '{invalid', '{"type":"turn.failed"}'])
 def test_malformed_or_failed_cli_output_is_an_adapter_error(cli, monkeypatch, stream):
     adapter = codex.CodexDraftingAdapter()
-    monkeypatch.setattr(codex.subprocess, 'run', lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=stream, stderr=''))
+    monkeypatch.setattr(codex, '_run_command', lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=stream, stderr=''))
     with pytest.raises(LLMAdapterError):
         adapter.complete([{'role': 'user', 'content': 'Draft'}])
 
 
 def test_adapter_construction_does_not_probe_authentication_or_version(cli, monkeypatch):
-    monkeypatch.setattr(codex.subprocess, 'run', lambda *_args, **_kwargs: pytest.fail('Unexpected command probe'))
+    monkeypatch.setattr(codex, '_run_command', lambda *_args, **_kwargs: pytest.fail('Unexpected command probe'))
     adapter = codex.CodexDraftingAdapter()
     assert adapter.runner.version is None
     assert adapter.runner.calls == []

@@ -11,9 +11,14 @@ import argparse
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
+from http.cookies import SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+from threading import Thread
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from sqlalchemy import create_engine
@@ -24,6 +29,7 @@ from respawned.api.app import (
     app, get_api_engine, get_workflow_adapter, get_workflow_clock, get_workflow_policy,
 )
 from respawned.api.ui import get_draft_adapter_factory
+from respawned.api.session import LocalSession, SESSION_PROOF_HEADER
 from respawned.api import setup as setup_api
 from respawned.cli.common import DEFAULT_POLICY_PATH
 from respawned.core.ingest import ingest_records
@@ -36,6 +42,59 @@ from respawned.llm.adapter import LiteLLMAdapter
 
 NOW = datetime(2026, 9, 9, 12, tzinfo=UTC)
 REVIEW_TOKEN = "ui-simulation-review-token"
+
+
+@contextmanager
+def session_source_receiver(manager: LocalSession | None, port: int | None):
+    """An owned source destination reports cookie-only replay without retaining secrets."""
+    if manager is None or port is None:
+        yield
+        return
+
+    class Receiver(BaseHTTPRequestHandler):
+        def log_message(self, _format, *_args):
+            pass
+
+        def do_GET(self):
+            if self.path != "/v1/workflow/source":
+                self.send_error(404)
+                return
+            cookies = SimpleCookie()
+            cookies.load(self.headers.get("Cookie", ""))
+            fixture_cookie = cookies.get(manager.cookie_name)
+            headers = {"Cookie": f"{manager.cookie_name}={fixture_cookie.value}"} if fixture_cookie else {}
+            # This receiver deliberately has no access to the origin's proof.
+            request = Request(f"{manager.origin}/v1/workflow/config", headers=headers)
+            try:
+                with urlopen(request, timeout=5) as response:
+                    replay_status = response.status
+            except HTTPError as error:
+                replay_status = error.code
+            except URLError:
+                replay_status = 0
+            body = ("<!doctype html><html><title>Owned session boundary check</title><body>"
+                    "<h1>Session boundary check</h1>"
+                    f"<p>Fixture cookie received: {'yes' if fixture_cookie else 'no'}</p>"
+                    f"<p>Session proof received: {'yes' if self.headers.get(SESSION_PROOF_HEADER) else 'no'}</p>"
+                    f"<p>Cookie-only replay: HTTP {replay_status}</p>"
+                    "<p>Only disposable fixture credentials are used.</p></body></html>").encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), Receiver)
+    server.daemon_threads = True
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def seed_records():
@@ -118,14 +177,41 @@ def main():
     parser.add_argument("--postgres-url", required=True, help="Owned loopback PostgreSQL test database")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--empty", action="store_true", help="Start without records so the browser can exercise import")
+    parser.add_argument("--local-session", action="store_true", help="Use the real local browser session boundary")
+    parser.add_argument("--launch-url-file", type=Path, help="Write the one-use fixture launch URL to a new private file")
+    parser.add_argument("--source-receiver-port", type=int, help="Serve an owned cross-port cookie replay check")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
+    if args.local_session != bool(args.launch_url_file):
+        parser.error("--local-session and --launch-url-file must be used together")
+    if args.source_receiver_port is not None and (not args.local_session or not 1 <= args.source_receiver_port <= 65535 or args.source_receiver_port == args.port):
+        parser.error("--source-receiver-port requires a local session and a separate valid port")
     with simulation_api(args.postgres_url, empty=args.empty) as (application, _engine, schema):
-        print(f"Synthetic UI API: http://127.0.0.1:{args.port}", flush=True)
-        print(f"Simulation-only review token: {REVIEW_TOKEN}", flush=True)
-        print(f"Owned temporary schema: {schema}; removed on normal shutdown", flush=True)
-        uvicorn.run(application, host="127.0.0.1", port=args.port, log_level="info")
+        manager = LocalSession(args.port) if args.local_session else None
+        previous_session = getattr(application.state, "local_session", None)
+        launch_file_created = False
+        try:
+            if manager is not None:
+                application.state.local_session = manager
+                descriptor = os.open(args.launch_url_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                launch_file_created = True
+                with os.fdopen(descriptor, "w") as output:
+                    output.write(manager.launch_url + "\n")
+                print(f"One-use fixture launch URL written to {args.launch_url_file}", flush=True)
+            else:
+                print(f"Simulation-only review token: {REVIEW_TOKEN}", flush=True)
+            print(f"Synthetic UI API: http://127.0.0.1:{args.port}", flush=True)
+            print(f"Owned temporary schema: {schema}; removed on normal shutdown", flush=True)
+            with session_source_receiver(manager, args.source_receiver_port):
+                uvicorn.run(application, host="127.0.0.1", port=args.port, log_level="info",
+                            proxy_headers=False, timeout_graceful_shutdown=5)
+        finally:
+            if manager is not None:
+                manager.close()
+                application.state.local_session = previous_session
+            if launch_file_created:
+                args.launch_url_file.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

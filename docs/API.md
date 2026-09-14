@@ -19,9 +19,13 @@ HTTP clients send `Authorization: Bearer <credential>`. Set secrets in the serve
 
 `respawned ui` creates local browser and CLI access automatically. Remote CLI and SDK clients use `RESPAWNED_API_URL` and `RESPAWNED_REVIEW_TOKEN`. See [engine access](WEB_UI.md#server-and-api-access) for setup.
 
+In 2.3, a local browser session requires its HttpOnly cookie and `X-Respawned-Session-Proof` on every protected read and write. The one-use launch exchange returns `session_proof` once; the browser stores it only in that engine origin's local storage. The server stores its hash, never returns the proof from session reads, and revokes it with the session. Cookie-only or proof-only requests cannot authenticate. Mutations also require the exact engine `Origin` and `X-Respawned-Request: 1`. Local CLI Bearer access is independent. Manually entered browser Bearer tokens remain in tab memory and clear on reload.
+
 `/healthz`, `/readyz`, schema routes, and session/bootstrap discovery expose no record data. Starting with 2.1, `/healthz` and `GET /v1/setup/bootstrap` report `engine_version` from the installed package. Bootstrap also advertises `workflow_api_prefix: "/v1/workflow"`. New clients use this canonical prefix; `/v1/ui` remains a compatibility alias.
 
-A draft's `review_token` identifies the version being reviewed. It is not an access credential.
+A pending draft's opaque `review_token` binds the saved copy and recipient to the current saved source facts being reviewed. Submit the returned value unchanged; it is not an access credential.
+
+All HTTP request bodies have a 2,000,000-byte limit before JSON parsing. Oversized declared or streamed bodies return 413 without resolving database or model dependencies. The import record-count limit also applies after parsing.
 
 ## Engine status and versions
 
@@ -35,7 +39,9 @@ Use `status --json` for the same report in scripts. Status reads public `GET /he
 
 Set `RESPAWNED_API_URL` or use `respawned status --api-url https://engine.example.com --timeout 5` to check another engine. The timeout applies separately to each HTTP request; requests are not retried.
 
-The report includes client and engine versions, readiness, and major-version compatibility. Different minor or patch versions within the same major are displayed and accepted by the status check. Use matching 2.2.0 client/SDK and engine installations for this release. `/v1` identifies the HTTP route contract and is separate from the package version.
+The report includes client and engine versions, readiness, and major-version compatibility. Different minor or patch versions within the same major are displayed and accepted by the status check. Use matching 2.3.0 client/SDK and engine installations for this release. `/v1` identifies the HTTP route contract and is separate from the package version.
+
+`same_major` does not certify every workflow capability or client/engine pair. The 2.3 CLI requires `review_context` for interactive review. When an older engine omits it, the CLI displays saved copy read-only, returns a blocked result, and asks you to upgrade the engine without editing, approving, or rejecting.
 
 The `--json` output and SDK return dictionary contain:
 
@@ -80,7 +86,7 @@ curl --fail-with-body "$RESPAWNED_API_URL/v1/workflow/import" \
   -H 'Content-Type: application/json' --data-binary @records.json
 ```
 
-The body contains `opportunities` and `activities` arrays. The workflow import accepts up to 1,000 combined items within 2 MB. Success reports `opportunities_upserted` and `activities_inserted` after commit.
+The body contains `opportunities` and `activities` arrays. The workflow import accepts up to 1,000 combined items within 2,000,000 bytes. Success reports `opportunities_upserted` and `activities_inserted` after commit.
 
 ```json
 {
@@ -149,7 +155,7 @@ All paths in this table use `/v1/workflow` and operator authentication.
 | `GET /records`, `GET /records/{record_id}` | Current records, contacts, evidence, reasons, and saved drafts |
 | `POST /records/{record_id}/draft` | Optional `{"body":"…"}`; omitted body uses the server model |
 | `POST /candidates/{candidate_id}/draft` | Same draft input, restricted to a candidate in the current queue |
-| `GET /drafts/{draft_id}` | Persisted copy, recipient, status, metadata, version, and outbox ID |
+| `GET /drafts/{draft_id}` | Persisted copy, recipient, status, metadata, review context, version, and outbox ID |
 | `POST /drafts/{draft_id}/edit` | `{"body":"…","review_token":"…"}` |
 | `POST /drafts/{draft_id}/approve` | `{"review_token":"…"}` |
 | `POST /drafts/{draft_id}/reject` | `{"review_token":"…"}` |
@@ -157,6 +163,21 @@ All paths in this table use `/v1/workflow` and operator authentication.
 Sync returns `candidate_count`, `inserted_count`, `run_id`, and `dry_run`. A dry run writes nothing and returns a null `run_id`; `inserted_count` reports how many new candidates it would insert. Real sync publishes a bounded queue without drafting or fetching source updates.
 
 Queue items include `id`, `run_at`, `primary_opportunity_id`, contact identity and route, `reason`, `score`, and `other_opportunity_ids`. Reading the queue does not refresh it.
+
+### Record filtering and paging
+
+`GET /records` applies workspace scope, search, channel, view, and sorting before pagination:
+
+| Query | Contract |
+| --- | --- |
+| `workspace_id` | Optional saved-view UUID |
+| `search` | Case-insensitive text, up to 300 characters; matches record ID, title, kind, contact name/address, displayed field values, and reason label |
+| `channel` | Optional `email` or `sms` |
+| `view` | `all` (default) or `ready` |
+| `sort` | `priority` (default) or `recent`; recent uses last contact time |
+| `limit`, `offset` | Limit 1–200 (default 50), nonnegative offset |
+
+The response contains `items`, `total`, `has_more`, `as_of`, and `counts: {tracked, ready}`. `total` counts filtered matches. `counts` covers the selected workspace before search, channel, and view filters, independent of the page. A record includes up to 100 recent activities. These are snapshot reads, so concurrent imports can change later pages.
 
 ### Drafts
 
@@ -171,15 +192,27 @@ curl --fail-with-body \
 
 Here `draft.json` contains `{"body":"your draft text"}`. Submit `{}` to use the engine's configured backend.
 
-Successful draft responses describe committed state and include `id`, `body`, `status`, `review_token`, `validation_errors`, and nullable `outbox_id`. Use that response to report a saved draft; an additional read is needed when recovering from an uncertain write or fetching fresh state for a later edit or review. Draft-detail and candidate-draft responses also include candidate and record IDs, saved contact details, channel, and timestamps.
+Successful draft responses describe committed state and include `id`, `body`, `status`, `review_token`, `source_context_status`, `validation_errors`, and nullable `outbox_id`. Use that response to report a saved draft; an additional read is needed when recovering from an uncertain write or fetching fresh state for a later edit or review. Draft-detail and candidate-draft responses also include candidate and record IDs, saved contact details, channel, timestamps, and `review_context`.
+
+`review_context` is the current record projection from the same source snapshot used to bind a pending draft's token. It contains the displayed facts, contact, reason, and recent activities; its nested `draft` is null. Keep it together with the returned token instead of combining it with an earlier record read. Source freshness remains unknown: the engine reads saved facts and does not refresh their provider.
+
+| `source_context_status` | Meaning |
+| --- | --- |
+| `current` | The saved copy's preparation context matches the review snapshot |
+| `changed` | The preparation context differs; fresh human review or editing is required before authorization |
+| `unknown` | No preparation context was recorded, including drafts created before 2.3 |
 
 Identical existing copy is reused. Different text returns 409; read the current draft and use its version token to edit. Record-level drafting evaluates current eligibility without replacing the published queue.
 
 ### Review
 
-Edits, approvals, and rejections submit the displayed `review_token`. A stale version returns 409; reopen the current draft. Approval also rechecks the recipient, referenced records, and contact-wide cooldown before reserving one outbox item.
+Edits, approvals, and rejections submit the displayed opaque `review_token`. Changes to copy, recipient, or saved source facts invalidate an old pending-review token, even if the draft text and candidate ID are unchanged. A stale version returns 409; reopen the current draft. Approval also requires current candidate eligibility and rechecks referenced records and contact-wide cooldown before reserving one outbox item. Moving an expected reply into the future can therefore block an old draft.
+
+After generation and after acquiring review locks, the engine uses a fresh server clock for final eligibility checks. Model execution and lock waits do not preserve an earlier eligibility window. Completed reviews retain their accepted source snapshot for idempotent retries; approved outbox copy and recipient remain unchanged.
 
 In 2.2, `respawned review RECORD_ID` reads that record and its current saved draft, then prompts for a human decision. It does not sync the queue or generate copy. A missing saved draft returns guidance to prepare one first; an already reviewed draft is reported without another decision prompt. `--limit` cannot be combined with a record ID.
+
+The 2.3 CLI displays the returned `review_context` alongside the persisted recipient and text. After a successful edit it fetches the full draft again before another decision. If that read fails, it reports that the edit was saved and stops; it does not retry the edit or approve unseen state. Engines without the context capability remain read-only in this review flow.
 
 Bare `respawned review` retains batch behavior: it evaluates a bounded queue and prompts for human decisions, generating copy only when a draft is missing. Enter skips. Existing drafts need no model.
 
@@ -223,11 +256,15 @@ Limit is an integer from 1 to 50. The server controls policy, time, and authoriz
 
 Processing never sends messages. Changing policy affects later processing, not existing reservations or an already running batch. CLI `review` continues to prompt under either policy.
 
+Model configuration is resolved only when new copy is needed. Empty queues and existing supplied drafts can be processed without a model. Automatic authorization requires known preparation context matching the current source snapshot. Older drafts with a null preparation fingerprint, or drafts whose source facts changed, are blocked from automatic authorization. A person can freshly review and approve eligible copy, or edit it against current facts; reading alone does not invent preparation history.
+
 Inspect every item outcome: `pending`, `authorized`, `blocked`, or `already_reviewed`. HTTP 200 does not mean every item succeeded. Completed items commit independently; a later failure can leave earlier progress. Retrying reuses persisted work.
 
 ## Inbox and outbox
 
 `respawned inbox --json` and `GET /v1/workflow/inbox` show unanswered human replies, including during outreach cooldown. Pending outbox messages are not sent answers. The response includes reply evidence, routes, related records, and pending-outbox counts.
+
+The inbox API accepts `limit` from 1–200 (default 200), nonnegative `offset` (default 0), and optional `workspace_id`. `total` counts all matching reply contacts; `has_more` indicates another page. The browser loads more contacts using `offset`; the CLI's `--limit` selects a single bounded response.
 
 `GET /v1/workflow/outbox` reads reservation snapshots. `GET /v1/workflow/outbox/export?format=json` exports exact strings; `format=csv` produces spreadsheet-safe CSV. An optional `workspace_id` filters whole reservations. Export does not change status.
 
@@ -323,8 +360,10 @@ Respawned records the sender's report without contacting the provider. This inte
 | Status | Meaning |
 | --- | --- |
 | 401 | Missing or invalid credential for an enabled operation |
+| 403 | Browser origin or local-session request requirements were not accepted |
 | 404 | Missing resource or unconfigured access |
 | 409 | Conflicting source facts, stale review, ineligible action, or conflicting receipt |
+| 413 | Raw HTTP body exceeds 2,000,000 bytes; split the request |
 | 422 | Invalid input or draft validation failure |
 | 503 | Database, policy, or requested drafting backend unavailable |
 
@@ -337,6 +376,16 @@ Server policy controls timezone, cooldown, expiry, sender/sign-off, copy limits,
 Ranking combines the strongest eligible reason with value and signal weights. Job applications are excluded from value ranking. Rules cover unanswered human replies, viewing activity, aging work, applications without a human update, and missed expected replies. A newer human reply or outbound suppresses an older promised-update deadline.
 
 Drafting receives bounded record, contact, tone, and sender context. The engine validates generated and supplied text for length, unresolved placeholders, prohibited currency amounts, and referenced-record eligibility. See [backend setup](WEB_UI.md#connect-a-model-backend), [policy loading](../src/respawned/core/policy.py), and [evaluators](../src/respawned/core/reasons.py).
+
+## Upgrading to 2.3
+
+Stop the engine, back up PostgreSQL, preserve external configuration, and install matching 2.3.0 engine and clients. Restart against the existing database, reload the bundled UI, and reconnect local browsers with a fresh launch link. The schema adds nullable preparation and accepted-review source fingerprints; it does not fabricate context for older drafts or alter existing approved reservations.
+
+Local browser sessions now require both cookie and origin-scoped proof. Pending review tokens bind current saved facts, and the 2.3 CLI requires the coherent `review_context` response. Older engine responses are readable but cannot be reviewed through that CLI. Automatic processing blocks unknown or changed preparation context; eligible drafts can still receive fresh human review. See [the upgrade steps](https://respawned.williamshayden.com/#upgrading-to-23).
+
+## Upgrading to 2.2
+
+Version 2.2 introduced targeted `review RECORD_ID` and the first supplied-text browser workflow. Those workflows remain available with the 2.3 source-context guards. The historical 2.2 interface did not provide the coherent review-context capability required by the current CLI.
 
 ## Upgrading to 2.0
 

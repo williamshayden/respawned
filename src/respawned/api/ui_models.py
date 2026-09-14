@@ -1,5 +1,7 @@
 """The shared review interface consumes one context-neutral response contract."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -113,6 +115,7 @@ class UIDraft(BaseModel):
     review_token: str
     validation_errors: list[str] = Field(default_factory=list)
     outbox_id: int | None = None
+    source_context_status: Literal["current", "changed", "unknown"] = "unknown"
 
 
 class WorkflowDraft(UIDraft):
@@ -126,6 +129,7 @@ class WorkflowDraft(UIDraft):
     created_at: datetime
     updated_at: datetime
     reviewed_at: datetime | None
+    review_context: UIRecord | None = None
 
 
 class ReviewQueueResponse(BaseModel):
@@ -157,11 +161,17 @@ class UIRecord(BaseModel):
     draft: UIDraft | None
 
 
+class UIRecordCounts(BaseModel):
+    tracked: int = Field(ge=0)
+    ready: int = Field(ge=0)
+
+
 class UIRecordList(BaseModel):
     items: list[UIRecord]
     total: int
     has_more: bool
     as_of: datetime
+    counts: UIRecordCounts
 
 
 class UISyncRequest(BaseModel):

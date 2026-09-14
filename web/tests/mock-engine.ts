@@ -1,6 +1,7 @@
 import { expect, type Page } from '@playwright/test'
 import { createDemoClient } from '../src/data/demoClient'
 import { createFixtures } from '../src/data/fixtures'
+import { SESSION_PROOF_STORAGE_KEY } from '../src/data/auth'
 
 // Sample data belongs in test fixtures, never in the product's startup path.
 export async function mockEngine(page: Page, options: { canonical?: boolean; localSession?: boolean; empty?: boolean } = {}) {
@@ -8,6 +9,7 @@ export async function mockEngine(page: Page, options: { canonical?: boolean; loc
   const prefix = options.canonical ? '/v1/workflow' : '/v1/ui'
   const importedIds = options.empty ? new Set<string>() : null
   const writes: { path: string; body: unknown }[] = []
+  if (options.localSession) await page.addInitScript(key => localStorage.setItem(key, 'mock-local-origin-proof'), SESSION_PROOF_STORAGE_KEY)
   await page.route('**/v1/setup/bootstrap', route => route.fulfill({ json: { review_enabled: true, ...(options.canonical ? { workflow_api_prefix: prefix } : {}) } }))
   await page.route(`**${prefix}/**`, async route => {
     const url = new URL(route.request().url())

@@ -11,13 +11,13 @@ python3 -m venv /tmp/respawned-site-build
 /tmp/respawned-site-build/bin/pip install -r site/requirements.txt
 ```
 
-The 2.2.0 packages are pinned to application source `767aaf873225fd74537775ec3e251399c6c98789`, after complete application, distribution, metadata, and installer qualification. The [release workflow](../docs/RELEASING.md) supplies the same packages to every enabled channel. Qualify the artifacts before updating the source pin.
+The 2.3.0 packages are pinned to application source `5f9bd0c56b21a99b231f4a576852eb9459ea89e7`, after application, connected-browser, distribution, metadata, and installer qualification. The [release workflow](../docs/RELEASING.md) supplies the same packages to every enabled channel. Qualify the artifacts before updating the source pin.
 
 For a local preview, set `PACKAGE_SOURCE` to the full qualified application commit and use a new output directory:
 
 ```bash
 /tmp/respawned-site-build/bin/python site/build.py \
-  --distribution /absolute/path/to/qualified-2.2.0-distribution \
+  --distribution /absolute/path/to/qualified-2.3.0-distribution \
   --package-source "$PACKAGE_SOURCE" \
   --output /absolute/path/to/new-preview \
   --allow-dirty-preview
@@ -27,11 +27,11 @@ Preview manifests are marked unqualified for publication. A publication build re
 
 ## Preserve earlier downloads
 
-Published installers pin versioned wheels. Preserve 1.0.0, 1.1.0, 2.0.0, and 2.1.0 when publishing 2.2.0:
+Published installers pin versioned wheels. Preserve 1.0.0, 1.1.0, 2.0.0, 2.1.0, and 2.2.0 when publishing 2.3.0:
 
 ```bash
 /tmp/respawned-site-build/bin/python site/build.py \
-  --distribution /absolute/path/to/qualified-2.2.0-distribution \
+  --distribution /absolute/path/to/qualified-2.3.0-distribution \
   --output /absolute/path/to/new-public-output \
   --archive-distribution /absolute/path/to/qualified-1.0.0-distribution \
   --archive-source 8d0512d4ff0d367b04ec028198195dc18f697c2a \
@@ -40,7 +40,9 @@ Published installers pin versioned wheels. Preserve 1.0.0, 1.1.0, 2.0.0, and 2.1
   --archive-distribution /absolute/path/to/qualified-2.0.0-distribution \
   --archive-source 1f33f8f17762ad6fde3e528261cc9d6aa4630d85 \
   --archive-distribution /absolute/path/to/qualified-2.1.0-distribution \
-  --archive-source dfe730f07acc15c596f1cd44f720554863bb4dcb
+  --archive-source dfe730f07acc15c596f1cd44f720554863bb4dcb \
+  --archive-distribution /absolute/path/to/qualified-2.2.0-distribution \
+  --archive-source 767aaf873225fd74537775ec3e251399c6c98789
 ```
 
 Repeat each archive argument in matching order. The builder validates source revision, installer qualification, file sizes, hashes, and installer pins for every distribution. It copies only older versioned wheels and source archives; current installer, checksums, and package metadata stay current. Duplicate versions and artifacts from newer releases are rejected.
