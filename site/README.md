@@ -11,7 +11,7 @@ python3 -m venv /tmp/respawned-site-build
 /tmp/respawned-site-build/bin/pip install -r site/requirements.txt
 ```
 
-Set `PACKAGE_COMMIT` in `site/build.py` to the 2.2.0 application source after complete application, distribution, metadata, and installer qualification. The [release workflow](../docs/RELEASING.md) supplies the same packages to every enabled channel. Qualify the artifacts before updating the source pin.
+The 2.2.0 packages are pinned to application source `767aaf873225fd74537775ec3e251399c6c98789`, after complete application, distribution, metadata, and installer qualification. The [release workflow](../docs/RELEASING.md) supplies the same packages to every enabled channel. Qualify the artifacts before updating the source pin.
 
 For a local preview, set `PACKAGE_SOURCE` to the full qualified application commit and use a new output directory:
 

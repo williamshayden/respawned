@@ -21,7 +21,7 @@ SITE = ROOT / "site"
 ORIGIN = "https://respawned.williamshayden.com"
 REPO = "https://github.com/williamshayden/respawned"
 # Pin the source after the complete application and distribution checks pass.
-PACKAGE_COMMIT: str | None = None
+PACKAGE_COMMIT: str | None = "767aaf873225fd74537775ec3e251399c6c98789"
 PACKAGE_VERSION = "2.2.0"
 ASSETS = ("docs.css", "docs.js", "favicon.svg")
 SITE_SOURCES = ("build.py", "README.md", "requirements.txt", "_headers", "content/index.md")

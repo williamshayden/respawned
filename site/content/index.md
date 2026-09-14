@@ -201,7 +201,7 @@ sh install.sh
 
 The installer verifies the wheel checksum, installs into `~/.local/share/respawned/2.2.0`, and adds `~/.local/bin/respawned`. Use `sh install.sh --prefix /absolute/path` for another prefix. No repository clone or Node.js is needed.
 
-[Download package](/downloads/respawned-2.2.0-py3-none-any.whl) · [Source archive](/downloads/respawned-2.2.0.tar.gz) · [Checksums](/SHA256SUMS) · [Package provenance](/release.json) · [Site manifest](/site-manifest.json) · [Release history](https://github.com/williamshayden/respawned/releases)
+[Download package](/downloads/respawned-2.2.0-py3-none-any.whl) · [Source archive](/downloads/respawned-2.2.0.tar.gz) · [Checksums](/SHA256SUMS) · [Package provenance](/release.json) · [Site manifest](/site-manifest.json) · [GitHub release](https://github.com/williamshayden/respawned/releases/tag/v2.2.0)
 
 ## Update the engine and clients
 
