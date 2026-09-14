@@ -247,7 +247,7 @@ if url:
             DB_NAME=connection_url.database or "",
             PGOPTIONS=f"-csearch_path={schema}",
         )
-        invoke([console], "init", environment=environment)
+        # The normal startup path initializes this empty schema on API access.
         def exercise_workflow(base):
             # An invalid client DB configuration proves commands use HTTP.
             client_environment = dict(environment, RESPAWNED_API_URL=base,
@@ -264,6 +264,12 @@ if url:
                     "created_at": (now - timedelta(days=8)).isoformat(),
                     "contact_key": "distribution:alex", "contact_name": "Alex",
                     "contact_email": "alex@example.com", "preferred_channel": "email",
+                }, {
+                    "id": "distribution:unrelated", "kind": "job_application",
+                    "title": "Unrelated eligible record", "status": "open",
+                    "created_at": (now - timedelta(days=8)).isoformat(),
+                    "contact_key": "distribution:sam", "contact_name": "Sam",
+                    "contact_email": "sam@example.com", "preferred_channel": "email",
                 }],
                 "activities": [{
                     "id": "distribution:reply", "opportunity_id": "distribution:application",
@@ -274,10 +280,10 @@ if url:
             source = Path.cwd() / "records.json"
             source.write_text(json.dumps(payload), encoding="utf-8")
             first = json.loads(invoke([console], "import", "--file", str(source), environment=client_environment))
-            assert first == {"opportunities_upserted": 1, "activities_inserted": 1}, first
+            assert first == {"opportunities_upserted": 2, "activities_inserted": 1}, first
             replay = json.loads(invoke(module, "import", "--file", "-", environment=client_environment,
                                        stdin=json.dumps(payload)))
-            assert replay == {"opportunities_upserted": 1, "activities_inserted": 0}, replay
+            assert replay == {"opportunities_upserted": 2, "activities_inserted": 0}, replay
             body = "Hi Alex, thanks for your message. I can share an update tomorrow.\n\nMorgan"
             message = Path.cwd() / "draft.txt"
             message.write_text(body, encoding="utf-8")
@@ -291,8 +297,10 @@ if url:
             queue = client.queue()
             invoke([console], "sync", "--dry-run", environment=client_environment)
             assert client.queue() == queue
-            review = invoke(module, "review", "--limit", "1", environment=client_environment, stdin="a\n")
+            review = invoke(module, "review", "distribution:application", environment=client_environment, stdin="a\n")
             assert "1 approved" in review, review
+            assert client.queue() == queue
+            assert client.get_record("distribution:unrelated")["draft"] is None
             pending = json.loads(invoke([console], "outbox", "--pending", "--json",
                                         environment=client_environment))
             assert len(pending["items"]) == 1, pending
@@ -326,7 +334,9 @@ if url:
                 f'(SELECT count(*) FROM "{schema}".activities), '
                 f'(SELECT count(*) FROM "{schema}".outbox)'
             )).one()
-        assert tuple(counts) == (31, 84, 1), counts
+        assert tuple(counts) == (32, 84, 1), counts
+        # The explicit administration command remains available and idempotent.
+        invoke([console], "init", environment=environment)
         verify_http([console, "serve"], environment=environment, api_only=True, expected_ready=True)
         cli_http_verified = True
         database_verified = True

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, Check, LoaderCircle, Menu, RefreshCw, UserRound, X } from 'lucide-react'
 import { createHttpClient } from './data/client'
 import { endLocalSession, isLocalSession, LOCAL_SESSION, restoreLocalSession } from './data/auth'
@@ -36,11 +36,15 @@ export default function App() {
   const [edits, setEdits] = useState<Record<string, LocalEdit>>({})
   const [contextBusy, setContextBusy] = useState(false)
   const [connectionBusy, setConnectionBusy] = useState(false)
+  const initialNavigation = useRef(true)
 
   useEffect(() => {
     let active = true
     void restoreLocalSession().then(connected => {
-      if (active && connected) engines.setAccess('local', LOCAL_SESSION)
+      if (active && connected) {
+        engines.setAccess('local', LOCAL_SESSION)
+        if (initialNavigation.current) setPage('Review queue')
+      }
     }).catch(error => {
       if (active) review.setError(error instanceof Error ? error.message : 'Could not reconnect the browser session.')
     })
@@ -60,6 +64,7 @@ export default function App() {
   const count = scopedRecords.filter(actionable).length
   const edit = selected ? edits[selected.id] : undefined
   const navigate = (destination: Page) => {
+    initialNavigation.current = false
     if (destination !== page && (contextBusy || connectionBusy)) { review.setError('Wait for the current setup or connection change to finish before leaving this page.'); return }
     setPage(destination); setSidebarOpen(false); setShowDetail(false)
     if (destination !== 'Setup') setSetupSources(false)
@@ -96,6 +101,7 @@ export default function App() {
     finally { setConnectionBusy(false) }
   }
   const connect = async (value: string) => {
+    initialNavigation.current = false
     if (review.busy || Object.keys(edits).length) throw new Error('Save or discard your draft edits and wait for the current action to finish first.')
     await connectionOperation(() => engines.unlock(engines.activeId, value))
     setScope('all'); setSelectedId(null)
@@ -134,7 +140,6 @@ export default function App() {
         <div><h1>{page}</h1>{!['Overview', 'Connections'].includes(page) && <p>{engines.active.name}{!['Setup', 'Workspaces', 'Policy'].includes(page) && ` · ${workspace?.name ?? 'All work'}`}</p>}</div></div>
         <div className="header-actions">{!['Setup', 'Workspaces', 'Connections', 'Overview'].includes(page) && <button className="button refresh-button" onClick={review.retry} disabled={!client || !!review.busy || review.loading}>
           <RefreshCw size={19} className={review.busy === 'Reloading' ? 'spin' : ''} />Refresh</button>}
-          {page === 'Review queue' && <button className="button" onClick={review.reload} disabled={!client || !!review.busy || review.loading} title="Evaluate all imported records on this engine and update review candidates.">Evaluate queue</button>}
           {!['Overview', 'Connections'].includes(page) && <span className="review-mode"><UserRound size={21} />{review.config ? review.config.policy_mode === 'automatic' ? 'Automatic policy' : 'Human review' : 'Review policy'}</span>}</div>
       </header>
       {(review.error || review.message) && <div className={`feedback ${review.error ? 'is-error' : ''}`} role={review.error ? 'alert' : 'status'}>
@@ -151,20 +156,31 @@ export default function App() {
         page === 'Workspaces' ? <WorkspaceManager key={`${engines.activeId}:${!!token}`} baseUrl={baseUrl} token={token} onBusyChange={setContextBusy} workspaces={workspaces.items} kinds={workspaces.available_kinds} loading={workspaces.loading} error={workspaces.error}
           onSetup={() => navigate('Setup')} onOpen={id => { changeWorkspace(id); navigate('Review queue') }} onSaved={async id => { await workspaces.reload(); setScope(id ?? 'all'); review.rememberSelection(null); setSelectedId(null); setShowDetail(false); setWorkspaceRevision(value => value + 1) }} /> :
         !client ? <div className="empty-state"><h2>Connect to start tracking</h2><p>Set up engine access, import your records, and configure a model when you are ready to draft.</p><button className="button primary" onClick={() => navigate('Setup')}>Open setup</button></div> :
-        review.loading ? <div className="loading-workspace" role="status"><LoaderCircle size={25} className="spin" /><p>Loading your workspace…</p></div> : page === 'Review queue' ?
+        review.loading ? <div className="loading-workspace" role="status"><LoaderCircle size={25} className="spin" /><p>Loading your workspace…</p></div> :
+        page === 'Review queue' && scope === 'all' && review.config && review.total === 0 && !review.error ?
+        <div className="empty-state"><h2>Start with one record</h2><p>Import a record, {review.canWriteDraft ? 'write' : 'generate'} a draft, then approve it to the unsent outbox.</p><button className="button primary" onClick={openImport}>Import records</button></div> : page === 'Review queue' ?
         <div className="review-layout">
           <QueueList records={visibleRecords} selected={selected?.id ?? null} onSelect={select} query={query} onQuery={setQuery} channel={channel} onChannel={setChannel}
             view={view} onView={setView} sort={sort} onSort={setSort} onImport={openImport} onClearFilters={() => { setQuery(''); setChannel('all') }} total={review.total} hasMore={review.hasMore} onMore={review.more} busy={!!review.busy} />
-          <ReviewPanel record={selected} records={review.records} index={visibleRecords.findIndex(record => record.id === selected?.id)} total={visibleRecords.length} config={review.config} edit={edit} busy={review.busy}
+          <ReviewPanel record={selected} records={review.records} index={visibleRecords.findIndex(record => record.id === selected?.id)} total={visibleRecords.length} config={review.config} edit={edit} busy={review.busy} canWriteDraft={review.canWriteDraft}
+            onWrite={() => { if (selected && !selected.draft && review.canWriteDraft) setEdits(previous => ({ ...previous, [selected.id]: { kind: 'new', body: '' } })) }}
             onBack={() => setShowDetail(false)} onEdit={body => {
-              if (!selected?.draft) return
+              if (!selected) return
               const record = selected
+              if (edit?.kind === 'new') { setEdits(previous => ({ ...previous, [record.id]: { kind: 'new', body } })); return }
+              if (!record.draft) return
               if (body === record.draft!.body) { removeEdit(record.id); return }
-              setEdits(previous => ({ ...previous, [record.id]: { body, token: previous[record.id]?.token ?? record.draft!.review_token, draftId: record.draft!.id } }))
+              setEdits(previous => {
+                const prior = previous[record.id]
+                return { ...previous, [record.id]: { kind: 'existing', body, token: prior?.kind === 'existing' ? prior.token : record.draft!.review_token, draftId: prior?.kind === 'existing' ? prior.draftId : record.draft!.id } }
+              })
             }}
             onDiscard={() => selected && removeEdit(selected.id)}
             onSave={async () => { if (!selected || !edit) return; const id = selected.id
-              if (await review.operate('Saving', () => client.edit(edit.draftId, edit.body, edit.token), 'Draft changes saved.')) removeEdit(id)
+              if (edit.kind === 'new') {
+                if (selected.draft || !review.canWriteDraft) return
+                if (await review.operate('Saving draft', () => client.draft(id, edit.body), 'Draft saved. Review it before approval.')) removeEdit(id)
+              } else if (await review.operate('Saving', () => client.edit(edit.draftId, edit.body, edit.token), 'Draft changes saved.')) removeEdit(id)
             }}
             onDraft={() => selected && review.operate('Generating draft', () => client.draft(selected.id))}
             onApprove={async () => { if (!selected?.draft) return
@@ -177,7 +193,7 @@ export default function App() {
               const index = visibleRecords.findIndex(record => record.id === selected?.id)
               const next = visibleRecords[(index + 1) % visibleRecords.length]?.id ?? null
               review.rememberSelection(next); setSelectedId(next)
-              review.setMessage('Skipped for now. Your draft stays pending.')
+              review.setMessage(edit?.kind === 'new' ? 'Skipped for now. Your unsaved draft stays in this tab.' : selected?.draft?.status === 'pending' ? 'Skipped for now. Your draft stays pending.' : 'Skipped for now. The record stays in your queue.')
             }} />
         </div> : <AuxiliaryViews page={page} records={scopedRecords} outbox={scopedOutbox} inbox={scopedInbox} inboxHasMore={!!review.inbox?.has_more} config={review.config} onExport={() => client.exportOutbox()} onSelect={async id => {
           if (!await review.openRecord(id)) return

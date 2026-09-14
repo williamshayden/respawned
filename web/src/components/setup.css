@@ -35,6 +35,10 @@
 .setup-launch-help summary { color: var(--accent); cursor: pointer; font-weight: 550; }
 .setup-launch-help p { color: var(--muted); margin-top: 8px; }
 .setup-details summary { color: var(--accent); font-size: 12px; font-weight: 550; cursor: pointer; line-height: 1.6; }
+.setup-optional { margin-top: 14px; }
+.setup-optional > summary { color: var(--accent); font-size: 13px; font-weight: 550; cursor: pointer; line-height: 1.6; }
+.setup-optional[open] > summary { margin-bottom: 18px; }
+.setup-outbox-link { margin-top: 18px; }
 .setup-details p { margin-top: 13px; color: var(--muted); font-size: 12px; }
 .setup-details code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; overflow-wrap: anywhere; }
 .setup-details pre { overflow-x: auto; max-width: 100%; margin: 13px 0; padding: 15px; background: #f5f7f7; border: 1px solid #e5e9e9; border-radius: 6px; line-height: 1.7; }

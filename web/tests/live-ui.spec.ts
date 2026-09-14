@@ -50,6 +50,7 @@ test('UI-only import, workspace, review, stale edit, and export on an empty engi
 
   let workspaceId = ''
   await test.step('save model configuration without an inference call', async () => {
+    await page.getByText('Configure model (optional)', { exact: true }).click()
     await page.getByLabel('API base URL').fill('http://127.0.0.1:11434/v1')
     await page.getByLabel('Model or proxy alias', { exact: true }).fill('deterministic-ui-stub')
     await page.getByRole('button', { name: 'Save model settings', exact: true }).click()

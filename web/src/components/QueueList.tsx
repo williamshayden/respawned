@@ -48,7 +48,7 @@ export function QueueList(props: Props) {
       })}
       {!props.records.length && <div className="empty-state queue-empty"><SearchX size={28} />
         <h2>{props.total === 0 ? 'No tracked records' : filtered ? 'No matching records' : 'Nothing ready for review'}</h2>
-        <p>{props.total === 0 ? 'Import records and activity to start tracking this workspace.' : filtered ? 'Clear your search and channel filter to see more records.' : 'See All tracked for waiting records, or evaluate the queue after importing new activity.'}</p>
+        <p>{props.total === 0 ? 'Import records and activity to start tracking this workspace.' : filtered ? 'Clear your search and channel filter to see more records.' : 'See All tracked for waiting records. Refresh after importing new activity.'}</p>
         {props.total === 0 ? <button className="button primary" onClick={props.onImport}>Import records</button> : filtered ? <button className="button" onClick={props.onClearFilters}>Clear filters</button> : <button className="button" onClick={() => props.onView('all')}>View all tracked</button>}
       </div>}
       <div className="queue-footer">{props.records.length} {props.hasMore ? 'loaded records' : `record${props.records.length === 1 ? '' : 's'}`}

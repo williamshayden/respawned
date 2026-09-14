@@ -1,12 +1,13 @@
 import { useLayoutEffect, useRef } from 'react'
-import { ArrowLeft, ArrowRight, CalendarDays, Check, CircleCheck, ExternalLink, LoaderCircle, Mail, MessageSquare, Save, SkipForward, Sparkles, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CalendarDays, Check, CircleCheck, ExternalLink, LoaderCircle, Mail, MessageSquare, PencilLine, Save, SkipForward, Sparkles, X } from 'lucide-react'
 import type { UIConfig, UIRecord } from '../data/types'
 import { actionLabel, actionable, displayName, safeSource, shortDate } from '../presentation'
 
-export interface LocalEdit { body: string; token: string; draftId: string }
+export type LocalEdit = { kind: 'new'; body: string } | { kind: 'existing'; body: string; token: string; draftId: string }
 interface Props {
   record: UIRecord | null; index: number; total: number; config: UIConfig | null
   edit?: LocalEdit; onEdit: (body: string) => void; onSave: () => void; onDiscard: () => void
+  onWrite: () => void; canWriteDraft: boolean
   onDraft: () => void; onApprove: () => void; onReject: () => void; onSkip: () => void; onBack: () => void
   busy: string | null; records: UIRecord[]
 }
@@ -16,18 +17,24 @@ const activityDisclosure = (type: string) => ['inbound', 'outbound', 'message_se
 export function ReviewPanel(props: Props) {
   const { record, busy } = props
   const scroll = useRef<HTMLDivElement>(null)
+  const writing = props.edit?.kind === 'new'
   useLayoutEffect(() => { if (scroll.current) scroll.current.scrollTop = 0 }, [record?.id])
-  if (!record) return <section className="review-pane empty-detail"><div className="empty-state"><CircleCheck size={36} />
+  useLayoutEffect(() => {
+    if (writing && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight
+  }, [record?.id, writing])
+  if (!record) return <section className="review-pane empty-detail"><div className="empty-state">
+    <button className="text-button mobile-back" onClick={props.onBack}><ArrowLeft size={17} />Back to records</button><CircleCheck size={36} />
     <h2>No record selected</h2><p>Select a record to review its context and next action.</p></div></section>
   const draft = record.draft
+  const newDraftConflict = writing && !!draft
   const body = props.edit?.body ?? draft?.body ?? ''
   const dirty = !!props.edit
   const max = props.config?.max_draft_characters ?? 320
   const length = Array.from(body.trim()).length
   const invalid = !body.trim() || length > max
-  const validationFailed = invalid || !!draft?.validation_errors.length
+  const validationFailed = (writing ? !!body && invalid : invalid) || !!draft?.validation_errors.length
   const pending = draft?.status === 'pending'
-  const canEdit = pending && record.status === 'open' && !!record.contact
+  const canEdit = writing || (pending && record.status === 'open' && !!record.contact)
   const canReview = actionable(record) && pending && !draft.validation_errors.length
   const latestActivities = [...record.activities].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at) || a.id.localeCompare(b.id)).slice(-3)
   const referenced = record.referenced_record_ids.filter(id => id !== record.id)
@@ -67,25 +74,30 @@ export function ReviewPanel(props: Props) {
       </section>
       <section className="draft-panel" aria-labelledby="draft-heading">
         <div className="draft-header"><h3 id="draft-heading">Draft message</h3></div>
-        {draft ? <>
+        {draft || writing ? <>
           <textarea aria-label="Draft message" value={body} onChange={event => props.onEdit(event.target.value)}
-            readOnly={!canEdit || !!busy} aria-invalid={validationFailed} spellCheck="true" />
+            readOnly={!canEdit || !!busy} aria-invalid={validationFailed} spellCheck="true" autoFocus={writing} />
           <div className="draft-status-row">
             <span className={`validation ${validationFailed ? 'invalid' : ''}`}>{validationFailed ? <X size={16} /> : <Check size={16} />}
-              {invalid ? !body.trim() ? 'Add a message before saving' : `${length - max} characters over the limit` : dirty ? 'Unsaved changes' : draft.validation_errors.length ? 'Validation needs attention' : draft.status === 'pending' ? 'Validation passed' : draft.status === 'approved' ? 'Added to outbox' : 'Draft rejected'}
+              {newDraftConflict ? 'A saved draft is now available' : invalid ? !body.trim() ? 'Write a message to save' : `${length - max} characters over the limit` : writing ? 'Unsaved draft' : dirty ? 'Unsaved changes' : draft?.validation_errors.length ? 'Validation needs attention' : draft?.status === 'pending' ? 'Validation passed' : draft?.status === 'approved' ? 'Added to outbox' : 'Draft rejected'}
             </span>
             {dirty && <span className="character-count">{length} / {max}</span>}
           </div>
-          {dirty && <div className="edit-actions"><button className="text-button" onClick={props.onDiscard} disabled={!!busy}>Discard changes</button>
-            <button className="button small" disabled={invalid || !!busy} onClick={props.onSave}><Save size={16} />Save changes</button></div>}
-          {draft.validation_errors.length > 0 && <p className="inline-error" role="alert">{draft.validation_errors.join(' ')}</p>}
+          {dirty && <div className="edit-actions"><button className="text-button" onClick={props.onDiscard} disabled={!!busy}>{writing ? 'Discard draft' : 'Discard changes'}</button>
+            <button className={`button small ${writing ? 'primary' : ''}`} disabled={invalid || !!busy || (writing && (!props.canWriteDraft || !actionable(record) || newDraftConflict))} onClick={props.onSave}><Save size={16} />{writing ? 'Save draft' : 'Save changes'}</button></div>}
+          {newDraftConflict && <div className="manual-draft-conflict"><p>Your unsaved text is kept above. Discard it when you are ready to review the saved draft.</p><details><summary>View saved draft</summary><p>{draft.body}</p></details></div>}
+          {!!draft?.validation_errors.length && <p className="inline-error" role="alert">{draft.validation_errors.join(' ')}</p>}
         </> : <div className="draft-placeholder">
-          <p>{actionable(record) ? 'Generate a draft using this record’s context.' : !record.contact ? 'A human contact is required to generate a draft.' : 'This record is not ready for outreach.'}</p>
-          {actionable(record) && <button className="button" onClick={props.onDraft} disabled={!!busy}>{busy === 'Generating draft' ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}Generate draft</button>}
+          <p>{actionable(record) ? props.canWriteDraft ? 'Write your message, or generate one with your configured model.' : 'Generate a draft using this record’s context.' : !record.contact ? 'A human contact is required to write a draft.' : 'This record is not ready for outreach.'}</p>
+          {actionable(record) && <div className="draft-start-actions">
+            {props.canWriteDraft && <button className="button primary" onClick={props.onWrite} disabled={!!busy}><PencilLine size={17} />Write draft</button>}
+            <button className="button" onClick={props.onDraft} disabled={!!busy}>{busy === 'Generating draft' ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}Generate draft</button>
+          </div>}
+          {actionable(record) && !props.canWriteDraft && <p className="muted">Update this engine to Respawned 2.0 or newer to write a draft yourself.</p>}
         </div>}
       </section>
     </div>
-    <footer className="decision-bar"><p>{dirty ? 'Save your changes before approval.' : 'Approval adds this draft to the unsent outbox.'}</p>
+    <footer className="decision-bar"><p>{writing ? 'Save your draft before approval. Writing makes no model request.' : dirty ? 'Save your changes before approval.' : 'Approval adds this draft to the unsent outbox.'}</p>
       <div className="decision-buttons">
         <button className="button" onClick={props.onReject} disabled={!pending || dirty || !!busy}><X size={18} />Reject</button>
         <button className="button" onClick={props.onSkip} disabled={!!busy}><SkipForward size={18} />Skip</button>

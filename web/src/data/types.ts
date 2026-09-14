@@ -128,7 +128,8 @@ export interface ReviewClient {
   listRecords(offset?: number): Promise<RecordPage>
   getRecord(recordId: string): Promise<UIRecord>
   sync(): Promise<SyncResult>
-  draft(recordId: string): Promise<UIDraft>
+  supportsManualDraft(): Promise<boolean>
+  draft(recordId: string, body?: string): Promise<UIDraft>
   edit(draftId: string, body: string, reviewToken: string): Promise<UIDraft>
   approve(draftId: string, reviewToken: string): Promise<UIDraft>
   reject(draftId: string, reviewToken: string): Promise<UIDraft>

@@ -84,9 +84,10 @@ def test_connection_options_work_before_or_after_the_command(arguments, url, tim
 
 @pytest.mark.parametrize("command, arguments, forwarded", [
     ("import", ["--file", "-"], ["--file", "-"]),
-    ("draft", ["source/id", "--body-file", "-"], ["source/id", "--body-file", "-"]),
+    ("draft", ["source/id", "--body-file", "-"], ["--body-file", "-", "--", "source/id"]),
     ("sync", ["--limit", "4", "--dry-run"], ["--limit", "4", "--dry-run"]),
     ("review", ["--limit", "4"], ["--limit", "4"]),
+    ("review", ["source/record"], ["--", "source/record"]),
     ("inbox", ["--limit", "3", "--json"], ["--limit", "3", "--json"]),
     ("process", ["--limit", "2"], ["--limit", "2"]),
     ("status", ["--json"], ["--json"]),
@@ -98,6 +99,50 @@ def test_client_commands_forward_options_and_return_errors(monkeypatch, command,
     monkeypatch.setattr(module, "main", lambda argv: received.append(argv) or 17)
     assert entrypoint.main(["--api-url", "https://engine.example", "--timeout", "8", command, *arguments]) == 17
     assert received == [["--timeout", "8.0", "--api-url", "https://engine.example", *forwarded]]
+
+
+@pytest.mark.parametrize("command", ["draft", "review"])
+@pytest.mark.parametrize("record_id", [
+    "--limit=1",
+    "--api-url=https://another.example",
+    "--body-file=another.txt",
+])
+def test_record_ids_remain_positional_through_both_parsers(monkeypatch, tmp_path, command, record_id):
+    module = importlib.import_module("respawned.cli." + command)
+    calls = []
+    body = "Hi Avery, café on Friday?"
+    body_file = tmp_path / "draft.txt"
+    body_file.write_text(body, encoding="utf-8")
+
+    class Client:
+        def draft(self, identity, *, body):
+            calls.append(("draft", identity, body))
+            return {"id": "saved-draft", "status": "pending"}
+
+        def get_record(self, identity):
+            calls.append(("get_record", identity))
+            return {"draft": {"id": "saved-draft"}}
+
+        def get_draft(self, identity):
+            calls.append(("get_draft", identity))
+            return {"id": identity, "primary_opportunity_id": record_id, "status": "approved"}
+
+        def sync(self, **_kwargs):
+            pytest.fail("A targeted record ID entered batch review")
+
+    def configured_client(args):
+        assert args.api_url == "https://engine.example"
+        assert args.timeout == 7
+        return Client()
+
+    monkeypatch.setattr(module, "client_from_args", configured_client)
+    arguments = ["--api-url", "https://engine.example", "--timeout", "7", command]
+    if command == "draft":
+        arguments += ["--body-file", str(body_file)]
+    assert entrypoint.main([*arguments, "--", record_id]) == 0
+    expected = ([("draft", record_id, body)] if command == "draft"
+                else [("get_record", record_id), ("get_draft", "saved-draft")])
+    assert calls == expected
 
 
 @pytest.mark.parametrize("command", ["sync", "review", "inbox"])
@@ -117,6 +162,35 @@ def test_remote_api_options_do_not_change_engine_lifecycle(command, capsys):
         entrypoint.main(["--api-url", "https://engine.example", command], handlers={command: lambda _args: pytest.fail("Unexpected lifecycle call")})
     assert failure.value.code == 2
     assert "engine lifecycle" in capsys.readouterr().err
+
+
+def test_init_database_failure_reports_local_configuration_without_traceback(monkeypatch, capsys):
+    from respawned.db.helpers import pg_connect
+
+    def unavailable():
+        raise pg_connect.DatabaseConnectionError("private driver connection detail")
+
+    monkeypatch.setattr(pg_connect, "get_engine", unavailable)
+    assert entrypoint.main(["init"]) == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "Could not connect to PostgreSQL" in output.err
+    assert all(name in output.err for name in ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"))
+    assert "private driver connection detail" not in output.err and "Traceback" not in output.err
+
+
+@pytest.mark.parametrize("module_entrypoint", [False, True])
+@pytest.mark.parametrize("record_id", ["source/record", "--limit=1"])
+def test_record_review_rejects_queue_limit_before_http(monkeypatch, capsys, module_entrypoint, record_id):
+    review = importlib.import_module("respawned.cli.review")
+    monkeypatch.setattr(review, "client_from_args", lambda _args: pytest.fail("Invalid options created an HTTP client"))
+    with pytest.raises(SystemExit) as failure:
+        if module_entrypoint:
+            review.main(["--limit", "1", "--", record_id])
+        else:
+            entrypoint.main(["review", "--limit", "1", "--", record_id])
+    assert failure.value.code == 2
+    assert "omit it when reviewing a record ID" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("api_only", [False, True])

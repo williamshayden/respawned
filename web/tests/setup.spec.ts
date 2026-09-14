@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import type { ModelStatus, SetupStatus } from '../src/data/setup'
+import { mockEngine } from './mock-engine'
 
 const access = 'setup-test-review-access'
 const initialModel: ModelStatus = { backend: 'openai_compatible', source: 'environment', base_url: 'http://litellm:4000', model_alias: 'respawned-default', timeout_seconds: 60, api_key_env: 'LITELLM_MASTER_KEY', key_configured: false, ready: false, verified: false, error: null }
@@ -53,7 +54,7 @@ async function connect(page: Page) {
   await page.getByLabel('Engine access token', { exact: true }).fill(access)
   await page.getByRole('button', { name: 'Connect local engine', exact: true }).click()
   await expect(page.getByText('Unlocked', { exact: true })).toBeVisible()
-  await expect(page.getByLabel('API base URL')).toBeVisible()
+  await expect(page.getByLabel('Or paste your import JSON')).toBeVisible()
 }
 
 test('starts empty with server setup, and review access clears on reload', async ({ page }, testInfo) => {
@@ -67,6 +68,7 @@ test('starts empty with server setup, and review access clears on reload', async
   await page.screenshot({ path: testInfo.outputPath('setup-access-desktop.png') })
   await connect(page)
   await expect(page.getByText('Database unavailable', { exact: true })).toBeVisible()
+  await page.getByText('Configure model (optional)', { exact: true }).click()
   await expect(page.getByRole('button', { name: 'Save model settings', exact: true })).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Import records', exact: true })).toBeDisabled()
   expect(writes).toEqual([])
@@ -82,6 +84,7 @@ test('saves model configuration without inference and imports only after explici
   const { writes, unexpected } = await environment(page)
   await page.goto('/')
   await connect(page)
+  await page.getByText('Configure model (optional)', { exact: true }).click()
   await page.getByLabel('API base URL').fill('http://localhost:11434/v1')
   await page.getByLabel('Model or proxy alias').fill('local-writing-model')
   await page.getByLabel('Timeout (seconds)').fill('45')
@@ -110,6 +113,7 @@ test('mobile setup keeps configuration and import controls reachable without ove
   const { unexpected } = await environment(page)
   await page.goto('/')
   await connect(page)
+  await page.getByText('Configure model (optional)', { exact: true }).click()
   await page.getByLabel('API base URL').scrollIntoViewIfNeeded()
   await page.screenshot({ path: testInfo.outputPath('setup-model-mobile.png') })
   await page.getByLabel('Or paste your import JSON').scrollIntoViewIfNeeded()
@@ -130,6 +134,7 @@ test('saves optional CLI adapter settings without claiming runtime or credential
   await page.goto('/')
   await connect(page)
   const modelSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Model backend', exact: true }) })
+  await modelSection.getByText('Configure model (optional)', { exact: true }).click()
   await expect(modelSection.getByText('Used to generate drafts.', { exact: true })).toBeVisible()
   await expect(modelSection.getByText('RESPAWNED_CODEX_BIN', { exact: true })).toHaveCount(0)
   await page.getByRole('combobox', { name: 'Backend', exact: true }).selectOption('codex_cli')
@@ -176,6 +181,7 @@ test('shows the engine outbox capability without collecting credentials or perfo
   await expect(section.getByText('Export only', { exact: true })).toHaveCount(0)
   await expect(section.getByRole('link', { name: 'Outbox API documentation', exact: true })).toHaveCount(0)
   await connect(page)
+  await section.getByText('Delivery options', { exact: true }).click()
   await expect(section.getByText('GET /v1/outbox/pending', { exact: true })).toBeVisible()
   await expect(section.getByText('POST /v1/outbox/{id}/receipt', { exact: true })).toBeVisible()
   await expect(section.getByText(/The outbox token is not configured on this server/)).toBeVisible()
@@ -211,9 +217,13 @@ for (const prefix of ['/v1/ui', '/v1/workflow']) {
     await page.goto('/')
     await connect(page)
     const headings = await page.locator('.setup-section h2').allTextContents()
-    expect(headings).toEqual(['Engine access', 'Records & sources', 'Model backend', 'Outbox & delivery'])
+    expect(headings).toEqual(['Records & sources', 'Engine access', 'Model backend', 'Outbox & delivery'])
+    await expect(page.getByLabel('API base URL')).not.toBeVisible()
+    await expect(page.getByLabel('Engine', { exact: true })).toHaveCount(0)
+    await expect(page.getByLabel('Workspace', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Manage workspaces', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Open review queue', exact: true }).click()
-    await expect(page.getByRole('heading', { name: 'No tracked records', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Start with one record', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Import records', exact: true }).click()
     await expect(page.getByLabel('Or paste your import JSON')).toBeInViewport()
     await page.getByLabel('Or paste your import JSON').fill(JSON.stringify({ opportunities: [{ id: 'mock-record' }], activities: [] }))
@@ -222,15 +232,14 @@ for (const prefix of ['/v1/ui', '/v1/workflow']) {
     await page.getByRole('button', { name: 'Refresh', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled()
     expect(writes.map(write => write.path)).toEqual([`${prefix}/import`])
-    await page.getByRole('button', { name: 'Evaluate queue', exact: true }).click()
-    await expect(page.getByRole('status')).toContainText('Queue evaluated.')
+    await expect(page.getByRole('button', { name: 'Evaluate queue', exact: true })).toHaveCount(0)
     for (const name of ['Outbox', 'Activity', 'Policy', 'Reply inbox']) {
       await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: new RegExp(`^${name}`) }).click()
       await expect(page.getByRole('button', { name: 'Evaluate queue', exact: true })).toHaveCount(0)
       await page.getByRole('button', { name: 'Refresh', exact: true }).click()
       await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled()
     }
-    expect(writes.map(write => write.path)).toEqual([`${prefix}/import`, `${prefix}/sync`])
+    expect(writes.map(write => write.path)).toEqual([`${prefix}/import`])
     expect(workflowRequests.every(path => path.startsWith(prefix + '/'))).toBe(true)
     expect(unexpected).toEqual([])
   })
@@ -238,14 +247,25 @@ for (const prefix of ['/v1/ui', '/v1/workflow']) {
 
 test('keeps engine identity visible while navigating at laptop height', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 })
-  await environment(page)
+  const { writes } = await mockEngine(page, { canonical: true, empty: true })
   await page.goto('/')
   await connect(page)
-  await page.getByRole('button', { name: 'Go to import', exact: true }).click()
+  await expect(page.getByLabel('Or paste your import JSON')).toBeInViewport()
   await page.getByRole('button', { name: 'Open review queue', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Start with one record', exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Respawned', exact: true })).toBeInViewport({ ratio: 1 })
+  await expect(page.getByRole('textbox', { name: 'Find a record', exact: true })).toHaveCount(0)
+  expect(writes).toEqual([])
+  await page.getByRole('button', { name: 'Import records', exact: true }).click()
+  await page.getByLabel('Or paste your import JSON').fill(JSON.stringify({ opportunities: [{ id: 'job-aster-platform' }], activities: [] }))
+  await page.getByRole('button', { name: 'Import records', exact: true }).click()
+  await page.getByRole('button', { name: 'Review imported records', exact: true }).click()
+  await expect(page.locator('.record-row').filter({ hasText: 'Jordan Ellis' })).toBeVisible()
+  expect(writes).toEqual([{ path: '/import', body: { opportunities: [{ id: 'job-aster-platform' }], activities: [] } }])
   await page.getByRole('button', { name: 'All tracked', exact: true }).click()
   await page.getByRole('textbox', { name: 'Find a record', exact: true }).focus()
+  await expect(page.getByRole('textbox', { name: 'Find a record', exact: true })).toBeFocused()
+  await expect(page.getByRole('link', { name: 'Respawned', exact: true })).toBeInViewport({ ratio: 1 })
   const position = await page.evaluate(() => ({ scroll: window.scrollY, top: document.querySelector('.brand')!.getBoundingClientRect().top, overflow: document.documentElement.scrollWidth > innerWidth }))
   expect(position).toMatchObject({ scroll: 0, overflow: false })
   expect(position.top).toBeGreaterThanOrEqual(0)

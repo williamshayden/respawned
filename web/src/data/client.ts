@@ -1,4 +1,4 @@
-import { workflowRoot } from './workflow'
+import { readEngineBootstrap, workflowRoot } from './workflow'
 import type { InboxResult, OutboxItem, RecordPage, ReviewClient, SyncResult, UIConfig, UIDraft, UIRecord } from './types'
 import { accessHeaders, type ReviewAccess } from './auth'
 import { engineNetworkError, engineRequestOptions } from './transport'
@@ -39,6 +39,7 @@ function errorMessage(payload: unknown, fallback: string): string {
 /** Credentials live only in this closure; they are never written to storage or URLs. */
 export function createHttpClient(baseUrl = '', operatorToken: ReviewAccess = '', workspaceId = ''): ReviewClient {
   const transport = engineRequestOptions(operatorToken, baseUrl)
+  const supportsManualDraft = async () => (await readEngineBootstrap(baseUrl)).workflow_api_prefix === '/v1/workflow'
   async function request<T>(path: string, method = 'GET', body?: unknown, csv = false): Promise<T> {
     const headers: Record<string, string> = { Accept: csv ? 'text/csv' : 'application/json', ...accessHeaders(operatorToken) }
     if (body !== undefined) headers['Content-Type'] = 'application/json'
@@ -80,7 +81,15 @@ export function createHttpClient(baseUrl = '', operatorToken: ReviewAccess = '',
     listRecords: (offset = 0) => request<RecordPage>(`/records?limit=50&offset=${Math.max(0, Math.floor(offset))}${workspaceId ? `&workspace_id=${encodeURIComponent(workspaceId)}` : ''}`),
     getRecord: (recordId) => request<UIRecord>(`/records/${encodeURIComponent(recordId)}`),
     sync: () => request<SyncResult>('/sync', 'POST', {}),
-    draft: (recordId) => request<UIDraft>(`/records/${encodeURIComponent(recordId)}/draft`, 'POST'),
+    supportsManualDraft,
+    async draft(recordId, body) {
+      // Legacy handlers ignore request bodies and generate with their model.
+      // Never let an explicit manual save take that path.
+      if (body !== undefined && !await supportsManualDraft()) {
+        throw new ClientError('Update this engine to Respawned 2.0 or newer to write a draft. Its configured model can still generate one.', 0, 'manual_draft_unavailable')
+      }
+      return request<UIDraft>(`/records/${encodeURIComponent(recordId)}/draft`, 'POST', body === undefined ? undefined : { body })
+    },
     edit: (draftId, body, reviewToken) => request<UIDraft>(`/drafts/${encodeURIComponent(draftId)}/edit`, 'POST', { body, review_token: reviewToken }),
     approve: (draftId, reviewToken) => request<UIDraft>(`/drafts/${encodeURIComponent(draftId)}/approve`, 'POST', { review_token: reviewToken }),
     reject: (draftId, reviewToken) => request<UIDraft>(`/drafts/${encodeURIComponent(draftId)}/reject`, 'POST', { review_token: reviewToken }),

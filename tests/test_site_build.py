@@ -88,14 +88,15 @@ def test_build_preserves_older_releases_and_allowlisted_downloads(source, tmp_pa
     first = distribution(tmp_path / "first", "1.0.0", "b" * 40)
     second = distribution(tmp_path / "second", "1.1.0", "c" * 40)
     third = distribution(tmp_path / "third", "2.0.0", "e" * 40)
+    fourth = distribution(tmp_path / "fourth", "2.1.0", "f" * 40)
     output = tmp_path / "public"
     site_build.build(current, output, "a" * 40, True,
-                     archive_distribution=[first, second, third],
-                     archive_source=["b" * 40, "c" * 40, "e" * 40])
+                     archive_distribution=[first, second, third, fourth],
+                     archive_source=["b" * 40, "c" * 40, "e" * 40, "f" * 40])
     manifest = json.loads((output / "site-manifest.json").read_text())
     assert manifest["docs_source_clean"] is False
-    assert [item["version"] for item in manifest["archived_distributions"]] == ["1.0.0", "1.1.0", "2.0.0"]
-    for directory, version in ((current, CURRENT_VERSION), (first, "1.0.0"), (second, "1.1.0"), (third, "2.0.0")):
+    assert [item["version"] for item in manifest["archived_distributions"]] == ["1.0.0", "1.1.0", "2.0.0", "2.1.0"]
+    for directory, version in ((current, CURRENT_VERSION), (first, "1.0.0"), (second, "1.1.0"), (third, "2.0.0"), (fourth, "2.1.0")):
         for name in site_build.distribution_files(version)[1:]:
             assert (output / name).read_bytes() == (directory / name).read_bytes()
     assert (output / "install.sh").read_bytes() == (current / "install.sh").read_bytes()

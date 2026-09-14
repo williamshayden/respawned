@@ -31,7 +31,7 @@ COMMANDS = (
     CommandSpec("demo", "Import bundled sample records"),
     CommandSpec("sync", "Refresh or preview the engine's queue"),
     CommandSpec("draft", "Submit draft text or request model-generated copy"),
-    CommandSpec("review", "Refresh the queue and review drafts interactively"),
+    CommandSpec("review", "Review one saved draft or refresh the queue for human review"),
     CommandSpec("inbox", "Read unanswered replies"),
     CommandSpec("outbox", "Read approved messages or export outbox history"),
     CommandSpec("process", "Process a batch under the engine's review policy"),
@@ -65,6 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
             child.add_argument("--json", action="store_true", dest="json_output")
         elif command.name in {"sync", "review", "inbox", "process"}:
             child.add_argument("--limit", type=int, default=None)
+            if command.name == "review":
+                child.add_argument("record_id", nargs="?", help="Review this record's saved draft without generating text")
             if command.name == "sync":
                 child.add_argument("--dry-run", action="store_true", help="Preview without saving a queue")
             if command.name == "inbox":
@@ -79,8 +81,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _init(_args) -> int:
-    from respawned.db.helpers.pg_connect import create_tables, get_engine
-    engine = get_engine()
+    from respawned.db.helpers.pg_connect import DatabaseConnectionError, create_tables, get_engine
+    try:
+        engine = get_engine()
+    except DatabaseConnectionError:
+        raise ValueError("Could not connect to PostgreSQL. Check DB_HOST, DB_PORT, DB_NAME, DB_USER, and DB_PASSWORD on the engine host.") from None
     try:
         create_tables(engine)
     finally:
@@ -136,9 +141,9 @@ def _client_command(args) -> int:
     if args.command == "import":
         forwarded += ["--file", args.file]
     elif args.command == "draft":
-        forwarded += [args.record_id]
         if args.body_file is not None:
             forwarded += ["--body-file", args.body_file]
+        forwarded += ["--", args.record_id]
     elif args.command == "outbox":
         if args.path is not None:
             forwarded += ["--path", os.fspath(args.path)]
@@ -158,6 +163,8 @@ def _client_command(args) -> int:
             forwarded += ["--dry-run"]
         if args.command == "inbox" and args.json_output:
             forwarded += ["--json"]
+        if args.command == "review" and args.record_id is not None:
+            forwarded += ["--", args.record_id]
     return module.main(forwarded)
 
 

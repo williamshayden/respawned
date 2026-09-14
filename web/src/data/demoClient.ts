@@ -174,13 +174,19 @@ export function createDemoClient(storage: StorageLike | null = defaultStorage())
       const contacts = new Set(eligible.map((record) => record.contact?.key).filter(Boolean))
       return { candidate_count: contacts.size, inserted_count: 0, run_id: `demo-sync-${current.sync_count}` }
     },
-    async draft(recordId) {
+    async supportsManualDraft() { return true },
+    async draft(recordId, suppliedBody) {
       const current = read()
       const record = findRecord(current, recordId)
-      if (record.draft) return structuredClone(record.draft)
+      if (record.draft) {
+        if (suppliedBody !== undefined && verifyBody(suppliedBody) !== record.draft.body) {
+          throw new ClientError('A different draft already exists. Refresh and review the saved copy before editing it.', 409, 'stale_review')
+        }
+        return structuredClone(record.draft)
+      }
       assertEligible(record)
-      const body = DEMO_DRAFT_BODIES[recordId]
-      if (!body) throw new ClientError('No example draft is available for this record.', 409, 'not_eligible')
+      const body = suppliedBody ?? DEMO_DRAFT_BODIES[recordId]
+      if (body === undefined) throw new ClientError('No example draft is available for this record.', 409, 'not_eligible')
       record.draft = {
         id: `draft:${recordId}`, body: verifyBody(body), status: 'pending',
         review_token: `demo:${recordId}:${current.next_version++}`, validation_errors: [], outbox_id: null,

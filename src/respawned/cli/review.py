@@ -58,6 +58,80 @@ def _show_queue(candidates: list[dict], console: Console) -> None:
     console.print(table)
 
 
+def _review_draft(
+    client: RespawnedClient, draft: dict, *, console: Console,
+    action_prompt: Callable[..., str], message_prompt: Callable[[dict, Console], str],
+) -> tuple[str, bool]:
+    """Return the human decision and whether input ended the review session."""
+    _show_draft(draft, console)
+    while True:
+        try:
+            action = action_prompt(
+                escape("Action: [A]pprove, [R]eject, [E]dit, [S]kip"),
+                choices=("a", "r", "e", "s"), default="s", console=console,
+                case_sensitive=False, show_choices=False, show_default=False,
+            )
+        except (EOFError, KeyboardInterrupt):
+            return "skipped", True
+        if action == "s":
+            return "skipped", False
+        if action == "e":
+            try:
+                body = message_prompt(draft, console)
+            except (EOFError, KeyboardInterrupt):
+                return "skipped", True
+            try:
+                updated = client.edit_draft(draft["id"], body, draft["review_token"])
+                # Version/body come from the response; the approved recipient
+                # context is unchanged. The server still checks every action.
+                draft = dict(draft, **updated)
+            except APIError as exc:
+                console.print(Text.assemble(("Not saved: ", "red"), str(exc)))
+                if exc.status_code == 422 and not exc.ambiguous:
+                    continue
+                console.print("Reopen this draft to inspect its current version.")
+                return "blocked", False
+            _show_draft(draft, console)
+            continue
+        try:
+            if action == "a":
+                client.approve_draft(draft["id"], draft["review_token"])
+                console.print("Approved to outbox. Unsent.")
+                return "approved", False
+            client.reject_draft(draft["id"], draft["review_token"])
+            return "rejected", False
+        except APIError as exc:
+            console.print(Text.assemble(("Not completed: ", "red"), str(exc)))
+            console.print("Reopen this draft to inspect its current state.")
+            return "blocked", False
+
+
+def run_record_review(
+    client: RespawnedClient, record_id: str, *, console: Console = DEFAULT_CONSOLE,
+    action_prompt: Callable[..., str] = prompt_choice,
+    message_prompt: Callable[[dict, Console], str] = _default_message_prompt,
+) -> ReviewSummary:
+    """Read one saved draft and review its exact persisted recipient and copy."""
+    record = client.get_record(record_id)
+    saved = record.get("draft")
+    if saved is None:
+        console.print(Text.assemble(("No saved draft for record: ", "yellow"), record_id))
+        console.print("Create a draft for this record with respawned draft and --body-file, then review it again.")
+        return ReviewSummary(blocked=1)
+    draft = client.get_draft(saved["id"])
+    if draft["id"] != saved["id"] or draft["primary_opportunity_id"] != record_id:
+        raise APIError("The saved draft does not match this record. Reopen the record before reviewing.")
+    if draft["status"] != "pending":
+        message = f"This draft is already {draft['status']}."
+        if draft.get("outbox_id") is not None:
+            message += f" Outbox item: {draft['outbox_id']}."
+        console.print(message)
+        return ReviewSummary()
+    action, _interrupted = _review_draft(client, draft, console=console,
+                                        action_prompt=action_prompt, message_prompt=message_prompt)
+    return ReviewSummary(presented=1, **{action: 1})
+
+
 def run_review(
     client: RespawnedClient, *, limit: int = 10, console: Console = DEFAULT_CONSOLE,
     action_prompt: Callable[..., str] = prompt_choice,
@@ -67,7 +141,8 @@ def run_review(
     client.sync(limit=limit)
     candidates = client.queue()["items"]
     _show_queue(candidates, console)
-    presented = approved = rejected = skipped = blocked = 0
+    presented = 0
+    counts = dict(approved=0, rejected=0, skipped=0, blocked=0)
     for candidate in candidates:
         try:
             draft = client.draft_candidate(candidate["id"])
@@ -75,69 +150,34 @@ def run_review(
             console.print(Text.assemble(("Blocked: ", "red"), str(exc)))
             if exc.ambiguous:
                 console.print("The draft result is unknown. Reopen it before trying again.")
-            blocked += 1
+            counts["blocked"] += 1
             continue
         if draft["status"] != "pending":
             continue
         presented += 1
-        _show_draft(draft, console)
-        while True:
-            try:
-                action = action_prompt(
-                    escape("Action: [A]pprove, [R]eject, [E]dit, [S]kip"),
-                    choices=("a", "r", "e", "s"), default="s", console=console,
-                    case_sensitive=False, show_choices=False, show_default=False,
-                )
-            except (EOFError, KeyboardInterrupt):
-                return ReviewSummary(presented, approved, rejected, skipped + 1, blocked)
-            if action == "s":
-                skipped += 1
-                break
-            if action == "e":
-                try:
-                    body = message_prompt(draft, console)
-                except (EOFError, KeyboardInterrupt):
-                    return ReviewSummary(presented, approved, rejected, skipped + 1, blocked)
-                try:
-                    updated = client.edit_draft(draft["id"], body, draft["review_token"])
-                    # Version/body come from the response; the approved recipient
-                    # context is unchanged. The server still checks every action.
-                    draft = dict(draft, **updated)
-                except APIError as exc:
-                    console.print(Text.assemble(("Not saved: ", "red"), str(exc)))
-                    if exc.status_code == 422 and not exc.ambiguous:
-                        continue
-                    console.print("Reopen this draft to inspect its current version.")
-                    blocked += 1
-                    break
-                _show_draft(draft, console)
-                continue
-            try:
-                if action == "a":
-                    client.approve_draft(draft["id"], draft["review_token"])
-                    approved += 1
-                    console.print("Approved to outbox. Unsent.")
-                else:
-                    client.reject_draft(draft["id"], draft["review_token"])
-                    rejected += 1
-            except APIError as exc:
-                console.print(Text.assemble(("Not completed: ", "red"), str(exc)))
-                console.print("Reopen this draft to inspect its current state.")
-                blocked += 1
+        action, interrupted = _review_draft(client, draft, console=console,
+                                            action_prompt=action_prompt, message_prompt=message_prompt)
+        counts[action] += 1
+        if interrupted:
             break
-    return ReviewSummary(presented, approved, rejected, skipped, blocked)
+    return ReviewSummary(presented=presented, **counts)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="respawned review", description="Refresh the queue and review drafts interactively")
-    parser.add_argument("--limit", type=int, default=10, help="Maximum candidates, 1..200 (default: 10)")
+    parser = argparse.ArgumentParser(prog="respawned review", description="Review one saved draft or refresh the queue for human review")
+    parser.add_argument("record_id", nargs="?", help="Review this record's saved draft without generating text")
+    parser.add_argument("--limit", type=int, help="Maximum queue candidates, 1..200 (default: 10); omit with a record ID")
     configure_connection(parser)
     args = parser.parse_args(argv)
-    if not 1 <= args.limit <= 200:
+    if args.record_id is not None and args.limit is not None:
+        parser.error("--limit applies to queue review; omit it when reviewing a record ID")
+    if args.limit is not None and not 1 <= args.limit <= 200:
         parser.error("--limit must be between 1 and 200")
 
     def review():
-        summary = run_review(client_from_args(args), limit=args.limit)
+        client = client_from_args(args)
+        summary = (run_record_review(client, args.record_id) if args.record_id is not None
+                   else run_review(client, limit=args.limit if args.limit is not None else 10))
         print(f"Reviewed {summary.presented} drafts: {summary.approved} approved, "
               f"{summary.rejected} rejected, {summary.skipped} skipped, {summary.blocked} blocked.")
         return 1 if summary.blocked else 0

@@ -17,6 +17,48 @@ function backend(prefix: unknown = '/v1/workflow') {
 }
 
 describe('workflow API discovery', () => {
+  it('saves supplied copy only through the canonical capability and preserves separate review', async () => {
+    const fetch = backend()
+    const { createHttpClient } = await import('./client')
+    const client = createHttpClient('https://engine.example/team', 'operator-secret')
+    expect(await client.supportsManualDraft()).toBe(true)
+    await client.draft('source/one', 'My exact draft, with an emoji 😀.')
+    const requests = fetch.mock.calls as unknown as [string, RequestInit][]
+    expect(requests).toHaveLength(2)
+    expect(requests[1]).toEqual(['https://engine.example/team/v1/workflow/records/source%2Fone/draft', expect.objectContaining({
+      method: 'POST', credentials: 'omit', redirect: 'error',
+      headers: expect.objectContaining({ Authorization: 'Bearer operator-secret', 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ body: 'My exact draft, with an emoji 😀.' }),
+    })])
+    expect(requests.some(([url]) => /\/sync$|\/approve$/.test(url))).toBe(false)
+  })
+
+  it('blocks manual saves on legacy engines before any write while preserving model generation', async () => {
+    const fetch = backend('absent')
+    const { createHttpClient } = await import('./client')
+    const client = createHttpClient('https://legacy.example', 'operator-secret')
+    expect(await client.supportsManualDraft()).toBe(false)
+    await expect(client.draft('one', 'Do not send this to a model.')).rejects.toMatchObject({ code: 'manual_draft_unavailable' })
+    await expect(client.draft('one', '')).rejects.toMatchObject({ code: 'manual_draft_unavailable' })
+    expect(fetch.mock.calls).toHaveLength(1)
+    await client.draft('one')
+    const requests = fetch.mock.calls as unknown as [string, RequestInit][]
+    expect(requests[1]).toEqual(['https://legacy.example/v1/ui/records/one/draft', expect.objectContaining({ method: 'POST' })])
+    expect(requests[1][1]).not.toHaveProperty('body')
+  })
+
+  it('does not turn empty supplied copy or a failed manual save into model generation', async () => {
+    const fetch = vi.fn(async (url: string) => url.endsWith('/bootstrap')
+      ? new Response('{"review_enabled":true,"workflow_api_prefix":"/v1/workflow"}')
+      : new Response('{"detail":"Write a message before saving."}', { status: 422 }))
+    vi.stubGlobal('fetch', fetch)
+    const { createHttpClient } = await import('./client')
+    await expect(createHttpClient('', 'operator').draft('one', '')).rejects.toMatchObject({ status: 422 })
+    const requests = fetch.mock.calls as unknown as [string, RequestInit][]
+    expect(requests).toHaveLength(2)
+    expect(requests[1][1].body).toBe('{"body":""}')
+  })
+
   it('negotiates once and shares the canonical root across review, setup, workspaces and overview', async () => {
     const fetch = backend()
     const { createHttpClient } = await import('./client')

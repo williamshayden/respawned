@@ -3,32 +3,43 @@ import { createDemoClient } from '../src/data/demoClient'
 import { createFixtures } from '../src/data/fixtures'
 
 // Sample data belongs in test fixtures, never in the product's startup path.
-export async function mockEngine(page: Page) {
+export async function mockEngine(page: Page, options: { canonical?: boolean; localSession?: boolean; empty?: boolean } = {}) {
   const client = createDemoClient(null)
-  await page.route('**/v1/setup/bootstrap', route => route.fulfill({ json: { review_enabled: true } }))
-  await page.route('**/v1/ui/**', async route => {
+  const prefix = options.canonical ? '/v1/workflow' : '/v1/ui'
+  const importedIds = options.empty ? new Set<string>() : null
+  const writes: { path: string; body: unknown }[] = []
+  await page.route('**/v1/setup/bootstrap', route => route.fulfill({ json: { review_enabled: true, ...(options.canonical ? { workflow_api_prefix: prefix } : {}) } }))
+  await page.route(`**${prefix}/**`, async route => {
     const url = new URL(route.request().url())
-    const path = url.pathname.slice('/v1/ui'.length)
+    const path = url.pathname.slice(prefix.length)
     const payload = route.request().postDataJSON()
+    if (route.request().method() !== 'GET') writes.push({ path, body: payload })
     const kind = url.searchParams.get('workspace_id')
     try {
       let json: unknown
-      if (path === '/session') json = { authenticated: false, local_launcher: false }
+      if (path === '/session') json = { authenticated: options.localSession ?? false, local_launcher: options.localSession ?? false }
       else if (path === '/config') json = await client.config()
-      else if (path === '/workspaces') json = { items: [...new Set(createFixtures().map(record => record.kind))].map(kind => ({ id: kind, name: kind, description: '', kinds: [kind], created_at: '', updated_at: '' })), available_kinds: [], scope: 'shared_engine' }
+      else if (path === '/workspaces') json = { items: options.empty ? [] : [...new Set(createFixtures().map(record => record.kind))].map(kind => ({ id: kind, name: kind, description: '', kinds: [kind], created_at: '', updated_at: '' })), available_kinds: [], scope: 'shared_engine' }
       else if (path === '/setup') json = {
-        database: { ready: true }, review: { authorized: true, token_storage: 'memory' },
+        database: { status: 'ready', message: 'Test database ready' }, review: { authorized: true, token_storage: 'memory' },
         model: { base_url: 'http://127.0.0.1:4000', model_alias: 'respawned-default', api_key_env: 'LITELLM_MASTER_KEY', timeout_seconds: 60, source: 'environment', key_configured: false, ready: false },
         outbox: { mode: 'export_only', delivery_enabled: false }, sources: { mode: 'import', freshness: 'unknown' },
       }
       else if (path === '/records') {
-        const records = (await client.listRecords()).items.filter(record => !kind || record.kind === kind)
+        const records = (await client.listRecords()).items.filter(record => (!importedIds || importedIds.has(record.id)) && (!kind || record.kind === kind))
         const offset = Number(url.searchParams.get('offset') ?? 0)
         json = { items: records.slice(offset, offset + 50), total: records.length, has_more: records.length > offset + 50, as_of: new Date().toISOString() }
-      } else if (path === '/inbox') json = await client.listInbox()
+      } else if (path === '/import') {
+        for (const record of payload.opportunities) importedIds?.add(record.id)
+        json = { opportunities_upserted: payload.opportunities.length, activities_inserted: payload.activities.length }
+      } else if (path === '/inbox') {
+        const inbox = await client.listInbox()
+        const items = inbox.items.filter(item => !importedIds || item.opportunity_ids.some(id => importedIds.has(id)))
+        json = { ...inbox, items, total: items.length }
+      }
       else if (path === '/outbox') json = { items: await client.listOutbox(), has_more: false }
       else if (path === '/sync') json = await client.sync()
-      else if (path.startsWith('/records/') && path.endsWith('/draft')) json = await client.draft(decodeURIComponent(path.slice(9, -6)))
+      else if (path.startsWith('/records/') && path.endsWith('/draft')) json = await client.draft(decodeURIComponent(path.slice(9, -6)), payload?.body)
       else if (path.startsWith('/records/')) json = await client.getRecord(decodeURIComponent(path.slice(9)))
       else if (path.startsWith('/drafts/')) {
         const [, , id, action] = path.split('/')
@@ -39,6 +50,7 @@ export async function mockEngine(page: Page) {
       await route.fulfill({ json })
     } catch (error) { await route.fulfill({ status: 409, json: { detail: String(error) } }) }
   })
+  return { client, writes }
 }
 
 export async function navigate(page: Page, name: string) {
